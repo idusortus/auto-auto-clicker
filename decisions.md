@@ -124,7 +124,7 @@
 **Revisit:** If the Expo port wants to reuse web code, migrate to a framework; not needed now.
 
 ## 2026-09-25 — All tuning constants live in `balance.ts`, re-exported by `index.ts`
-**Context:** The public constants (`BOSS_TIMER_MS`, `HARD_WALL_PROJECTED_KILL_MS`, `ACTIVE_CLICKS_PER_SECOND`, `CURRENT_SAVE_VERSION`, `BAG_CAP`) are read by sim code that also imports the economy formulas. Defining them in `index.ts` would create import cycles (`advance` → `index` → `advance`).
+**Context:** The public constants (`BOSS_TIMER_MS`, `HARD_WALL_PROJECTED_KILL_MS`, `ACTIVE_CLICKS_PER_SECOND`, `CURRENT_SAVE_VERSION`, `BAG_CAP`) are read by engine and host code that also imports the economy formulas. Defining them in `index.ts` would create import cycles (`advance` → `index` → `advance`).
 **Choice:** Define every constant and formula in `src/balance.ts`, then re-export the constants from `src/index.ts`. Consumers see the exact same names and values; there is still exactly one file to tune.
 **Trade-offs:** `index.ts` contains re-exports rather than literal `const` declarations, so a reader must follow the re-export to find a value.
 **Revisit:** Never; adding a second tuner file would defeat the single-knob design.
