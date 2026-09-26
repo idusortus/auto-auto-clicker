@@ -20,13 +20,30 @@ export const ACTIVE_CLICKS_PER_SECOND = 2;
 /** Maximum number of unequipped gear instances kept in the bag. */
 export const BAG_CAP = 24;
 
+/**
+ * Dropped gear spawns at `max(1, stage - DROP_LEVEL_OFFSET)`.
+ *
+ * Bounding the item level keeps a lucky drop a modest, small multiple of the
+ * deterministic gold-funded upgrade curve instead of a stage-proportional
+ * multiplier that swamps it.
+ */
+export const DROP_LEVEL_OFFSET = 6;
+
+/**
+ * Free-path choice grants are denominated in *upgrade levels* of the player's
+ * current weapon, not in stage-scaled gold. They are therefore bounded and
+ * translate directly into a predictable power bump for either path.
+ */
+export const WAIT_UPGRADE_GRANT_LEVELS = 2;
+export const WATCH_AD_UPGRADE_GRANT_LEVELS = 4;
+
 export const BALANCE = {
   baseHp: 25,
   hpGrowth: 1.5,
   baseGold: 8,
   goldGrowth: 1.45,
   bossStageInterval: 10,
-  bossHpMultiplier: 8,
+  bossHpMultiplier: 100,
   bossGoldMultiplier: 4,
   baseAutoDps: 1,
   baseClickDamage: 2,
@@ -36,9 +53,9 @@ export const BALANCE = {
     clickFactor: 4,
     levelExponent: 1.4,
     upgradeCostBase: 10,
-    upgradeCostGrowth: 1.6,
+    upgradeCostGrowth: 1.35,
     upgradeStatMultiplier: 1.18,
-    dropChance: 0.25,
+    dropChance: 0.08,
   },
 } as const;
 
@@ -71,6 +88,17 @@ export function applyUpgradeMultiplier(base: number, upgradeLevel: number): numb
 
 export function upgradeCost(upgradeLevel: number): number {
   return Math.floor(BALANCE.gear.upgradeCostBase * Math.pow(BALANCE.gear.upgradeCostGrowth, upgradeLevel));
+}
+
+/**
+ * Gold granted by a free-path choice: exactly `levels` upgrades worth, starting
+ * from the equipped weapon's current upgrade level. Bounded and independent of
+ * the pending stage, so it cannot inject a stage-scaled windfall.
+ */
+export function choiceGoldGrant(currentUpgradeLevel: number, levels: number): number {
+  let total = 0;
+  for (let i = 0; i < levels; i += 1) total += upgradeCost(currentUpgradeLevel + i);
+  return total;
 }
 
 function scaledGearStat(

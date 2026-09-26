@@ -1,3 +1,23 @@
+/*
+ * style.css — functional layout + minimal styling for the renderer.
+ *
+ * Phase 4 is intentionally plain: correct mobile shape (390x844), no horizontal
+ * scroll, touch targets >= 44px (primary >= 56px), and safe-area insets. A
+ * designer polishes the visuals in Phase 4b; keep class names stable.
+ */
+
+:root {
+  --bg: #0b0e14;
+  --panel: #151a24;
+  --panel-2: #1d2430;
+  --line: #2a3242;
+  --text: #e8edf5;
+  --muted: #9aa7bd;
+  --accent: #4f8cff;
+  --danger: #ff5c5c;
+  --radius: 12px;
+}
+
 *,
 *::before,
 *::after {
@@ -12,4 +32,317 @@ body {
 
 body {
   min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.4;
+  overflow-x: hidden;
+}
+
+#app {
+  min-height: 100dvh;
+}
+
+/* ---------- app shell ---------- */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 480px;
+  min-height: 100dvh;
+  margin: 0 auto;
+  padding: calc(12px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right))
+    calc(12px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+}
+
+/* ---------- heads-up display ---------- */
+
+.hud {
+  display: flex;
+  gap: 8px;
+}
+
+.hud__stat {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--panel);
+  border-radius: var(--radius);
+}
+
+.hud__label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.hud__value {
+  display: block;
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- enemy / attack area ---------- */
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.enemy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 340px;
+  min-width: 120px;
+  min-height: 120px;
+  padding: 20px;
+  border: 2px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: inherit;
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.enemy:active {
+  transform: scale(0.99);
+}
+
+.enemy:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.enemy__badge {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--danger);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.enemy__name {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.enemy__hp {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.hp-bar {
+  display: block;
+  width: 100%;
+  height: 12px;
+  background: var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.hp-bar__fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--danger);
+}
+
+.enemy__hp-text {
+  font-size: 14px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* ---------- panels, cards, bag ---------- */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--panel);
+  border-radius: var(--radius);
+}
+
+.panel__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.panel__title {
+  margin: 0;
+  font-size: 15px;
+}
+
+.panel__meta {
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.equipped {
+  display: flex;
+}
+
+.card {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 10px;
+  background: var(--panel-2);
+  border-radius: 10px;
+}
+
+.card__title {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.card__stats {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.bag {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bag__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px;
+  background: var(--panel-2);
+  border-radius: 10px;
+}
+
+.bag__info {
+  min-width: 0;
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- buttons (all touch targets >= 44px) ---------- */
+
+.btn {
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn--primary {
+  min-height: 56px;
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.btn--ghost {
+  background: transparent;
+  border-color: var(--line);
+}
+
+.btn--small {
+  min-height: 44px;
+  padding: 8px 14px;
+}
+
+.btn--wide {
+  width: 100%;
+}
+
+/* ---------- overlays (choices + offline summary) ---------- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(16px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right))
+    calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+  background: rgba(4, 7, 12, 0.72);
+}
+
+.overlay[hidden] {
+  display: none;
+}
+
+.overlay__card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 360px;
+  padding: 16px;
+  background: var(--panel);
+  border-radius: var(--radius);
+}
+
+.overlay__title {
+  margin: 0;
+  font-size: 18px;
+}
+
+.overlay__body,
+.overlay__note {
+  margin: 0;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.overlay__note {
+  font-size: 12px;
+}
+
+.overlay__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }

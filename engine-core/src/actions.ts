@@ -4,7 +4,13 @@
 // object with an empty event list. Valid actions clone, mutate the clone, and
 // return it. Input state is never mutated.
 
-import { computeGearStats, goldReward, upgradeCost } from './balance';
+import {
+  choiceGoldGrant,
+  computeGearStats,
+  upgradeCost,
+  WAIT_UPGRADE_GRANT_LEVELS,
+  WATCH_AD_UPGRADE_GRANT_LEVELS,
+} from './balance';
 import { gearDefinitionFor, WEAPON_DEFINITION } from './content';
 import { applyDamageToEnemy, killCurrentEnemy } from './combat';
 import { cloneGameState, getEffectiveStats } from './state';
@@ -96,8 +102,12 @@ function applyResolveChoice(
   const events: GameEvent[] = [];
 
   if (choice === 'wait' || choice === 'watchAd') {
-    const seconds = choice === 'wait' ? 60 : 300;
-    const gold = Math.floor((goldReward(pending.stage) * seconds) / 8);
+    // Bounded grant: a fixed number of upgrades from the player's current
+    // upgrade level. `watchAd` grants strictly more levels than `wait`.
+    const currentUpgradeLevel = state.gear.equipped.weapon?.upgradeLevel ?? 0;
+    const levels =
+      choice === 'wait' ? WAIT_UPGRADE_GRANT_LEVELS : WATCH_AD_UPGRADE_GRANT_LEVELS;
+    const gold = choiceGoldGrant(currentUpgradeLevel, levels);
     draft.player.gold += gold;
     events.push({
       type: 'goldChanged',

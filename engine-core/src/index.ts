@@ -11,6 +11,7 @@ export {
   BOSS_TIMER_MS,
   CURRENT_SAVE_VERSION,
   HARD_WALL_PROJECTED_KILL_MS,
+  isBoss,
 } from './balance';
 
 export { CONTENT, GRUNT_DEFINITION, WEAPON_DEFINITION } from './content';

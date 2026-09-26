@@ -1,13 +1,20 @@
 // sim — headless pacing harness for the engine tick loop. No rendering, no UI.
 //
 // Drives `advance`/`applyAction` with a fixed 100 ms step and a 2-clicks/sec
-// active player, greedily buying weapon upgrades and equipping better drops.
-// Asserts the pacing targets:
+// active player. The economy policy is greedy and deterministic:
+//   1. buy weapon upgrades while affordable;
+//   2. equip a bag weapon only when it strictly raises total active DPS
+//      (auto DPS + ACTIVE_CLICKS_PER_SECOND * click damage).
+// Step 2 deliberately replaces the old "swap on higher itemLevel" policy, which
+// let a fresh level-0 drop reset the whole upgrade curve and made pacing a
+// knife-edge function of drop RNG.
+//
+// Asserts the pacing targets for EVERY sweep seed (all are hard assertions):
 //   - soft boss check lands 6.0 min  (±20% → [4.8, 7.2])
 //   - hard progression wall 54.0 min (±20% → [43.2, 64.8])
-//
-// Exit code 1 when the canonical seed misses a target, 0 otherwise. Sweep
-// seeds are informational only and never fail the process.
+// plus the design guards: soft is an early boss (stage <= 40), hard wall stage
+// <= 90, the canonical seed is comfortably inside its targets, and no reported
+// stat is Infinity/NaN. Exit code 1 when any seed misses any target.
 
 import {
   ACTIVE_CLICKS_PER_SECOND,
@@ -16,12 +23,14 @@ import {
   createGame,
   getEffectiveStats,
   getUpgradeCost,
+  isBoss,
 } from '@auto-auto-clicker/engine-core';
 import type { GameEvent, GameState, GearInstance } from '@auto-auto-clicker/engine-core';
 
 const STEP_MS = 100;
 const CLICK_INTERVAL_MS = 1000 / ACTIVE_CLICKS_PER_SECOND; // 500 ms → 2 clicks/sec
 const MAX_SIM_MS = 2 * 60 * 60 * 1000;
+const MAX_ECONOMY_PASSES = 10_000;
 
 const CANONICAL_SEED = 12345;
 const SWEEP_SEEDS = [CANONICAL_SEED, 1, 999, 424242, 20250925];
@@ -29,6 +38,14 @@ const SWEEP_SEEDS = [CANONICAL_SEED, 1, 999, 424242, 20250925];
 const SOFT_TARGET_MS = 6 * 60 * 1000;
 const HARD_TARGET_MS = 54 * 60 * 1000;
 const TOLERANCE = 0.2;
+
+// Design guards (not tolerance changes — additional structural requirements).
+const SOFT_MAX_STAGE = 40;
+const HARD_MAX_STAGE = 90;
+const MAX_SOFT_AUTO_DPS = 1e10;
+// Canonical must land comfortably inside, never on an edge.
+const CANONICAL_SOFT_MS_RANGE: readonly [number, number] = [5.2 * 60 * 1000, 6.8 * 60 * 1000];
+const CANONICAL_HARD_MS_RANGE: readonly [number, number] = [48 * 60 * 1000, 60 * 60 * 1000];
 
 interface Milestone {
   ms: number;
@@ -79,30 +96,57 @@ function processEvents(
   }
 }
 
+function totalActiveDps(state: GameState): number {
+  const stats = getEffectiveStats(state);
+  return stats.autoDps + ACTIVE_CLICKS_PER_SECOND * stats.clickDamage;
+}
+
+/** Total active DPS the player would have if `item` replaced the equipped weapon. */
+function candidateActiveDps(state: GameState, item: GearInstance): number {
+  const autoDps = state.player.baseAutoDps + item.dps;
+  const clickDamage = state.player.baseClickDamage + item.clickDamage;
+  return autoDps + ACTIVE_CLICKS_PER_SECOND * clickDamage;
+}
+
 /**
- * Greedy economy: spend every affordable upgrade on the equipped weapon, then
- * equip the highest-itemLevel bag weapon when it is strictly better.
+ * Greedy economy: buy every affordable upgrade, then equip the single bag
+ * weapon that strictly raises total active DPS; repeat until neither action
+ * changes the state. Equipping is DPS-based, so a level-0 drop never resets a
+ * deeply upgraded weapon.
  */
 function runEconomy(state: GameState): GameState {
   let next = state;
 
-  for (;;) {
-    const cost = getUpgradeCost(next, 'weapon');
-    if (cost === null || next.player.gold < cost) break;
-    const upgraded = applyAction(next, { type: 'upgradeEquipped', slot: 'weapon' });
-    if (upgraded.state === next) break;
-    next = upgraded.state;
-  }
+  for (let pass = 0; pass < MAX_ECONOMY_PASSES; pass += 1) {
+    let changed = false;
 
-  const equipped = next.gear.equipped.weapon;
-  let best: GearInstance | null = null;
-  for (const item of next.gear.bag) {
-    if (best === null || item.itemLevel > best.itemLevel) best = item;
-  }
+    for (;;) {
+      const cost = getUpgradeCost(next, 'weapon');
+      if (cost === null || next.player.gold < cost) break;
+      const upgraded = applyAction(next, { type: 'upgradeEquipped', slot: 'weapon' });
+      if (upgraded.state === next) break;
+      next = upgraded.state;
+      changed = true;
+    }
 
-  if (best !== null && (equipped === null || best.itemLevel > equipped.itemLevel)) {
+    const currentDps = totalActiveDps(next);
+    let best: GearInstance | null = null;
+    let bestDps = currentDps;
+    for (const item of next.gear.bag) {
+      const dps = candidateActiveDps(next, item);
+      if (dps > bestDps) {
+        bestDps = dps;
+        best = item;
+      }
+    }
+
+    if (best === null) break;
     const swapped = applyAction(next, { type: 'equip', instanceId: best.id });
-    if (swapped.state !== next) next = swapped.state;
+    if (swapped.state === next) break;
+    next = swapped.state;
+    changed = true;
+
+    if (!changed) break;
   }
 
   return next;
@@ -168,6 +212,17 @@ function withinTolerance(actualMs: number | null, targetMs: number): boolean {
   return ratio >= 1 - TOLERANCE && ratio <= 1 + TOLERANCE;
 }
 
+function isFiniteMilestone(m: Milestone | null): boolean {
+  if (m === null) return false;
+  return (
+    Number.isFinite(m.ms) &&
+    Number.isFinite(m.stage) &&
+    Number.isFinite(m.autoDps) &&
+    Number.isFinite(m.clickDamage) &&
+    (m.projectedKillMs === null || Number.isFinite(m.projectedKillMs))
+  );
+}
+
 function milestoneLine(label: string, m: Milestone | null): string {
   if (m === null) return `  ${label.padEnd(12)} not reached within ${formatMinutes(MAX_SIM_MS)} min`;
   const projected = m.projectedKillMs === null ? '' : `  projected=${m.projectedKillMs}ms`;
@@ -192,6 +247,56 @@ function targetLine(label: string, targetMs: number, actual: Milestone | null): 
   );
 }
 
+interface SeedVerdict {
+  seed: number;
+  problems: string[];
+}
+
+/** Check all acceptance rules for one seed; return human-readable failures. */
+function evaluateSeed(result: SimResult): SeedVerdict {
+  const problems: string[] = [];
+  const { soft, hard } = result;
+
+  if (soft === null) {
+    problems.push('soft check not reached');
+  } else {
+    if (!isFiniteMilestone(soft)) problems.push('soft milestone contains Infinity/NaN');
+    if (!withinTolerance(soft.ms, SOFT_TARGET_MS)) {
+      problems.push(`soft ${formatMinutes(soft.ms)} min (delta ${formatDelta(soft.ms, SOFT_TARGET_MS)})`);
+    }
+    if (!isBoss(soft.stage)) problems.push(`soft stage ${soft.stage} is not a boss`);
+    if (soft.stage > SOFT_MAX_STAGE) problems.push(`soft stage ${soft.stage} > ${SOFT_MAX_STAGE}`);
+    if (soft.autoDps > MAX_SOFT_AUTO_DPS) problems.push(`soft autoDps ${soft.autoDps} > ${MAX_SOFT_AUTO_DPS}`);
+  }
+
+  if (hard === null) {
+    problems.push('hard wall not reached');
+  } else {
+    if (!isFiniteMilestone(hard)) problems.push('hard milestone contains Infinity/NaN');
+    if (!withinTolerance(hard.ms, HARD_TARGET_MS)) {
+      problems.push(`hard ${formatMinutes(hard.ms)} min (delta ${formatDelta(hard.ms, HARD_TARGET_MS)})`);
+    }
+    if (hard.stage > HARD_MAX_STAGE) problems.push(`hard stage ${hard.stage} > ${HARD_MAX_STAGE}`);
+  }
+
+  if (result.seed === CANONICAL_SEED) {
+    if (soft !== null && (soft.ms < CANONICAL_SOFT_MS_RANGE[0] || soft.ms > CANONICAL_SOFT_MS_RANGE[1])) {
+      problems.push(
+        `canonical soft outside comfortable [${formatMinutes(CANONICAL_SOFT_MS_RANGE[0])}, ` +
+          `${formatMinutes(CANONICAL_SOFT_MS_RANGE[1])}] min`,
+      );
+    }
+    if (hard !== null && (hard.ms < CANONICAL_HARD_MS_RANGE[0] || hard.ms > CANONICAL_HARD_MS_RANGE[1])) {
+      problems.push(
+        `canonical hard outside comfortable [${formatMinutes(CANONICAL_HARD_MS_RANGE[0])}, ` +
+          `${formatMinutes(CANONICAL_HARD_MS_RANGE[1])}] min`,
+      );
+    }
+  }
+
+  return { seed: result.seed, problems };
+}
+
 function main(): void {
   console.log('=== auto-auto-clicker pacing sim ===');
   console.log(
@@ -200,7 +305,8 @@ function main(): void {
   );
   console.log('');
 
-  const canonical = runSim(CANONICAL_SEED);
+  const results = SWEEP_SEEDS.map((seed) => runSim(seed));
+  const canonical = results[0] as SimResult;
 
   console.log('milestones (canonical seed)');
   console.log(milestoneLine('start', canonical.start));
@@ -208,52 +314,44 @@ function main(): void {
   console.log(milestoneLine('hard wall', canonical.hard));
   console.log('');
 
-  const softPass = withinTolerance(canonical.soft?.ms ?? null, SOFT_TARGET_MS);
-  const hardPass = withinTolerance(canonical.hard?.ms ?? null, HARD_TARGET_MS);
-
   console.log('targets (canonical seed)');
   console.log(targetLine('soft', SOFT_TARGET_MS, canonical.soft));
   console.log(targetLine('hard', HARD_TARGET_MS, canonical.hard));
   console.log('');
 
-  console.log('seed sweep (canonical seed is the hard assertion; others informational)');
-  for (const seed of SWEEP_SEEDS) {
-    const result = seed === CANONICAL_SEED ? canonical : runSim(seed);
-    const softText = result.soft === null ? 'not reached' : `${formatMinutes(result.soft.ms)} min`;
-    const hardText = result.hard === null ? 'not reached' : `${formatMinutes(result.hard.ms)} min`;
-    const marker = seed === CANONICAL_SEED ? '*' : ' ';
-    console.log(` ${marker} seed ${String(seed).padEnd(9)} soft ${softText.padStart(11)}  hard ${hardText.padStart(11)}`);
-
-    if (seed !== CANONICAL_SEED) {
-      if (result.soft !== null && !withinTolerance(result.soft.ms, SOFT_TARGET_MS)) {
-        console.log(
-          `   WARNING seed ${seed} soft ${formatMinutes(result.soft.ms)} min ` +
-            `(delta ${formatDelta(result.soft.ms, SOFT_TARGET_MS)}) outside ±20%`,
-        );
-      }
-      if (result.hard !== null && !withinTolerance(result.hard.ms, HARD_TARGET_MS)) {
-        console.log(
-          `   WARNING seed ${seed} hard ${formatMinutes(result.hard.ms)} min ` +
-            `(delta ${formatDelta(result.hard.ms, HARD_TARGET_MS)}) outside ±20%`,
-        );
-      }
+  console.log('seed sweep (every seed is a hard assertion)');
+  let failed = false;
+  const verdicts = results.map(evaluateSeed);
+  for (let i = 0; i < results.length; i += 1) {
+    const result = results[i] as SimResult;
+    const verdict = verdicts[i] as SeedVerdict;
+    const softText =
+      result.soft === null ? 'not reached' : `${formatMinutes(result.soft.ms)} min (stage ${result.soft.stage})`;
+    const hardText =
+      result.hard === null ? 'not reached' : `${formatMinutes(result.hard.ms)} min (stage ${result.hard.stage})`;
+    const marker = result.seed === CANONICAL_SEED ? '*' : ' ';
+    const status = verdict.problems.length === 0 ? 'PASS' : 'FAIL';
+    if (verdict.problems.length > 0) failed = true;
+    console.log(
+      ` ${marker} seed ${String(result.seed).padEnd(9)} soft ${softText.padStart(22)}  ` +
+        `hard ${hardText.padStart(22)}  [${status}]`,
+    );
+    for (const problem of verdict.problems) {
+      console.log(`     - ${problem}`);
     }
   }
   console.log('');
 
-  if (softPass && hardPass) {
+  if (!failed) {
     console.log('PACING OK');
     process.exitCode = 0;
   } else {
     console.log('PACING FAILED');
-    console.log(
-      `  soft target ${formatMinutes(SOFT_TARGET_MS)} min: ` +
-        (softPass ? 'PASS' : `FAIL (actual ${canonical.soft === null ? 'not reached' : formatMinutes(canonical.soft.ms) + ' min'})`),
-    );
-    console.log(
-      `  hard target ${formatMinutes(HARD_TARGET_MS)} min: ` +
-        (hardPass ? 'PASS' : `FAIL (actual ${canonical.hard === null ? 'not reached' : formatMinutes(canonical.hard.ms) + ' min'})`),
-    );
+    for (const verdict of verdicts) {
+      for (const problem of verdict.problems) {
+        console.log(`  seed ${verdict.seed}: ${problem}`);
+      }
+    }
     process.exitCode = 1;
   }
 }

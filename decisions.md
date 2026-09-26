@@ -12,6 +12,12 @@
 
 ---
 
+## 2026-09-25 — Web host owns the clock, loop, and offline replay; renderer is a pure state projection
+**Context:** Phase 4 wires `/web` to the pure engine. The engine refuses clocks, DOM, and persistence timing, so the host must supply them without leaking rules or balance numbers back across the boundary.
+**Choice:** `web/src/main.ts` owns `Date.now()`, `requestAnimationFrame` with an accumulator, fixed 100 ms `advance()` steps, a 10-step catch-up clamp, 5 s autosave plus `visibilitychange`/`pagehide` flushes, and offline replay. Offline time is replayed through the SAME `advance()` in bounded 1000 ms steps capped at 8 h (auto-DPS only, stops at a pending choice) rather than granting a special reward. `web/src/renderer.ts` is a stateless projection of `GameState` (plus a small allocation-diff cache keyed by gear/bag signatures); it reads only engine-core state or exported getters and forwards input through handlers. `web/src/storage.ts` is the only module that touches the `SaveRepository` and the save clock. `watchAd`/`iap` render as disabled placeholders so the free `wait` path is always available.
+**Trade-offs:** Backgrounded-tab time beyond the 10-step clamp is dropped (not replayed) until the next boot, which under-counts idle progress versus a strictly wall-clock model; accepted to avoid catch-up spirals. Offline auto-DPS-only is deliberately worse than active play.
+**Revisit:** If hidden-tab time must count exactly, move the offline replay to a `visibilitychange → visible` hook (reusing the same bounded replay) rather than changing the engine.
+
 ## 2026-09-25 — engine-core is consumed as TypeScript source via `exports`
 **Context:** Phase 1 needs the three workspaces to install and typecheck, and web/sim must import `engine-core` without a build step. A source-consumed workspace package still has to resolve under `moduleResolution: Bundler`.
 **Choice:** `engine-core/package.json` maps `"exports"` to `./src/index.ts` (root) and `./save/index.ts` (subpath), each with a `"types"` condition first, plus matching `"main"`/`"types"` fields. The `build` script is `tsc --noEmit` (typecheck-only; no emitted JS for this prototype). `web/src/main.ts` carries a side-effect `import "@auto-auto-clicker/engine-core"` in Phase 1 so `npm run typecheck` actually exercises cross-workspace resolution instead of trivially passing.
@@ -71,3 +77,15 @@
 **Choice:** `SaveRepository` is `Promise`-based (`load(): Promise<SaveGame | null>`, `save(): Promise<void>`). `LocalStorageSaveRepository` declares a minimal structural `StorageLike` interface and reads `(globalThis as { localStorage?: StorageLike }).localStorage`; when absent, `load()` resolves null and `save()` rejects with a clear error. `saveGame`/`loadGame` (with version check) live in `src/state.ts`. `@types/node` is an engine-core devDependency, used only by the fs-based boundary test.
 **Trade-offs:** No `clear()` method yet (not required this phase); the async surface costs an `await` even for localStorage.
 **Revisit:** When the Supabase adapter lands, revisit whether `clear()` and conflict/version metadata belong on the interface.
+
+## 2026-09-25 — Headless pacing simulator (Phase 3)
+**Context:** The pacing target must be proven by an automated harness, not manual play. Phase 3 needed a deterministic, wall-clock-free driver of the pure engine.
+**Choice:** `sim/src/sim.ts` advances a virtual clock in fixed 100 ms steps up to 2 h, clicks every 500 ms (`1000 / ACTIVE_CLICKS_PER_SECOND`), resolves any pending choice on the free `wait` path, and runs a greedy economy after each tick (upgrade the equipped weapon while affordable, then equip the best strictly-higher-`itemLevel` bag weapon). It records the first `bossCheckFailed` and first `progressionWall` from the tick that sets `choices.pending`. Canonical seed `12345` is the hard assertion (soft 6.0 min ±20%, hard 54.0 min ±20%); four extra seeds are informational warnings only. Exit code 1 on canonical failure, 0 on pass.
+**Trade-offs:** The sim must mirror a real player's policy, so it cannot assume perfect play; the greedy itemLevel swap forfeits upgrade levels, which makes outcomes highly sensitive to drop RNG.
+**Revisit:** If sweep-seed robustness becomes a requirement, revisit the sim's swap policy (itemLevel vs stat comparison), never the tolerance.
+
+## 2026-09-25 — Pacing tuned via economy levers (Phase 3)
+**Context:** The canonical seed initially produced soft 3.92 min and hard 10.39 min — both far short of 6.0/54.0 min. Tuning had to stay inside `balance.ts` and keep every engine test green, including behavioral pacing scenarios.
+**Choice:** Two committed lever changes: `gear.upgradeStatMultiplier` 1.18 → 1.3, then `gear.upgradeCostGrowth` 1.6 → 1.35. Canonical seed result: soft 6.58 min (delta +9.7%), hard 58.99 min (+9.2%) — both inside ±20%. `hpGrowth` and `levelExponent` were deliberately rejected: `choices.test.ts` asserts behavioral projection windows for the stage-10 boss (geared via `makeGear(5)`, and unarmed), which only hold on the baseline enemy-HP curve; weakening enemies by lowering `hpGrowth` or raising `levelExponent` breaks those behavioral assertions, and the rules forbid loosening behavioral tests.
+**Trade-offs:** Upgrades are now cheaper and stronger, which inflates late-game stats; sweep seeds still spread over ~13–37 min hard wall because drop RNG couples non-linearly with the greedy policy. Canonical is the only hard assertion, so this is reported as a warning.
+**Revisit:** Only if tolerance policy or sweep robustness requirements change.
