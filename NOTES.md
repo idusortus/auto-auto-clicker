@@ -31,6 +31,38 @@
   test. During Phase 4 the renderer + boot path were exercised headlessly with a
   throwaway DOM shim (selectors validated against the generated skeleton, all
   render branches driven); the shim was deleted afterwards.
+- **Playwright mobile smoke test (Phase 5).** `web/tests/smoke.spec.ts` +
+  `web/playwright.config.ts`; run `npm run smoke` from the repo root. The config
+  starts the real Vite dev server on a strict port 5173 and drives it at
+  390×844 / touch / DPR 3 (mobile Chromium emulation). `beforeEach` clears
+  `localStorage` so every test boots a fresh game instead of a stale autosave.
+  Chromium v1243 was already in `~/.cache/ms-playwright`, so no browser download
+  was needed. Dependency: `@playwright/test` (see `decisions.md`).
+- **First upgrade does not move the HUD DPS readout.** With the guaranteed
+  item-level-1 starter weapon, `autoDps = base(2) + floor(2 * 1.3^0) = 4`; after
+  one upgrade it is `2 + floor(2 * 1.3^1) = 2 + 2 = 4` (integer flooring). The
+  readout only rises on the second upgrade (`2 + floor(2 * 1.3^2) = 5`). The
+  smoke test therefore asserts the upgrade **counter** increments and gold is
+  spent on the first tap, then keeps upgrading until the DPS readout strictly
+  increases (observed at upgrade #2). No engine change: flooring is intended.
+
+- **Phase 6 documentation pass.** `README.md` was rewritten for a new contributor:
+  architecture and the one-way dependency direction (`web → engine-core`,
+  `sim → engine-core`, never reverse), the engine-core purity contract, the pure
+  `advance`/`applyAction` simulation contract (hosts own the clock and drive fixed 100 ms
+  steps; offline replay goes through the same `advance` in bounded steps, auto-DPS only),
+  the versioned `SaveGame` + async `SaveRepository` model, the pacing proof with current
+  numbers (soft 5.92 min @ stage 30, hard 52.23 min @ stage 60, 5-seed hard assertion), the
+  honest trade-offs, a dependency-justification table, and a concrete "Porting to Expo"
+  section. The stale "svelte and supabase" stack text in `PROJECT.md` and `AGENTS.md` was
+  corrected to TypeScript + Vite + vanilla DOM + pure engine, local-only. The earlier note
+  "README is intentionally not updated this phase" is now superseded. No code, balance,
+  save schema, or tests were touched.
+- **Documented-but-intentional gaps** (carried into the README trade-offs): `iap` advances
+  one stage; `watchAd`/`iap` are disabled placeholders with no SDK; HUD prints full
+  integers (late-game auto-DPS ~3e7, no compact notation); and pacing is identical across
+  seeds because the power core is deterministic and drops are bounded. These are scoped
+  limitations for this brief, not bugs.
 
 ## Ideas (not built)
 

@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "sim": "tsx src/sim.ts"
+    "sim": "tsx src/sim.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@auto-auto-clicker/engine-core": "*"

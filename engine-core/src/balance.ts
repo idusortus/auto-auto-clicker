@@ -37,24 +37,29 @@ export const DROP_LEVEL_OFFSET = 6;
 export const WAIT_UPGRADE_GRANT_LEVELS = 2;
 export const WATCH_AD_UPGRADE_GRANT_LEVELS = 4;
 
+// Tuned (Phase 3b) for a deterministic power core: player power growth ≈1.29×
+// per stage while enemy HP grows 1.45×, so the fall-behind is structural rather
+// than a knife-edge between near-equal exponentials. The boss multiplier is a
+// true designed gate: the stage-30 boss is the soft check, the stage-60 boss is
+// the hard wall, for every seed.
 export const BALANCE = {
-  baseHp: 25,
-  hpGrowth: 1.5,
-  baseGold: 8,
-  goldGrowth: 1.45,
+  baseHp: 30,
+  hpGrowth: 1.45,
+  baseGold: 5,
+  goldGrowth: 1.35,
   bossStageInterval: 10,
-  bossHpMultiplier: 100,
+  bossHpMultiplier: 2.25,
   bossGoldMultiplier: 4,
-  baseAutoDps: 1,
+  baseAutoDps: 2,
   baseClickDamage: 2,
   gear: {
     slot: 'weapon' as const,
     dpsFactor: 2,
-    clickFactor: 4,
-    levelExponent: 1.4,
+    clickFactor: 8,
+    levelExponent: 1.1,
     upgradeCostBase: 10,
-    upgradeCostGrowth: 1.35,
-    upgradeStatMultiplier: 1.18,
+    upgradeCostGrowth: 1.3,
+    upgradeStatMultiplier: 1.3,
     dropChance: 0.08,
   },
 } as const;

@@ -3,19 +3,54 @@
 > Cross-session memory for all agents. Update on exit; read on entry.
 
 ## Status
-Planning complete. Implementation plan drafted and decisions logged.
+Prototype complete (Phases 0–6). All acceptance gates green:
+
+- `npm run test` → 41 passed (7 files), exit 0.
+- `npm run sim` → `PACING OK`, all 5 sweep seeds PASS (soft 5.92 min @ stage 30, hard 52.23 min @ stage 60), exit 0.
+- `npm run smoke` → 4 passed (Playwright mobile Chromium, 390×844), exit 0.
+- `npm run typecheck` / `npm run build` clean.
+
+Phase 6 (documentation) rewrote `README.md` for a new contributor (architecture + one-way
+dependency direction, the pure simulation contract, the save model, the pacing proof with
+observed numbers, honest trade-offs, a dependency-justification table, and a concrete
+"Porting to Expo" section). Corrected the stale "svelte and supabase" stack text in
+`PROJECT.md`/`AGENTS.md`. No code, balance, save schema, or tests were touched. Local-only:
+no backend, no auth, no Supabase, no network calls.
 
 ## In Flight
 None.
 
-## Blockers
-None.
+## Blockers / Known trade-offs
+- **Pacing is identical across seeds.** The power core is deterministic and drops are
+  bounded, so gear drops are flavour/low-impact and do NOT drive pacing. Any change meant
+  to make drops matter must edit `engine-core/src/balance.ts` + `engine-core/src/loot.ts`
+  together and re-run `npm run sim`.
+- **`resolveChoice('iap')` advances one stage** (defeats the current enemy, then normal
+  kill/stage-entry resolution). `watchAd`/`iap` are disabled UI placeholders with no ad or
+  payment SDK; the free `wait` path is the working one.
+- **Late-game numerals are large** (auto-DPS ~3.0e7 at the hard wall); the HUD prints full
+  integers and has no compact notation, so it wraps at the widest point.
+- **Offline progress is auto-DPS only** (no clicks replayed), capped at 8 h, and replayed
+  in 1000 ms steps; hidden-tab time beyond the host's 10-step catch-up clamp is dropped
+  until the next boot.
+- **One save version, no migration path.** `loadGame` rejects versions other than
+  `CURRENT_SAVE_VERSION` (1); `SaveRepository` has no `clear()`.
+- **One gear slot and one enemy definition** ship today; the seams for more exist.
 
 ## Recent Decisions
-See `decisions.md` — locked: npm workspaces, pure `advance`/`applyAction` API, versioned `SaveGame` blob + `SaveRepository`, integer stats + seeded RNG, pacing thresholds, Vite/vanilla web renderer.
+See `decisions.md`. The authoritative entries are Phase 3b "Deterministic power core:
+bounded RNG, bounded free grants, DPS-based swap", Phase 4 "Web host owns the clock, loop,
+and offline replay; renderer is a pure state projection", and Phase 5 "Playwright +
+Chromium for the /web mobile smoke test". Phase 6 was documentation-only.
 
 ## Next
-Coder should implement per the plan, starting with scaffold → engine-core + unit tests → sim passing.
+No required work remains for this brief. If continuing:
+1. Build the Expo/RN port by supplying a renderer + a `SaveRepository` (e.g. AsyncStorage
+   or Supabase) and a host clock driving `advance()` — see README "Porting to Expo".
+2. Optional polish: compact numeral formatting, tap/feedback cosmetics, bag sorting
+   (would need a new engine action first).
+3. If drops should influence pacing, co-design `balance.ts` + `loot.ts` and re-run
+   `npm run sim` (all seeds will move together).
 
 ---
 

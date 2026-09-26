@@ -15,7 +15,7 @@ import type { GameEvent, GameState } from './types';
  */
 export function advance(state: GameState, deltaMs: number): { state: GameState; events: GameEvent[] } {
   if (state.choices.pending) return { state, events: [] };
-  if (deltaMs <= 0) return { state, events: [] };
+  if (!Number.isFinite(deltaMs) || deltaMs <= 0) return { state, events: [] };
 
   const stats = getEffectiveStats(state);
   const draft = cloneGameState(state);

@@ -30,6 +30,10 @@ import type { GameEvent, GameState, GearInstance } from '@auto-auto-clicker/engi
 const STEP_MS = 100;
 const CLICK_INTERVAL_MS = 1000 / ACTIVE_CLICKS_PER_SECOND; // 500 ms → 2 clicks/sec
 const MAX_SIM_MS = 2 * 60 * 60 * 1000;
+// Belt-and-braces guard: a mis-tuned economy can outpace enemy HP and clear
+// thousands of stages in one tick. The acceptance rules cap the hard wall at
+// stage 90, so anything past this is a failure by definition.
+const MAX_SIM_STAGE = 400;
 const MAX_ECONOMY_PASSES = 10_000;
 
 const CANONICAL_SEED = 12345;
@@ -161,7 +165,7 @@ function runSim(seed: number): SimResult {
   let totalMs = 0;
   let clickAcc = 0;
 
-  while (totalMs < MAX_SIM_MS && record.hard === null) {
+  while (totalMs < MAX_SIM_MS && record.hard === null && state.combat.stage <= MAX_SIM_STAGE) {
     const tick = advance(state, STEP_MS);
     state = tick.state;
     totalMs += STEP_MS;

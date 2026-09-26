@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applyAction, getEffectiveStats, getUpgradeCost } from '../src/index';
-import { computeGearStats, upgradeCost } from '../src/balance';
+import { BALANCE, computeGearStats, upgradeCost } from '../src/balance';
 import { WEAPON_DEFINITION } from '../src/content';
 import { makeGear, makeState } from './helpers';
 
@@ -8,7 +8,10 @@ describe('gear — equip', () => {
   it('equipping a higher itemLevel weapon raises effective stats', () => {
     const weapon = makeGear(5);
     const start = makeState({ bag: [weapon] });
-    expect(getEffectiveStats(start)).toEqual({ autoDps: 1, clickDamage: 2 });
+    expect(getEffectiveStats(start)).toEqual({
+      autoDps: BALANCE.baseAutoDps,
+      clickDamage: BALANCE.baseClickDamage,
+    });
 
     const { state, events } = applyAction(start, { type: 'equip', instanceId: weapon.id });
 
@@ -17,10 +20,10 @@ describe('gear — equip', () => {
     expect(state.gear.bag).toHaveLength(0);
 
     const stats = getEffectiveStats(state);
-    expect(stats.autoDps).toBe(1 + weapon.dps);
-    expect(stats.clickDamage).toBe(2 + weapon.clickDamage);
-    expect(stats.autoDps).toBeGreaterThan(1);
-    expect(stats.clickDamage).toBeGreaterThan(2);
+    expect(stats.autoDps).toBe(BALANCE.baseAutoDps + weapon.dps);
+    expect(stats.clickDamage).toBe(BALANCE.baseClickDamage + weapon.clickDamage);
+    expect(stats.autoDps).toBeGreaterThan(BALANCE.baseAutoDps);
+    expect(stats.clickDamage).toBeGreaterThan(BALANCE.baseClickDamage);
   });
 
   it('returns the previously equipped weapon to the bag', () => {
@@ -68,8 +71,8 @@ describe('gear — upgrade', () => {
 
     const stats = getEffectiveStats(state);
     const expected = computeGearStats(WEAPON_DEFINITION, 5, 1);
-    expect(stats.autoDps).toBe(1 + expected.dps);
-    expect(stats.clickDamage).toBe(2 + expected.clickDamage);
+    expect(stats.autoDps).toBe(BALANCE.baseAutoDps + expected.dps);
+    expect(stats.clickDamage).toBe(BALANCE.baseClickDamage + expected.clickDamage);
     expect(stats.autoDps).toBeGreaterThan(getEffectiveStats(start).autoDps);
     expect(stats.clickDamage).toBeGreaterThan(getEffectiveStats(start).clickDamage);
   });

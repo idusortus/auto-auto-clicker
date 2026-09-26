@@ -117,5 +117,8 @@ export function loadGame(save: SaveGame): GameState {
   if (save.version !== CURRENT_SAVE_VERSION) {
     throw new Error(`Unsupported save version ${save.version}; expected ${CURRENT_SAVE_VERSION}`);
   }
+  if (save.state === null || typeof save.state !== 'object' || Array.isArray(save.state)) {
+    throw new Error(`Invalid save: version ${save.version} has a missing or invalid state`);
+  }
   return cloneGameState(save.state);
 }

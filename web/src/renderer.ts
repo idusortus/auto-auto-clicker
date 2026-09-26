@@ -324,8 +324,9 @@ function offlineText(summary: OfflineSummary): string {
 }
 
 function hpPercent(state: GameState): number {
-  if (state.combat.enemyMaxHp <= 0) return 0;
-  const ratio = state.combat.enemyHp / state.combat.enemyMaxHp;
+  const { enemyHp, enemyMaxHp } = state.combat;
+  if (!Number.isFinite(enemyHp) || !Number.isFinite(enemyMaxHp) || enemyMaxHp <= 0) return 0;
+  const ratio = enemyHp / enemyMaxHp;
   return Math.max(0, Math.min(1, ratio));
 }
 

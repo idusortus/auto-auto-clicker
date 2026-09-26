@@ -1,20 +1,33 @@
 # auto-auto-clicker — Project Vision
 
 ## One-line
-TODO — write a one-line vision statement.
+A browser-playable idle clicker whose entire simulation/economy lives in a standalone,
+platform-agnostic TypeScript engine that can later be lifted into a React Native/Expo app.
 
 ## Goal
-TODO — declare the primary goal.
+Build a browser-playable idle clicker (defeat enemies → gear drops → upgrade gear →
+periodic boss checks, no real-time-skill combat) with all simulation and economy logic
+isolated in a standalone `engine-core`, and prove the pacing target (~6 min soft boss
+check, ~54 min hard wall) with an automated headless simulation rather than manual play.
 
 ## Stack
-- svelte and supabase
+- TypeScript (strict) + Vite + vanilla DOM for the browser host; a pure TypeScript engine
+  (`engine-core`) with zero runtime dependencies
+- Local-only this phase: no backend, no auth, no Supabase, no network calls
 
 ## Frameworks / Key Libraries
-- svelt3 and supabase
+- Vite (dev server + build), Vitest (engine unit tests), tsx (headless sim), Playwright
+  (mobile smoke test), npm workspaces. No UI framework.
 
 ## Quickstart
 ```bash
-TODO — add install + run commands here.
+npm install
+npm run dev        # play at http://localhost:5173
+npm run test       # engine-core unit tests (Vitest)
+npm run sim        # headless pacing proof (soft ~6 min, hard ~54 min)
+npm run smoke      # Playwright mobile-viewport smoke test
+npm run build      # engine-core typecheck + production web bundle
+npm run typecheck  # typecheck engine-core + web
 ```
 
 ## Hard Constraints
@@ -24,7 +37,11 @@ None declared.
 _(populate as you discover things this project will NOT do)_
 
 ## Success Criteria
-_(populate with measurable outcomes — what does "done" look like?)_
+`npm run sim` passes within tolerance (soft boss check ~6 min ±20%, hard progression wall
+~54 min ±20%, hard-asserted for every sweep seed), `npm run test` passes, `npm run dev`
+serves a playable mobile-shaped app (validated by the Playwright smoke test at 390×844
+with ≥44 px touch targets), and `engine-core` has zero imports from `/web` (the engine is
+pure and platform-agnostic).
 
 ---
 

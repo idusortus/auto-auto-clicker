@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { advance, applyAction, createGame, getEffectiveStats } from '../src/index';
-import { enemyMaxHp, goldReward, isBoss } from '../src/balance';
+import { advance, applyAction, getEffectiveStats } from '../src/index';
+import { BALANCE, enemyMaxHp, goldReward, isBoss } from '../src/balance';
 import { makeState } from './helpers';
 
 describe('advance — auto damage', () => {
   it('applies integer auto-damage proportional to deltaMs', () => {
-    const start = createGame(1, 0);
+    // Synthesized 1 auto-DPS against a 25 HP enemy: exercises the carry rule
+    // without pinning any live balance value.
+    const start = makeState({ stage: 1, enemyHp: 25, enemyMaxHp: 25, baseAutoDps: 1, baseClickDamage: 0 });
     expect(start.combat.enemyHp).toBe(25);
 
     const oneSecond = advance(start, 1000);
@@ -22,50 +24,84 @@ describe('advance — auto damage', () => {
   });
 
   it('carries fractional damage so long-run DPS is exact', () => {
-    const baseline = createGame(2, 0).combat.enemyHp;
+    const baseline = 1000;
+    const setup = () =>
+      makeState({ stage: 1, enemyHp: baseline, enemyMaxHp: baseline, baseAutoDps: 1, baseClickDamage: 0 });
 
-    let whole = createGame(2, 0);
+    let whole = setup();
     for (let i = 0; i < 10; i += 1) whole = advance(whole, 1000).state;
     expect(whole.combat.enemyHp).toBe(baseline - 10);
     expect(whole.combat.damageCarry).toBe(0);
 
-    let fractional = createGame(3, 0);
+    let fractional = setup();
     for (let i = 0; i < 10; i += 1) fractional = advance(fractional, 500).state;
     expect(fractional.combat.enemyHp).toBe(baseline - 5);
     expect(fractional.combat.damageCarry).toBe(0);
   });
 
   it('a single large deltaMs clears multiple enemies and accrues gold/stage', () => {
-    const start = createGame(11, 0);
-    const { state, events } = advance(start, 200_000);
+    // Synthesize the budget from the enemy HP curve: exactly enough to kill
+    // stages 1-3 and leave 1 HP on stage 4, independent of live balance.
+    const budget = enemyMaxHp(1) + enemyMaxHp(2) + enemyMaxHp(3) + (enemyMaxHp(4) - 1);
+    const start = makeState({
+      stage: 1,
+      enemyHp: enemyMaxHp(1),
+      enemyMaxHp: enemyMaxHp(1),
+      baseAutoDps: 1,
+      baseClickDamage: 0,
+    });
+    const { state, events } = advance(start, budget * 1000);
 
     expect(state.combat.stage).toBe(4);
-    expect(state.combat.enemyHp).toBe(enemyMaxHp(4) - 82);
+    expect(state.combat.enemyHp).toBe(1);
     expect(state.player.gold).toBe(goldReward(1) + goldReward(2) + goldReward(3));
     expect(events.filter((event) => event.type === 'enemyKilled')).toHaveLength(3);
     expect(events.filter((event) => event.type === 'stageEntered')).toHaveLength(3);
   });
 
-  it('is a no-op for non-positive deltaMs', () => {
-    const start = createGame(12, 0);
-    const result = advance(start, 0);
-    expect(result.state).toBe(start);
-    expect(result.events).toEqual([]);
+  it('is a no-op for non-positive or non-finite deltaMs', () => {
+    // Play a little so the carry is non-trivial, then prove malformed deltas
+    // cannot poison totalPlayedMs / damageCarry / the eventual save JSON.
+    const start = advance(
+      makeState({ stage: 1, enemyHp: 100, enemyMaxHp: 100, baseAutoDps: 1, baseClickDamage: 0 }),
+      500,
+    ).state;
+    expect(start.combat.damageCarry).toBeCloseTo(0.5, 10);
+
+    for (const deltaMs of [0, -1, NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const result = advance(start, deltaMs);
+      expect(result.state).toBe(start);
+      expect(result.events).toEqual([]);
+      expect(result.state).toEqual(start);
+    }
+
+    expect(allNumbersFinite(start)).toBe(true);
   });
 });
 
+/** No field in the state tree may be a non-finite number after an advance. */
+function allNumbersFinite(value: unknown): boolean {
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (Array.isArray(value)) return value.every(allNumbersFinite);
+  if (value !== null && typeof value === 'object') {
+    return Object.values(value).every(allNumbersFinite);
+  }
+  return true;
+}
+
 describe('actions — click', () => {
   it('deals exactly clickDamage', () => {
-    const start = createGame(4, 0);
-    expect(getEffectiveStats(start).clickDamage).toBe(2);
+    const start = makeState({ stage: 1, enemyHp: 10, enemyMaxHp: 10 });
+    expect(getEffectiveStats(start).clickDamage).toBe(BALANCE.baseClickDamage);
 
     const { state, events } = applyAction(start, { type: 'click' });
-    expect(state.combat.enemyHp).toBe(23);
-    expect(events).toContainEqual({ type: 'damageDealt', amount: 2, source: 'click' });
+    expect(state.combat.enemyHp).toBe(10 - BALANCE.baseClickDamage);
+    expect(events).toContainEqual({ type: 'damageDealt', amount: BALANCE.baseClickDamage, source: 'click' });
   });
 
   it('a kill awards gold and increments the stage', () => {
-    const start = makeState({ enemyHp: 2, enemyMaxHp: 2 });
+    // Sized to the live click damage so the kill is hit regardless of tuning.
+    const start = makeState({ enemyHp: BALANCE.baseClickDamage, enemyMaxHp: BALANCE.baseClickDamage });
     const { state, events } = applyAction(start, { type: 'click' });
 
     expect(state.combat.stage).toBe(2);
@@ -88,11 +124,13 @@ describe('boss stages', () => {
     expect(isBoss(10)).toBe(true);
 
     const bossHp = enemyMaxHp(10);
-    expect(bossHp).toBe(Math.floor(25 * Math.pow(1.5, 9) * 8));
+    expect(bossHp).toBe(Math.floor(BALANCE.baseHp * Math.pow(BALANCE.hpGrowth, 9) * BALANCE.bossHpMultiplier));
     expect(bossHp).toBeGreaterThan(enemyMaxHp(9) * 2);
 
     const bossGold = goldReward(10);
-    expect(bossGold).toBe(Math.floor(8 * Math.pow(1.45, 9) * 4));
+    expect(bossGold).toBe(
+      Math.floor(BALANCE.baseGold * Math.pow(BALANCE.goldGrowth, 9) * BALANCE.bossGoldMultiplier),
+    );
     expect(bossGold).toBeGreaterThan(goldReward(9) * 2);
   });
 

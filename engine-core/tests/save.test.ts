@@ -26,6 +26,17 @@ describe('save serialization', () => {
     expect(() => loadGame({ version: 2, savedAt: 0, state })).toThrow(/Unsupported save version/);
     expect(() => loadGame({ version: 0, savedAt: 0, state })).toThrow(/Unsupported save version/);
   });
+
+  it('throws a descriptive error for a valid version with a missing or invalid state', () => {
+    const nullState = { version: 1, savedAt: 0, state: null } as unknown as SaveGame;
+    expect(() => loadGame(nullState)).toThrow(/version 1 has a missing or invalid state/);
+
+    const missingState = { version: 1, savedAt: 0 } as unknown as SaveGame;
+    expect(() => loadGame(missingState)).toThrow(/version 1 has a missing or invalid state/);
+
+    const arrayState = { version: 1, savedAt: 0, state: [] } as unknown as SaveGame;
+    expect(() => loadGame(arrayState)).toThrow(/version 1 has a missing or invalid state/);
+  });
 });
 
 describe('LocalStorageSaveRepository', () => {

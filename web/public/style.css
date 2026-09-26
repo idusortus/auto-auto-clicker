@@ -1,22 +1,103 @@
 /*
- * style.css — functional layout + minimal styling for the renderer.
+ * style.css — visual system for the /web renderer (Phase 4b).
  *
- * Phase 4 is intentionally plain: correct mobile shape (390x844), no horizontal
- * scroll, touch targets >= 44px (primary >= 56px), and safe-area insets. A
- * designer polishes the visuals in Phase 4b; keep class names stable.
+ * Aesthetic: "late-shift grind rig". A restrained blue-black instrument
+ * housing (#08090c) with one strong ember accent (#ff9d3c) and a blood red
+ * reserved exclusively for enemy health. The arena is the single bold element;
+ * everything else is quiet, flat, and legible at a glance.
+ *
+ * Typography: two system-only families with distinct jobs.
+ *   --font-ui    system sans for labels, prose, and button text.
+ *   --font-data  system monospace for every numeral (HUD readouts, HP, costs,
+ *                item stats). This is a numbers game, so numbers get the
+ *                instrument face; prose never does. Zero network requests.
+ *
+ * Contract: class names and data-testid/data-role hooks are owned by
+ * src/renderer.ts and MUST NOT change here. Every hook used by the renderer is
+ * styled below. DOM structure is untouched.
+ *
+ * Touch contract: all interactive elements >= 44px; the enemy arena and the
+ * primary (upgrade) button >= 56px; the arena is >= 120x120 (in practice
+ * ~358x200 at 390px wide).
  */
 
+/* ==========================================================================
+   1. Design tokens
+   ========================================================================== */
+
 :root {
-  --bg: #0b0e14;
-  --panel: #151a24;
-  --panel-2: #1d2430;
-  --line: #2a3242;
-  --text: #e8edf5;
-  --muted: #9aa7bd;
-  --accent: #4f8cff;
-  --danger: #ff5c5c;
-  --radius: 12px;
+  color-scheme: dark;
+
+  /* Housing: surfaces from deepest void to raised plate. */
+  --ink-900: #08090c;
+  --ink-850: #0c0e13;
+  --ink-800: #11141b;
+  --ink-700: #171b24;
+  --ink-600: #1e2330;
+  --ink-500: #262c3a;
+
+  /* Structure: hairlines and stronger edges. */
+  --line: #262c39;
+  --line-strong: #394152;
+
+  /* Text, descending emphasis. All body tiers clear 4.5:1 on panels. */
+  --text: #eef1f7;
+  --text-dim: #aeb7c8;
+  --text-muted: #98a2b8;
+  --text-disabled: #6b7688;
+
+  /* The single accent: ember. Reserved for gold, the active weapon rail,
+     the free/primary action, and focus rings. */
+  --ember: #ff9d3c;
+  --ember-hi: #ffb257;
+  --ember-lo: #e07d15;
+  --ember-edge: #b8640a;
+  --ember-ink: #1c1206;
+
+  /* Blood: enemy health only. */
+  --danger: #ff4d5e;
+  --danger-dim: #ff8f99;
+  --hp-hi: #ff6f63;
+  --hp-lo: #cf2a41;
+
+  /* Geometry. */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-pill: 999px;
+
+  /* Spacing. */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+
+  /* Type. */
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-data: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --fs-micro: 10px;
+  --fs-xs: 11px;
+  --fs-sm: 13px;
+  --fs-base: 15px;
+  --fs-lg: 18px;
+  --fs-readout: clamp(17px, 5.4vw, 21px);
+  --fs-name: clamp(22px, 7vw, 30px);
+
+  /* Motion. */
+  --t-fast: 90ms;
+  --t-med: 160ms;
+  --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
+
+  /* Elevation. */
+  --shadow-plate: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 10px 30px rgba(0, 0, 0, 0.35);
+  --shadow-modal: 0 24px 60px rgba(0, 0, 0, 0.6);
 }
+
+/* ==========================================================================
+   2. Reset & base
+   ========================================================================== */
 
 *,
 *::before,
@@ -24,93 +105,160 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;
   padding: 0;
+  min-height: 100dvh;
+  background: var(--ink-900);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  overscroll-behavior-y: none;
 }
 
 body {
-  min-height: 100dvh;
-  background: var(--bg);
   color: var(--text);
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  line-height: 1.4;
+  font-family: var(--font-ui);
+  font-size: var(--fs-base);
+  line-height: 1.45;
   overflow-x: hidden;
+  overscroll-behavior-y: none;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: var(--ember);
+  color: var(--ember-ink);
 }
 
 #app {
   min-height: 100dvh;
 }
 
-/* ---------- app shell ---------- */
+p {
+  margin: 0;
+}
+
+/* ==========================================================================
+   3. App shell
+   ========================================================================== */
 
 .app {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--sp-3);
   width: 100%;
   max-width: 480px;
   min-height: 100dvh;
   margin: 0 auto;
-  padding: calc(12px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right))
-    calc(12px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+  padding: calc(var(--sp-3) + env(safe-area-inset-top)) calc(var(--sp-4) + env(safe-area-inset-right))
+    calc(var(--sp-5) + env(safe-area-inset-bottom)) calc(var(--sp-4) + env(safe-area-inset-left));
 }
 
-/* ---------- heads-up display ---------- */
+/* ==========================================================================
+   4. HUD — one instrument strip, not three cards
+   ========================================================================== */
 
 .hud {
   display: flex;
-  gap: 8px;
+  gap: 0;
+  background: linear-gradient(180deg, var(--ink-700), var(--ink-800));
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-plate);
+  overflow: hidden;
 }
 
 .hud__stat {
+  display: flex;
   flex: 1 1 0;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
-  padding: 8px 10px;
-  background: var(--panel);
-  border-radius: var(--radius);
+  padding: var(--sp-2) var(--sp-3) 10px;
+}
+
+.hud__stat + .hud__stat {
+  border-left: 1px solid var(--line);
+}
+
+/* Gold is the currency the grind chases: widest cell, ember readout.
+   DPS is derived, so it stays recessive. nth-child-free, resilient to
+   renderer edits because it keys off the readout the renderer writes. */
+.hud__stat:has([data-testid="gold"]) {
+  flex-grow: 1.4;
 }
 
 .hud__label {
   display: block;
-  font-size: 12px;
-  color: var(--muted);
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
 .hud__value {
   display: block;
-  font-size: 20px;
+  font-family: var(--font-data);
+  font-size: var(--fs-readout);
   font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
 
-/* ---------- enemy / attack area ---------- */
+.hud__stat:has([data-testid="gold"]) .hud__value {
+  color: var(--ember);
+}
+
+.hud__stat:has([data-testid="dps"]) .hud__value {
+  color: var(--text-dim);
+}
+
+/* ==========================================================================
+   5. Arena — the enemy target (hero element)
+   ========================================================================== */
 
 .stage {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  gap: var(--sp-2);
 }
 
 .enemy {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: var(--sp-3);
   width: 100%;
-  max-width: 340px;
   min-width: 120px;
-  min-height: 120px;
-  padding: 20px;
+  min-height: 200px;
+  padding: var(--sp-6) var(--sp-4) var(--sp-5);
   border: 2px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel);
+  border-radius: var(--r-lg);
+  /* Scanline texture + vignette: the arena reads as a lit screen. */
+  background-image: repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.018) 0 1px,
+      rgba(255, 255, 255, 0) 1px 3px
+    ),
+    radial-gradient(120% 90% at 50% 0%, #1b2130 0%, #10131a 62%, #0b0e14 100%);
   color: inherit;
   font: inherit;
   text-align: center;
@@ -118,93 +266,184 @@ body {
   user-select: none;
   -webkit-user-select: none;
   touch-action: manipulation;
+  -webkit-appearance: none;
+  appearance: none;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03), inset 0 0 48px rgba(0, 0, 0, 0.55);
+  transition: transform var(--t-fast) var(--ease), border-color var(--t-fast) linear,
+    box-shadow var(--t-fast) linear;
+}
+
+/* Hit spark: the one piece of motion, and it answers the player's tap directly. */
+.enemy::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(90% 70% at 50% 50%, rgba(255, 180, 90, 0.45), rgba(255, 140, 40, 0) 70%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease-out;
 }
 
 .enemy:active {
-  transform: scale(0.99);
+  transform: scale(0.985);
+  border-color: var(--line-strong);
+}
+
+.enemy:active::after {
+  opacity: 1;
+  transition-duration: 0ms;
 }
 
 .enemy:focus-visible {
-  outline: 3px solid var(--accent);
+  outline: 3px solid var(--ember);
   outline-offset: 2px;
 }
 
 .enemy__badge {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--danger);
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 10px;
+  border: 1px solid rgba(255, 77, 94, 0.55);
+  border-radius: var(--r-pill);
+  background: rgba(255, 77, 94, 0.12);
+  color: var(--danger-dim);
+  font-size: var(--fs-micro);
+  font-weight: 800;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
 }
 
 .enemy__name {
-  font-size: 24px;
+  font-size: var(--fs-name);
   font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
 }
+
+/* Boss state is derived from the renderer's own `hidden` toggle on the badge,
+   so no extra class or markup is needed. */
+.enemy:has(.enemy__badge:not([hidden])) {
+  border-color: #7a2833;
+  background-image: repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.018) 0 1px,
+      rgba(255, 255, 255, 0) 1px 3px
+    ),
+    radial-gradient(120% 90% at 50% 0%, #2a1420 0%, #160d13 62%, #0b0e14 100%);
+  box-shadow: inset 0 0 0 1px rgba(255, 77, 94, 0.12), inset 0 0 48px rgba(120, 10, 30, 0.4);
+}
+
+.enemy:has(.enemy__badge:not([hidden])) .enemy__name {
+  color: #ffd2d7;
+}
+
+/* ==========================================================================
+   6. HP meter — segmented, obvious depletion
+   ========================================================================== */
 
 .enemy__hp {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   width: 100%;
 }
 
 .hp-bar {
+  position: relative;
   display: block;
   width: 100%;
-  height: 12px;
-  background: var(--line);
-  border-radius: 999px;
+  height: 14px;
+  border: 1px solid #2b3140;
+  border-radius: var(--r-pill);
+  background: #0a0c11;
   overflow: hidden;
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.7);
+}
+
+/* Quarter ticks sit above the fill so they stay visible as it drains. */
+.hp-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.55) 0 1px, rgba(0, 0, 0, 0) 1px 25%);
+  pointer-events: none;
 }
 
 .hp-bar__fill {
   display: block;
   width: 100%;
   height: 100%;
-  background: var(--danger);
+  border-radius: inherit;
+  background: linear-gradient(180deg, var(--hp-hi), var(--hp-lo));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 0 12px rgba(255, 77, 94, 0.35);
+  transition: width var(--t-med) linear;
 }
 
 .enemy__hp-text {
-  font-size: 14px;
-  color: var(--muted);
+  font-family: var(--font-data);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
 }
 
 .hint {
-  margin: 0;
-  font-size: 13px;
-  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  color: var(--text-muted);
 }
 
-/* ---------- panels, cards, bag ---------- */
+/* An empty hint (the renderer clears the upgrade hint when a weapon is
+   equipped) should not leave a dead gap in the panel. */
+.hint:empty {
+  display: none;
+}
+
+/* ==========================================================================
+   7. Panels
+   ========================================================================== */
 
 .panel {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  background: var(--panel);
-  border-radius: var(--radius);
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  background: var(--ink-700);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
 }
 
 .panel__header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--sp-2);
+  padding-bottom: var(--sp-2);
+  border-bottom: 1px solid var(--line);
 }
 
 .panel__title {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-xs);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 
 .panel__meta {
-  font-size: 13px;
-  color: var(--muted);
+  font-family: var(--font-data);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
+
+/* ==========================================================================
+   8. Equipped weapon card
+   ========================================================================== */
 
 .equipped {
   display: flex;
@@ -213,27 +452,38 @@ body {
 .card {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 10px;
-  background: var(--panel-2);
-  border-radius: 10px;
+  padding: var(--sp-3);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--ember);
+  border-radius: var(--r-md);
+  background: linear-gradient(180deg, var(--ink-600), var(--ink-700));
 }
 
 .card__title {
   margin: 0 0 6px;
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
 }
 
 .card__stats {
-  margin: 0;
-  font-size: 13px;
-  color: var(--muted);
+  font-family: var(--font-data);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
+
+/* ==========================================================================
+   9. Bag
+   ========================================================================== */
 
 .bag {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-2);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -243,106 +493,263 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 10px;
-  background: var(--panel-2);
-  border-radius: 10px;
+  gap: var(--sp-3);
+  min-height: 60px;
+  padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--ink-600);
 }
 
 .bag__info {
+  flex: 1 1 auto;
   min-width: 0;
-  font-size: 13px;
-  color: var(--muted);
+  font-family: var(--font-data);
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
 
-/* ---------- buttons (all touch targets >= 44px) ---------- */
+/* ==========================================================================
+   10. Buttons
+   ========================================================================== */
 
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
   min-height: 44px;
   padding: 10px 16px;
-  border: 1px solid transparent;
-  border-radius: 10px;
-  background: var(--panel-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--ink-500);
   color: var(--text);
-  font: inherit;
-  font-weight: 600;
+  font-family: var(--font-ui);
+  font-size: var(--fs-base);
+  font-weight: 650;
+  line-height: 1.1;
+  text-align: center;
   cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
   touch-action: manipulation;
+  -webkit-appearance: none;
+  appearance: none;
+  transition: transform var(--t-fast) var(--ease), background-color var(--t-fast) linear,
+    border-color var(--t-fast) linear, filter var(--t-fast) linear;
 }
 
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.btn:active {
+  transform: translateY(1px) scale(0.985);
+  filter: brightness(1.08);
 }
 
+.btn:focus-visible {
+  outline: 3px solid var(--ember);
+  outline-offset: 2px;
+}
+
+/* Primary = the one ember action on screen (upgrade, free wait, continue).
+   Dark ink on amber, not white on amber: legible and unmistakably game-HUD. */
 .btn--primary {
   min-height: 56px;
-  background: var(--accent);
-  color: #ffffff;
+  padding: 14px 18px;
+  border-color: var(--ember-edge);
+  background: linear-gradient(180deg, var(--ember-hi), var(--ember-lo));
+  color: var(--ember-ink);
+  font-size: 16px;
+  letter-spacing: 0.01em;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 6px 18px rgba(255, 140, 30, 0.18);
+}
+
+.btn--primary:active {
+  filter: brightness(0.95);
 }
 
 .btn--ghost {
   background: transparent;
-  border-color: var(--line);
+  border-color: var(--line-strong);
+  color: var(--text-dim);
+}
+
+.btn--ghost:active {
+  background: var(--ink-600);
 }
 
 .btn--small {
   min-height: 44px;
   padding: 8px 14px;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
 }
 
 .btn--wide {
   width: 100%;
 }
 
-/* ---------- overlays (choices + offline summary) ---------- */
+/* Disabled must read as disabled: no accent, no lift, dashed edge, recessive
+   ink. Placed after variants so it wins at equal specificity. */
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  transform: none;
+  filter: none;
+  cursor: not-allowed;
+  border-style: dashed;
+  border-color: var(--line);
+  background: transparent;
+  color: var(--text-disabled);
+  box-shadow: none;
+}
+
+/* ==========================================================================
+   11. Overlays — choice sheet (bottom) + offline dialog (centered)
+   ========================================================================== */
 
 .overlay {
   position: fixed;
   inset: 0;
-  z-index: 10;
+  z-index: 50;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: calc(16px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right))
-    calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
-  background: rgba(4, 7, 12, 0.72);
+  padding: calc(var(--sp-4) + env(safe-area-inset-top)) calc(var(--sp-4) + env(safe-area-inset-right))
+    calc(var(--sp-4) + env(safe-area-inset-bottom)) calc(var(--sp-4) + env(safe-area-inset-left));
+  background: rgba(3, 5, 8, 0.72);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
 }
 
-.overlay[hidden] {
-  display: none;
+/* The wall/boss decision blocks play, so it arrives as a thumb-reachable
+   bottom sheet. Keyed off the note element only the choice overlay has. */
+.overlay:has(.overlay__note) {
+  align-items: flex-end;
 }
 
 .overlay__card {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--sp-3);
   width: 100%;
-  max-width: 360px;
-  padding: 16px;
-  background: var(--panel);
-  border-radius: var(--radius);
+  max-width: 420px;
+  padding: var(--sp-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  background: linear-gradient(180deg, var(--ink-700), var(--ink-800));
+  box-shadow: var(--shadow-modal);
+}
+
+.overlay:has(.overlay__note) .overlay__card {
+  margin-bottom: var(--sp-2);
+}
+
+@keyframes overlay-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.overlay:not([hidden]) .overlay__card {
+  animation: overlay-rise var(--t-med) var(--ease) both;
 }
 
 .overlay__title {
   margin: 0;
-  font-size: 18px;
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
-.overlay__body,
-.overlay__note {
-  margin: 0;
+.overlay__body {
   font-size: 14px;
-  color: var(--muted);
+  line-height: 1.5;
+  color: var(--text-dim);
 }
 
 .overlay__note {
   font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
 }
 
 .overlay__actions {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+}
+
+/* ==========================================================================
+   12. Fine-pointer hover only (never sticky on touch)
+   ========================================================================== */
+
+@media (hover: hover) and (pointer: fine) {
+  .btn:not(:disabled):hover {
+    filter: brightness(1.1);
+  }
+
+  .btn--ghost:not(:disabled):hover {
+    background: var(--ink-600);
+    border-color: var(--line-strong);
+  }
+
+  .enemy:hover {
+    border-color: var(--line-strong);
+  }
+
+  .bag__item:hover {
+    border-color: var(--line-strong);
+  }
+}
+
+/* ==========================================================================
+   13. Reduced motion
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+
+  .overlay:not([hidden]) .overlay__card {
+    animation: none;
+  }
+
+  /* Keep visible press feedback without movement. */
+  .enemy:active {
+    transform: none;
+    filter: brightness(1.18);
+  }
+
+  .btn:active {
+    transform: none;
+    filter: brightness(1.16);
+  }
+
+  .btn--primary:active {
+    filter: brightness(0.92);
+  }
+}
+
+/* ==========================================================================
+   14. Higher contrast preference
+   ========================================================================== */
+
+@media (prefers-contrast: more) {
+  :root {
+    --line: #3a4356;
+    --line-strong: #4d5870;
+    --text-dim: #c3ccdd;
+    --text-muted: #c3ccdd;
+    --text-disabled: #8b95a8;
+  }
 }

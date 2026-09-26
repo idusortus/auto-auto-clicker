@@ -9,10 +9,10 @@ and Copilot all read `AGENTS.md` per the [agents.md](https://agents.md) conventi
 TODO — declare the primary goal.
 
 ## Stack
-svelte and supabase
+typescript, vite, vanilla dom, pure ts engine — local-only (no backend, no supabase, no network)
 
 ## Frameworks / Key Libraries
-svelt3 and supabase
+vite, vitest, tsx, playwright, npm workspaces (no UI framework)
 
 ## Constraints
 None declared.

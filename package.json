@@ -14,7 +14,7 @@
     "test": "npm run test -w engine-core",
     "sim": "npm run sim -w sim",
     "smoke": "npm run smoke -w web",
-    "typecheck": "npm run typecheck -w engine-core && npm run typecheck -w web"
+    "typecheck": "npm run typecheck -w engine-core && npm run typecheck -w web && npm run typecheck -w sim"
   },
   "devDependencies": {
     "typescript": "^5"
