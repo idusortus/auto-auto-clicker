@@ -35,13 +35,14 @@ export interface EnemyDefinition {
   bossGoldMultiplier: number;
 }
 
+// SOURCE fields only. Battle stats (`dps`, `clickDamage`) are derived from
+// `(definitionId, itemLevel, upgradeLevel)` via `computeGearStats` and are
+// computed on read, never persisted.
 export interface GearInstance {
   id: string;
   definitionId: string;
   itemLevel: number;
   upgradeLevel: number;
-  dps: number;
-  clickDamage: number;
 }
 
 export interface PendingChoice {
@@ -58,15 +59,15 @@ export interface GameState {
     createdAt: number;
     totalPlayedMs: number;
   };
+  // SOURCE fields only. The base auto/click stats are `BALANCE.baseAutoDps` /
+  // `BALANCE.baseClickDamage`; the enemy's max HP is `enemyMaxHp(combat.stage)`.
+  // All three are computed on read via `getEffectiveStats` / `getEnemyMaxHp`.
   player: {
     gold: number;
-    baseAutoDps: number;
-    baseClickDamage: number;
   };
   combat: {
     stage: number;
     enemyHp: number;
-    enemyMaxHp: number;
     damageCarry: number;
   };
   gear: {

@@ -21,7 +21,7 @@ describe('purity', () => {
   });
 
   it('kill, equip, upgrade, and choice actions leave the input untouched', () => {
-    const kill = deepFreeze(makeState({ stage: 9, enemyHp: 1, enemyMaxHp: 1 }));
+    const kill = deepFreeze(makeState({ stage: 9, enemyHp: 1 }));
     const killBefore = snapshot(kill);
     applyAction(kill, { type: 'click' });
     expect(snapshot(kill)).toBe(killBefore);

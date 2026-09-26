@@ -48,14 +48,14 @@ export function killCurrentEnemy(draft: GameState): GameEvent[] {
   events.push({ type: 'enemyKilled', stage: killedStage, gold, drops });
 
   const nextStage = killedStage + 1;
+  const maxHp = enemyMaxHp(nextStage);
   draft.combat.stage = nextStage;
-  draft.combat.enemyMaxHp = enemyMaxHp(nextStage);
-  draft.combat.enemyHp = draft.combat.enemyMaxHp;
+  draft.combat.enemyHp = maxHp;
   events.push({
     type: 'stageEntered',
     stage: nextStage,
     isBoss: isBoss(nextStage),
-    maxHp: draft.combat.enemyMaxHp,
+    maxHp,
   });
 
   events.push(...evaluateStageEntry(draft));

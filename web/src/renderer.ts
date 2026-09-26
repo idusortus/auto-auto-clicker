@@ -8,6 +8,8 @@
 
 import {
   getEffectiveStats,
+  getEnemyMaxHp,
+  getGearStats,
   getProjectedKillMs,
   getUpgradeCost,
   isBoss,
@@ -169,7 +171,8 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     refs.enemyName.textContent = boss ? 'Boss' : 'Enemy';
     refs.bossBadge.hidden = !boss;
 
-    refs.enemyHp.textContent = `${formatInt(state.combat.enemyHp)} / ${formatInt(state.combat.enemyMaxHp)}`;
+    const maxHp = getEnemyMaxHp(state);
+    refs.enemyHp.textContent = `${formatInt(Math.min(state.combat.enemyHp, maxHp))} / ${formatInt(maxHp)}`;
     refs.hpFill.style.width = `${hpPercent(state) * FULL_PERCENT}%`;
 
     const equippedWeapon = state.gear.equipped.weapon;
@@ -280,9 +283,12 @@ function equippedNodes(weapon: GearInstance | null): Node[] {
 
   const stats = document.createElement('p');
   stats.className = 'card__stats';
-  stats.textContent = weapon
-    ? `DPS ${formatInt(weapon.dps)} · click ${formatInt(weapon.clickDamage)} · upgrades ${formatInt(weapon.upgradeLevel)}`
-    : 'Equip a drop from your bag.';
+  if (weapon) {
+    const gear = getGearStats(weapon);
+    stats.textContent = `DPS ${formatInt(gear.dps)} · click ${formatInt(gear.clickDamage)} · upgrades ${formatInt(weapon.upgradeLevel)}`;
+  } else {
+    stats.textContent = 'Equip a drop from your bag.';
+  }
 
   card.append(title, stats);
   return [card];
@@ -292,9 +298,10 @@ function bagItemNode(item: GearInstance): Node {
   const li = document.createElement('li');
   li.className = 'bag__item';
 
+  const gear = getGearStats(item);
   const info = document.createElement('span');
   info.className = 'bag__info';
-  info.textContent = `Level ${formatInt(item.itemLevel)} · DPS ${formatInt(item.dps)} · click ${formatInt(item.clickDamage)}`;
+  info.textContent = `Level ${formatInt(item.itemLevel)} · DPS ${formatInt(gear.dps)} · click ${formatInt(gear.clickDamage)}`;
 
   const equipButton = document.createElement('button');
   equipButton.className = 'btn btn--small';
@@ -324,7 +331,8 @@ function offlineText(summary: OfflineSummary): string {
 }
 
 function hpPercent(state: GameState): number {
-  const { enemyHp, enemyMaxHp } = state.combat;
+  const enemyHp = state.combat.enemyHp;
+  const enemyMaxHp = getEnemyMaxHp(state);
   if (!Number.isFinite(enemyHp) || !Number.isFinite(enemyMaxHp) || enemyMaxHp <= 0) return 0;
   const ratio = enemyHp / enemyMaxHp;
   return Math.max(0, Math.min(1, ratio));

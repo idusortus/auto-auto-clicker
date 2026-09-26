@@ -3,9 +3,11 @@
 > Cross-session memory for all agents. Update on exit; read on entry.
 
 ## Status
-Prototype complete (Phases 0–6), plus the 2026-09-26 economy reversal (drops-primary) and
-the follow-up review-fix round (`loadGame` recomputes the derived gear-stat cache; the sim's
-attribution now reports net-of-reset shares with the reset loss charged to gold).
+Prototype complete (Phases 0–6), plus the 2026-09-26 economy reversal (drops-primary), the
+follow-up review-fix round (`loadGame` recomputes the derived gear-stat cache; the sim's
+attribution now reports net-of-reset shares with the reset loss charged to gold), and the
+structural save-schema v2 change (derived values are no longer persisted; v1 saves migrate
+on load).
 All acceptance gates green:
 
 - `npm run test` → 45 passed (7 files), exit 0.
@@ -15,6 +17,12 @@ All acceptance gates green:
   `goldNet = goldGross − resetLoss = 0`; free `wait` grant ≈4.5%), exit 0.
 - `npm run smoke` → 4 passed (Playwright mobile Chromium, 390×844), exit 0.
 - `npm run typecheck` / `npm run build` clean.
+
+Save schema is **version 2**: `GameState` persists source fields only (gold, combat
+stage/HP/carry, gear instances as id/definitionId/itemLevel/upgradeLevel, meta/choices);
+gear stats, base auto/click stats, and enemy max HP are computed on read via `getGearStats`
+/ `getEffectiveStats` / `getEnemyMaxHp`. `loadGame` migrates version-1 saves
+(`migrateV1ToV2`) and rejects any other version.
 
 The engine's power core is now drops-primary: gear stats are exponential in item level
 (`floor(factor * gearGrowth^(itemLevel - 1))`, `gearGrowth = 1.283`), `dropChance = 0.95`,
@@ -42,16 +50,17 @@ None.
 - **Offline progress is auto-DPS only** (no clicks replayed), capped at 8 h, and replayed
   in 1000 ms steps; hidden-tab time beyond the host's 10-step catch-up clamp is dropped
   until the next boot.
-- **One save version, no migration path.** `loadGame` rejects versions other than
-  `CURRENT_SAVE_VERSION` (1); `SaveRepository` has no `clear()`.
+- **Two save versions, one migration path.** `loadGame` accepts version 1 (migrated to
+  version 2 on load) and version 2; any other version throws. `SaveRepository` has no `clear()`.
 - **One gear slot and one enemy definition** ship today; the seams for more exist.
 
 ## Recent Decisions
-See `decisions.md`. The authoritative entry is 2026-09-26 "Economy reversal: drops are the
-primary power lever, gold demoted", which **supersedes** the Phase 3b "Deterministic power
-core" entry (and the earlier determinism-by-construction acceptance). Also authoritative:
-Phase 4 "Web host owns the clock, loop, and offline replay" and Phase 5 "Playwright +
-Chromium for the /web mobile smoke test". Phase 6 was documentation-only.
+See `decisions.md`. The most recent authoritative entry is 2026-09-26 "Save schema v2: persist
+source fields only, derive everything on read" (a real save-schema bump with v1→v2 migration;
+it supersedes the earlier recompute-on-load patch). Also authoritative: 2026-09-26 "Economy
+reversal: drops are the primary power lever, gold demoted", Phase 4 "Web host owns the clock,
+loop, and offline replay", and Phase 5 "Playwright + Chromium for the /web mobile smoke test".
+Phase 6 was documentation-only.
 
 ## Next
 No required work remains for this brief. If continuing:

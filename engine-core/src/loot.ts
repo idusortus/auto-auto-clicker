@@ -4,7 +4,7 @@
 // into draft.meta.rngState. Callers operate on a freshly cloned draft, never on
 // the caller's input state.
 
-import { BAG_CAP, computeGearStats, DROP_LEVEL_OFFSET } from './balance';
+import { BAG_CAP, DROP_LEVEL_OFFSET } from './balance';
 import { WEAPON_DEFINITION } from './content';
 import { nextRng } from './rng';
 import type { GearInstance, GameState } from './types';
@@ -29,14 +29,11 @@ export function rollGearDrop(draft: GameState, stage: number): GearInstance | nu
   if (roll.value >= WEAPON_DEFINITION.dropChance && ownsWeapon) return null;
 
   const itemLevel = Math.max(1, stage - DROP_LEVEL_OFFSET);
-  const stats = computeGearStats(WEAPON_DEFINITION, itemLevel, 0);
   const instance: GearInstance = {
     id: `gear-${draft.gear.nextInstanceId}`,
     definitionId: WEAPON_DEFINITION.id,
     itemLevel,
     upgradeLevel: 0,
-    dps: stats.dps,
-    clickDamage: stats.clickDamage,
   };
   draft.gear.nextInstanceId += 1;
   addToBag(draft, instance);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyAction, createGame } from '../src/index';
+import { applyAction, createGame, getEffectiveStats } from '../src/index';
 import { BALANCE, BAG_CAP, DROP_LEVEL_OFFSET } from '../src/balance';
 import { nextRng } from '../src/rng';
 import { makeGear, makeState } from './helpers';
@@ -11,7 +11,6 @@ function killStage(seed: number, stage = 1, armed = false): GameState {
     seed,
     stage,
     enemyHp: 1,
-    enemyMaxHp: 1,
     ...(armed ? { equippedWeapon: makeGear(1, 0) } : {}),
   });
   return applyAction(setup, { type: 'click' }).state;
@@ -72,7 +71,6 @@ describe('loot', () => {
       seed,
       stage: 5,
       enemyHp: 1,
-      enemyMaxHp: 1,
       equippedWeapon: makeGear(1, 0),
       bag,
     });
@@ -90,7 +88,10 @@ describe('createGame', () => {
     const state = createGame(1, 0);
     expect(state.gear.equipped.weapon).toBeNull();
     expect(state.gear.bag).toEqual([]);
-    expect(state.player.baseAutoDps).toBe(BALANCE.baseAutoDps);
-    expect(state.player.baseClickDamage).toBe(BALANCE.baseClickDamage);
+    // Base stats are derived from BALANCE, not persisted on the state.
+    expect(getEffectiveStats(state)).toEqual({
+      autoDps: BALANCE.baseAutoDps,
+      clickDamage: BALANCE.baseClickDamage,
+    });
   });
 });

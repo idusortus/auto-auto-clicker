@@ -14,6 +14,7 @@ export interface StorageLike {
   removeItem(key: string): void;
 }
 
+/** Intentionally still `.v1`: pre-existing saves are found and migrated by `loadGame`; renaming the key would orphan them. */
 export const DEFAULT_SAVE_KEY = 'auto-auto-clicker.save.v1';
 
 export class LocalStorageSaveRepository implements SaveRepository {

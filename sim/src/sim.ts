@@ -38,6 +38,7 @@ import {
   BALANCE,
   createGame,
   getEffectiveStats,
+  getGearStats,
   getUpgradeCost,
   isBoss,
 } from '@auto-auto-clicker/engine-core';
@@ -154,8 +155,12 @@ function totalActiveDps(state: GameState): number {
 
 /** Total active DPS the player would have if `item` replaced the equipped weapon. */
 function candidateActiveDps(state: GameState, item: GearInstance): number {
-  const autoDps = state.player.baseAutoDps + item.dps;
-  const clickDamage = state.player.baseClickDamage + item.clickDamage;
+  // Same derivation the engine uses: BALANCE base stats + the item's computed
+  // gear stats, so candidate DPS and the engine's `getEffectiveStats` never
+  // diverge.
+  const stats = getGearStats(item);
+  const autoDps = BALANCE.baseAutoDps + stats.dps;
+  const clickDamage = BALANCE.baseClickDamage + stats.clickDamage;
   return autoDps + ACTIVE_CLICKS_PER_SECOND * clickDamage;
 }
 

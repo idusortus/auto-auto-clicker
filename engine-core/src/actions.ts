@@ -6,12 +6,11 @@
 
 import {
   choiceGoldGrant,
-  computeGearStats,
   upgradeCost,
   WAIT_UPGRADE_GRANT_LEVELS,
   WATCH_AD_UPGRADE_GRANT_LEVELS,
 } from './balance';
-import { gearDefinitionFor, WEAPON_DEFINITION } from './content';
+import { gearDefinitionFor } from './content';
 import { applyDamageToEnemy, killCurrentEnemy } from './combat';
 import { cloneGameState, getEffectiveStats } from './state';
 import type { Action, GameEvent, GearSlot, GameState } from './types';
@@ -74,12 +73,8 @@ function applyUpgrade(
   const item = draft.gear.equipped[slot];
   if (!item) return { state, events: [] };
 
-  const definition = gearDefinitionFor(item.definitionId) ?? WEAPON_DEFINITION;
   draft.player.gold -= cost;
   item.upgradeLevel += 1;
-  const stats = computeGearStats(definition, item.itemLevel, item.upgradeLevel);
-  item.dps = stats.dps;
-  item.clickDamage = stats.clickDamage;
 
   return {
     state: draft,

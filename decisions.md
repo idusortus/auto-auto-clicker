@@ -12,12 +12,20 @@
 
 ---
 
+## 2026-09-26 — Save schema v2: persist source fields only, derive everything on read
+**Context:** Three field groups in `GameState` were pure functions of other fields or of `BALANCE`, yet were persisted: `GearInstance.dps`/`clickDamage` (from `computeGearStats(definitionId, itemLevel, upgradeLevel)`), `GameState.player.baseAutoDps`/`baseClickDamage` (copies of `BALANCE.baseAutoDps`/`baseClickDamage`), and `GameState.combat.enemyMaxHp` (from `enemyMaxHp(combat.stage)`). A prior round patched the drift for `GearInstance.dps` alone by recomputing it in `loadGame`, but that treated one symptom: any balance/formula change still silently reinterpreted the other persisted copies, and every host (the browser today, the Expo port tomorrow) would have to remember to recompute. The user approved the structural fix.
+**Choice:** `CURRENT_SAVE_VERSION` is now 2 and `GameState` persists SOURCE fields only: `player.gold`, `combat.{stage,enemyHp,damageCarry}`, gear instances as `{id,definitionId,itemLevel,upgradeLevel}`, plus `meta`/`choices` bookkeeping. Derived values are computed on read through new engine getters — `getGearStats(instance)`, `getEnemyMaxHp(state)`, and `getEffectiveStats(state)` = `BALANCE.baseAutoDps + getGearStats(weapon).dps` (same for click). `combat.ts` derives a local `maxHp = enemyMaxHp(nextStage)` for spawning and for the `stageEntered.maxHp` event (events are not persisted); `loot.ts`/`actions.ts` write source fields only. `loadGame` accepts version 1 via `migrateV1ToV2` (one `parseState` that reads only source fields, so the old derived copies are dropped) and version 2 as-is; any other version throws a descriptive error. `/web` reads the same values through the getters and still holds no balance numbers.
+**Trade-offs:** This is a real save-schema change: an existing version-1 save is migrated at load and the persisted blob shrinks. Migration is one-way (a migrated save reloads as v2), and the localStorage key stays `auto-auto-clicker.save.v1` so old saves are still found and migrated — a future key rename must keep the migration path. Deriving on every read costs a `Math.pow`/`floor` per getter call (negligible here; the renderer already caches by signature), and the state is no longer a literal snapshot of what the host displayed.
+**Revisit:** If a derived value ever becomes genuinely expensive or needs a cheap reverse lookup, add a non-persisted memo with an explicit invalidation rule — never re-persist it. If the schema changes again, add `migrateV2ToV3` alongside `migrateV1ToV2`.
+
+---
+
 ## 2026-09-26 — Review finding: derived gear stats are a cache, recompute on load
 **Context:** The drops-primary reversal changed the gear stat formula (power law → exponential) while `SaveGame.version` stayed 1. `GearInstance.dps`/`clickDamage` are a derived cache persisted inside `GameState`, and `loadGame` (`state.ts`) clones the blob without recomputing them. A version-1 save written by the previous build therefore loads with stale cached stats until the next equip/upgrade (probe: an itemLevel-30 weapon loads `dps=84` vs the new formula's `2751`). The web host reads the cache directly through `getEffectiveStats`, so the stale value drives combat and the HUD.
 **Choice:** Treat persisted derived stats as a cache, not truth: `loadGame` normalizes (recomputes) `dps`/`clickDamage` from `computeGearStats` for the equipped item and every bag item, resolving each `definitionId` through `gearDefinitionFor` (falling back to `WEAPON_DEFINITION`, matching `actions.ts`). `CURRENT_SAVE_VERSION` stays 1 — it tracks the save *schema*, so a balance/formula change alone is not a schema bump; the persisted shape is unchanged and only the derived cache values are normalized on load.
 **Trade-offs:** Recomputation adds a small per-load cost and means a save is no longer a byte-exact round-trip of the writer's derived fields (the schema shape is unchanged; only cache values are normalized).
-**Status:** IMPLEMENTED — `normalizeGearInstance` in `state.ts`; covered by a `save.test.ts` case that loads a deliberately-wrong `dps` in both the equipped slot and the bag.
-**Revisit:** If a future balance change alters item-level/upgrade semantics again, confirm load-time recomputation keeps old saves coherent rather than silently reinterpreting them.
+**Status:** SUPERSEDED — `normalizeGearInstance` was removed in the v2 schema change below, which stops persisting the derived copies entirely.
+**Revisit:** N/A — superseded.
 
 ---
 

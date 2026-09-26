@@ -20,6 +20,8 @@ export {
   cloneGameState,
   createGame,
   getEffectiveStats,
+  getEnemyMaxHp,
+  getGearStats,
   getProjectedKillMs,
   getUpgradeCost,
   loadGame,

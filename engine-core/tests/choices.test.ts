@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { advance, applyAction } from '../src/index';
 import {
-  ACTIVE_CLICKS_PER_SECOND,
   BOSS_TIMER_MS,
   HARD_WALL_PROJECTED_KILL_MS,
   enemyMaxHp,
@@ -14,24 +13,15 @@ import {
 import { makeGear, makeState } from './helpers';
 import type { GameEvent, GameState } from '../src/types';
 
-const SYNTH_CLICK_DAMAGE = 1;
-
 /**
- * Enter `stage` by killing the previous enemy with a synthesized DPS chosen so
- * the live projection equals `projectedMs`. This exercises the stage-entry
- * threshold rules without pinning any live balance value.
+ * Enter `stage` by killing the previous enemy with a click. Base auto/click
+ * stats are now BALANCE constants, so the projected kill time on entry is fixed
+ * by the stage's enemy HP; the thresholds are exercised by choosing stages on
+ * either side of them (the unarmed active DPS of 6 makes stage 10 a boss check,
+ * and stages 19/20 hard walls).
  */
-function enterStage(stage: number, projectedMs: number): { state: GameState; events: GameEvent[] } {
-  const enemyHp = enemyMaxHp(stage);
-  const totalActiveDps = enemyHp / (projectedMs / 1000);
-  const baseAutoDps = Math.max(0, totalActiveDps - ACTIVE_CLICKS_PER_SECOND * SYNTH_CLICK_DAMAGE);
-  const start = makeState({
-    stage: stage - 1,
-    enemyHp: 1,
-    enemyMaxHp: 1,
-    baseAutoDps,
-    baseClickDamage: SYNTH_CLICK_DAMAGE,
-  });
+function enterStage(stage: number): { state: GameState; events: GameEvent[] } {
+  const start = makeState({ stage: stage - 1, enemyHp: 1 });
   return applyAction(start, { type: 'click' });
 }
 
@@ -44,7 +34,6 @@ function pendingWithUpgrade(
   return makeState({
     stage,
     enemyHp: enemyMaxHp(stage),
-    enemyMaxHp: enemyMaxHp(stage),
     equippedWeapon: makeGear(1, upgradeLevel),
     pending: { kind, stage, options: ['wait', 'watchAd', 'iap'] },
   });
@@ -59,7 +48,7 @@ function grantFor(currentUpgradeLevel: number, levels: number): number {
 
 describe('stage-entry pacing checks', () => {
   it('entering a boss stage over the boss timer emits bossCheckFailed and sets pending', () => {
-    const { state, events } = enterStage(10, 300_000); // 5 min: over timer, under wall
+    const { state, events } = enterStage(10); // unarmed stage-10 boss: ~264 s, over timer, under wall
 
     expect(isBoss(10)).toBe(true);
     expect(state.combat.stage).toBe(10);
@@ -77,9 +66,10 @@ describe('stage-entry pacing checks', () => {
   });
 
   it('emits progressionWall when the projected kill exceeds the hard wall, taking precedence', () => {
-    const { state, events } = enterStage(10, 1_200_000); // 20 min: over the wall
+    const { state, events } = enterStage(20); // unarmed stage-20 boss: over the wall
 
-    expect(state.combat.stage).toBe(10);
+    expect(state.combat.stage).toBe(20);
+    expect(isBoss(20)).toBe(true);
     expect(state.choices.pending?.kind).toBe('progression-wall');
 
     const wall = events.find((event) => event.type === 'progressionWall');
@@ -91,7 +81,7 @@ describe('stage-entry pacing checks', () => {
   });
 
   it('raises a progression wall on a non-boss stage too', () => {
-    const { state } = enterStage(19, 1_200_000);
+    const { state } = enterStage(19);
 
     expect(isBoss(19)).toBe(false);
     expect(state.combat.stage).toBe(19);

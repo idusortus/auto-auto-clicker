@@ -1,6 +1,5 @@
 // Shared test helpers. Not a *.test.ts file, so vitest does not collect it.
 
-import { computeGearStats } from '../src/balance';
 import { WEAPON_DEFINITION } from '../src/content';
 import { createGame } from '../src/state';
 import type { GearInstance, GameState, PendingChoice } from '../src/types';
@@ -10,11 +9,8 @@ export interface StateOverrides {
   rngState?: number;
   totalPlayedMs?: number;
   gold?: number;
-  baseAutoDps?: number;
-  baseClickDamage?: number;
   stage?: number;
   enemyHp?: number;
-  enemyMaxHp?: number;
   damageCarry?: number;
   equippedWeapon?: GearInstance | null;
   bag?: GearInstance[];
@@ -33,13 +29,10 @@ export function makeState(overrides: StateOverrides = {}): GameState {
     },
     player: {
       gold: overrides.gold ?? base.player.gold,
-      baseAutoDps: overrides.baseAutoDps ?? base.player.baseAutoDps,
-      baseClickDamage: overrides.baseClickDamage ?? base.player.baseClickDamage,
     },
     combat: {
       stage: overrides.stage ?? base.combat.stage,
       enemyHp: overrides.enemyHp ?? base.combat.enemyHp,
-      enemyMaxHp: overrides.enemyMaxHp ?? base.combat.enemyMaxHp,
       damageCarry: overrides.damageCarry ?? base.combat.damageCarry,
     },
     gear: {
@@ -53,16 +46,16 @@ export function makeState(overrides: StateOverrides = {}): GameState {
   };
 }
 
-/** Build a weapon instance with stats derived from the real balance formulas. */
+/**
+ * Build a weapon instance. Instances carry SOURCE fields only; battle stats are
+ * derived on read via `getGearStats` / `getEffectiveStats`.
+ */
 export function makeGear(itemLevel: number, upgradeLevel = 0, id = `test-gear-${itemLevel}`): GearInstance {
-  const stats = computeGearStats(WEAPON_DEFINITION, itemLevel, upgradeLevel);
   return {
     id,
     definitionId: WEAPON_DEFINITION.id,
     itemLevel,
     upgradeLevel,
-    dps: stats.dps,
-    clickDamage: stats.clickDamage,
   };
 }
 

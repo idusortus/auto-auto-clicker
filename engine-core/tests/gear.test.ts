@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyAction, getEffectiveStats, getUpgradeCost } from '../src/index';
+import { applyAction, getEffectiveStats, getGearStats, getUpgradeCost } from '../src/index';
 import { BALANCE, computeGearStats, gearBaseDps, upgradeCost } from '../src/balance';
 import { WEAPON_DEFINITION } from '../src/content';
 import { makeGear, makeState } from './helpers';
@@ -20,8 +20,8 @@ describe('gear — equip', () => {
     expect(state.gear.bag).toHaveLength(0);
 
     const stats = getEffectiveStats(state);
-    expect(stats.autoDps).toBe(BALANCE.baseAutoDps + weapon.dps);
-    expect(stats.clickDamage).toBe(BALANCE.baseClickDamage + weapon.clickDamage);
+    expect(stats.autoDps).toBe(BALANCE.baseAutoDps + getGearStats(weapon).dps);
+    expect(stats.clickDamage).toBe(BALANCE.baseClickDamage + getGearStats(weapon).clickDamage);
     expect(stats.autoDps).toBeGreaterThan(BALANCE.baseAutoDps);
     expect(stats.clickDamage).toBeGreaterThan(BALANCE.baseClickDamage);
   });

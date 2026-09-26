@@ -13,7 +13,7 @@
 import type { GearDefinition } from './types';
 
 /** Save schema version understood by this engine build. */
-export const CURRENT_SAVE_VERSION = 1;
+export const CURRENT_SAVE_VERSION = 2;
 
 /** Boss stages must fall within this projected kill time or a choice is offered. */
 export const BOSS_TIMER_MS = 60_000;

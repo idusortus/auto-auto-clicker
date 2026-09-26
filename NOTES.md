@@ -75,10 +75,15 @@
   with stages cleared). Observed: soft 6.39–6.52 min, hard 50.78–51.38 min, drops ≈100% net /
   87.6% gross (`goldGross = resetLoss = 1.659`, so `goldNet = 0`). Pacing is no longer
   deterministic across seeds — drop RNG now matters (see `decisions.md`).
-- **Derived gear stats are recomputed on load.** `GearInstance.dps`/`clickDamage` are a cache
-  of `computeGearStats`, so `loadGame` normalizes them for the equipped slot and every bag item
-  (the stat formula changed under an unchanged `CURRENT_SAVE_VERSION = 1`). The save shape is
-  unchanged; see `state.ts` `normalizeGearInstance` and the `save.test.ts` case.
+- **Save schema v2: derived values are not persisted.** `GameState` now keeps source fields
+  only — `player.gold`, `combat.{stage,enemyHp,damageCarry}`, gear instances as
+  `{id,definitionId,itemLevel,upgradeLevel}`, and meta/choices. Gear stats, base auto/click
+  stats, and enemy max HP are computed on read via `getGearStats`/`getEffectiveStats`/
+  `getEnemyMaxHp`. `loadGame` migrates version-1 saves (dropping the old `baseAutoDps`/
+  `baseClickDamage`/`enemyMaxHp`/per-instance `dps`/`clickDamage` copies) instead of
+  recomputing a cache; the localStorage key is unchanged (`auto-auto-clicker.save.v1`) so old
+  saves are still found and migrated. See `state.ts` `migrateV1ToV2` and the `save.test.ts`
+  migration case.
 
 ## Ideas (not built)
 

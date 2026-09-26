@@ -40,7 +40,7 @@ npm run typecheck    # typecheck all three workspaces (engine-core + web + sim)
 
 ### How to play
 
-Tap the enemy to deal click damage (the weapon's `clickDamage`); auto-DPS ticks in the
+Tap the enemy to deal click damage (the weapon's click damage, derived from its item level); auto-DPS ticks in the
 background. Kills grant gold and almost always **drop a weapon whose item level tracks the
 killed stage** — equip it: drops are the primary source of power. Gear stats grow
 exponentially with item level, so a newer drop is the power jump; spending gold on a few
@@ -182,7 +182,7 @@ Persistence is one versioned, serializable blob written through an async interfa
 
 ```ts
 interface SaveGame {
-  version: number;   // CURRENT_SAVE_VERSION = 1
+  version: number;   // CURRENT_SAVE_VERSION = 2
   savedAt: number;   // host wall-clock ms when written (used for offline replay)
   state: GameState;  // the entire per-player state
 }
@@ -197,11 +197,18 @@ interface SaveRepository {
   per-player save state.** They describe the game catalog and are never persisted — only
   `GameState` is saved. (`GameState.meta.seed` and `meta.rngState` are persisted so a
   reload continues the exact deterministic stream.)
-- **Derived gear stats are recomputed on load.** `GearInstance.dps`/`clickDamage` are a
-  formula-derived cache of `computeGearStats`, not an independent source of truth. Because the
-  stat formula can change under an unchanged `CURRENT_SAVE_VERSION` (a formula change is not a
-  schema change), `loadGame` normalizes every equipped and bagged instance on load so an old
-  save never drives combat or the HUD with stale stats.
+- **Version 2 persists source fields only; every derived value is computed on read.**
+  `GameState` stores `player.gold`, `combat.{stage,enemyHp,damageCarry}`, each gear instance as
+  `{id, definitionId, itemLevel, upgradeLevel}`, and the meta/choice bookkeeping. Gear battle
+  stats (`getGearStats`), the base auto/click stats (`getEffectiveStats`), and the enemy's max
+  HP (`getEnemyMaxHp`) are all derived from those sources plus `BALANCE`/`computeGearStats` at
+  read time — they are never persisted. A balance or stat-formula change therefore cannot drift
+  a stale copy on an existing save.
+- **Version 1 saves are migrated on load.** Version 1 persisted those derived copies
+  (`player.baseAutoDps`/`baseClickDamage`, `combat.enemyMaxHp`, and per-instance
+  `dps`/`clickDamage`). `loadGame` accepts version 1, strips the derived fields via
+  `migrateV1ToV2`, and returns a version-2 state; a version-2 blob round-trips as-is. Any other
+  version throws a descriptive error.
 - **The blob is one serializable object.** Today it is written to `localStorage` under
   `auto-auto-clicker.save.v1` by `LocalStorageSaveRepository`; `JSON.parse` failures and
   unsupported versions fall back to a fresh game rather than crashing the boot.
@@ -318,9 +325,9 @@ This is a prototype, and the honest edges matter:
   away time in 1000 ms steps with no clicks, and backgrounded-tab time beyond the host's
   10-step catch-up clamp is dropped until the next boot. Both are deliberate host
   policies chosen to avoid catch-up spirals and offline windfalls.
-- **One save schema version, with no migration path.** `loadGame` rejects any version
-  other than `CURRENT_SAVE_VERSION` (1); there is no `clear()` on `SaveRepository` yet.
-  Version 2 will need an explicit migration.
+- **Two save schema versions, one migration path.** `loadGame` accepts version 1 (migrated to
+  version 2 on load) and version 2; any other version throws. There is still no `clear()` on
+  `SaveRepository`.
 - **A single gear slot and a single enemy definition.** The seams for more exist
   (`GearSlot`, `CONTENT`, `gearDefinitionFor`), but this build ships one weapon type and
   one "grunt" enemy.
