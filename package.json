@@ -1,0 +1,22 @@
+{
+  "name": "auto-auto-clicker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "engine-core",
+    "web",
+    "sim"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w web",
+    "build": "npm run build -w engine-core && npm run build -w web",
+    "test": "npm run test -w engine-core",
+    "sim": "npm run sim -w sim",
+    "smoke": "npm run smoke -w web",
+    "typecheck": "npm run typecheck -w engine-core && npm run typecheck -w web"
+  },
+  "devDependencies": {
+    "typescript": "^5"
+  }
+}

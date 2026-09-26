@@ -1,0 +1,15 @@
+{
+  "name": "@auto-auto-clicker/sim",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sim": "tsx src/sim.ts"
+  },
+  "dependencies": {
+    "@auto-auto-clicker/engine-core": "*"
+  },
+  "devDependencies": {
+    "tsx": "^4"
+  }
+}
