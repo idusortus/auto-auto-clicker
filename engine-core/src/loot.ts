@@ -13,13 +13,14 @@ import type { GearInstance, GameState } from './types';
  * Roll a drop for killing `stage`. On success the instance is added to the bag
  * and returned; the RNG is always advanced exactly once per kill.
  *
- * The dropped item level trails the killed stage by DROP_LEVEL_OFFSET so gear
- * stays a bounded bonus relative to the deterministic upgrade curve.
+ * The dropped item level tracks the killed stage (`DROP_LEVEL_OFFSET` is 0), so
+ * the drop stream supplies the exponential power term that matches the enemy-HP
+ * curve. `dropChance` is high: frequent sampling keeps the expected power on a
+ * designed curve while drops remain the actual source of that power.
  *
  * The FIRST weapon is guaranteed: without one the player is unarmed forever
  * (no upgrades possible, base DPS fixed), which turns early luck into a hard
- * wall. Guaranteeing it makes the power core deterministic; later drops remain
- * ordinary bounded-roll bonuses.
+ * wall.
  */
 export function rollGearDrop(draft: GameState, stage: number): GearInstance | null {
   const roll = nextRng(draft.meta.rngState);

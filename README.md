@@ -41,11 +41,14 @@ npm run typecheck    # typecheck all three workspaces (engine-core + web + sim)
 ### How to play
 
 Tap the enemy to deal click damage (the weapon's `clickDamage`); auto-DPS ticks in the
-background. Kills grant gold and can drop a weapon into the bag — **equip** it, then
-spend gold to **upgrade** it. Every 10th stage is a boss; if the projected time-to-kill
-is too slow, or if a stage becomes a progression wall, a choice appears. The free
-`wait` path always works (it grants gold equal to a fixed number of upgrade levels);
-the "watch ad" and "buy" options are visible but disabled placeholders in this build.
+background. Kills grant gold and almost always **drop a weapon whose item level tracks the
+killed stage** — equip it: drops are the primary source of power. Gear stats grow
+exponentially with item level, so a newer drop is the power jump; spending gold on a few
+**upgrades** is only a minor multiplicative smoothing bonus (and equipping a new drop resets
+the upgrade level). Every 10th stage is a boss; if the projected time-to-kill is too slow, or
+if a stage becomes a progression wall, a choice appears. The free `wait` path always works
+(it grants gold equal to a fixed number of upgrade levels); the "watch ad" and "buy" options
+are visible but disabled placeholders in this build.
 
 ---
 
@@ -71,7 +74,7 @@ auto-auto-clicker/
 │   │   ├── advance.ts           # advance(state, deltaMs) — time-based simulation
 │   │   ├── actions.ts           # applyAction(state, action) — explicit player commands
 │   │   ├── combat.ts            # damage, kills, stage entry, boss/wall pacing checks
-│   │   ├── loot.ts              # deterministic, bounded gear drops
+│   │   ├── loot.ts              # frequent gear drops; item level tracks the killed stage
 │   │   └── rng.ts               # seeded mulberry32 (state lives in GameState.meta.rngState)
 │   ├── save/
 │   │   ├── index.ts             # ./save subpath export
@@ -91,7 +94,7 @@ auto-auto-clicker/
 │   └── vite.config.ts
 │
 └── sim/                         # ▶ headless pacing harness (no rendering, no UI)
-    └── src/sim.ts               # `npm run sim` — deterministic fixed-step sweep + hard assertions
+    └── src/sim.ts               # `npm run sim` — fixed-step sweep, hard assertions, power attribution
 ```
 
 ---
@@ -194,6 +197,11 @@ interface SaveRepository {
   per-player save state.** They describe the game catalog and are never persisted — only
   `GameState` is saved. (`GameState.meta.seed` and `meta.rngState` are persisted so a
   reload continues the exact deterministic stream.)
+- **Derived gear stats are recomputed on load.** `GearInstance.dps`/`clickDamage` are a
+  formula-derived cache of `computeGearStats`, not an independent source of truth. Because the
+  stat formula can change under an unchanged `CURRENT_SAVE_VERSION` (a formula change is not a
+  schema change), `loadGame` normalizes every equipped and bagged instance on load so an old
+  save never drives combat or the HUD with stale stats.
 - **The blob is one serializable object.** Today it is written to `localStorage` under
   `auto-auto-clicker.save.v1` by `LocalStorageSaveRepository`; `JSON.parse` failures and
   unsupported versions fall back to a fresh game rather than crashing the boot.
@@ -218,39 +226,65 @@ targets are:
 `npm run sim` asserts this. It drives the engine with:
 
 - a **fixed 100 ms step** (the same step the web host uses);
-- a **greedy, deterministic active-play policy**: upgrade the equipped weapon while
-  affordable, then equip a bag weapon only when it *strictly raises total active DPS*;
+- a **greedy, deterministic active-play policy**: equip a bag weapon whenever it *strictly
+  raises total active DPS*, then spend remaining gold on upgrades;
 - **2 clicks/second** (`ACTIVE_CLICKS_PER_SECOND`);
 - resolution of every pending choice on the **free `wait` path**;
 - a **5-seed hard assertion** — `SWEEP_SEEDS = [12345, 1, 999, 424242, 20250925]`. Every
   seed must pass every target; the process exits `1` and prints the deltas if any seed
-  misses. This is a **determinism/regression guard**, not a robustness probe: the power
-  core is deterministic, so all seeds produce identical times. Loot does not influence
-  pacing, so the sweep is **not** a loot-robustness check.
+  misses. Because drops now drive power, this **is a real robustness probe**: drop RNG moves
+  the timings, and a high `dropChance` keeps the spread small.
+- a **drops-primary gate** (also hard, per seed): the run's power is decomposed exactly in
+  log space and the **drop-attributed share of positive *net* log-power growth must exceed
+  50%**. The reset loss from each equip is charged to the *gold-funded upgrade power it
+  destroys*, not to drops, so the gate cannot be passed by reset accounting.
+- a **drop-stream sanity guard** (also hard, per seed): `equips` must keep pace with progress
+  (≥ 1 equip per 5 stages cleared), so a run whose attributed drops never actually happened
+  cannot pass even if arithmetic alone would clear the share gate.
 
-Current observed result (all five seeds identical):
+Current observed result (5 sweep seeds):
 
 ```
-soft 6.00 min target ±20% → actual 5.92 min (delta -1.3%)  [PASS]   stage 30
-hard 54.00 min target ±20% → actual 52.23 min (delta -3.3%)  [PASS]  stage 60
+seed     12345: soft 6.49 min st30  hard 50.88 min st50  dNet 100.0% dGross 87.6%  [DROPS-PRIMARY]
+seed         1: soft 6.44 min st30  hard 51.23 min st50  dNet 100.0% dGross 87.6%  [DROPS-PRIMARY]
+seed       999: soft 6.39 min st30  hard 50.78 min st50  dNet 100.0% dGross 87.6%  [DROPS-PRIMARY]
+seed    424242: soft 6.49 min st30  hard 51.38 min st50  dNet 100.0% dGross 87.6%  [DROPS-PRIMARY]
+seed  20250925: soft 6.52 min st30  hard 50.92 min st50  dNet 100.0% dGross 87.6%  [DROPS-PRIMARY]
+soft 6.00 min target ±20% → actual 6.49 min (delta +8.1%)  [PASS]
+hard 54.00 min target ±20% → actual 50.88 min (delta -5.8%)  [PASS]
 PACING OK
 ```
 
-The engine also emits the raw milestone snapshot:
+Raw milestone snapshot (canonical seed):
 
 ```
-soft check   t=5.92min  stage=30  autoDps=4032        clickDamage=16125
-hard wall    t=52.23min stage=60  autoDps=30162075    clickDamage=120648295
+soft check   t=6.49min  stage=30  autoDps=1673      clickDamage=6688
+hard wall    t=50.88min stage=50  autoDps=244166    clickDamage=976660
 ```
 
-The reason the result is stable across seeds is structural, not luck: player power is
-dominated by the **deterministic gold-funded upgrade curve** (≈1.29×/stage) while enemy
-HP grows faster (1.45×/stage), so the fall-behind is designed in. After the guaranteed
-starter weapon, gear drops **do not contribute to player power**: dropped item level
-trails the killed stage by 6 (`dropChance` 0.08, `DROP_LEVEL_OFFSET` 6, first weapon
-guaranteed), so an informed player never equips a later drop over the upgraded starter.
-Free-path choices grant a fixed number of upgrade levels rather than stage-scaled gold.
-See `engine-core/src/balance.ts`.
+**Drops are the primary power lever.** Gear stats are **exponential in item level**
+(`floor(factor * gearGrowth^(itemLevel - 1))`, `gearGrowth = 1.283`), and `dropChance` is
+0.95 with `DROP_LEVEL_OFFSET = 0`, so a killed stage reliably yields a weapon whose item
+level tracks that stage (`itemLevel = max(1, stage)`). Equipping each new drop is the power
+jump. Enemy HP grows faster (`hpGrowth = 1.42` vs player power ≈1.28×/stage), so the
+fall-behind — and therefore the walls — is designed in. Gold is a **minor smoothing lever**:
+`upgradeStatMultiplier = 1.05` with steep costs (`upgradeCostGrowth = 6`) and flat gold
+(`goldGrowth = 1.0`) means only ≈0.7 upgrade levels are affordable per equip, and equipping a
+new drop resets `upgradeLevel` to 0 (cheap next to the ≈28% item-level jump). Free-path
+choices grant a fixed number of upgrade levels rather than stage-scaled gold. See
+`engine-core/src/balance.ts`.
+
+The **power-attribution ledger** in `sim/src/sim.ts` proves the split exactly. The equipped
+stat's log is `ln(factor) + (itemLevel − 1)·ln(gearGrowth) + upgradeLevel·ln(upgradeStatMultiplier)`,
+so the run decomposes into per-equip `Δ(itemLevel − 1)·ln(gearGrowth)` plus per-upgrade
+`+ln(upgradeStatMultiplier)` — computed only from exported engine values. Each equip resets the
+gold-funded `upgradeLevel` to 0, so the upgrade power bought with gold is destroyed by the swap.
+Charging that reset loss to the lever it came from (`goldNet = goldGross − resetLoss`) makes
+gold's **net** contribution ≈0 while drops carry **≈100% of net log-power growth**. The ledger
+reports both conventions unambiguously: **drops ≈100% of NET** log-power growth and **≈87.6% of
+GROSS** (drops against raw gold purchased). On the sweep seeds `goldGross = resetLoss = 1.659`
+exactly, so `goldNet = 0`; the free `wait` grant is ≈4.5% — a transient smoothing contribution,
+not a net power source.
 
 ---
 
@@ -258,12 +292,19 @@ See `engine-core/src/balance.ts`.
 
 This is a prototype, and the honest edges matter:
 
-- **Pacing is currently identical across all seeds, and gear drops do not drive it.**
-  Because the power core is deterministic and drops are bounded, a lucky or unlucky drop
-  cannot change the soft/hard timing. Gear drops are therefore **flavour / low-impact**
-  right now, not a pacing lever. If you want drops to matter, redesign them **together**
-  with the economy in **`engine-core/src/balance.ts`** and **`engine-core/src/loot.ts`**,
-  then re-run `npm run sim` (expect all five seeds to move together).
+- **Drops-primary means drop RNG affects pacing.** Because gear drops (not a deterministic
+  gold curve) carry the power, a lucky or unlucky drop stream moves the soft/hard timings.
+  `dropChance = 0.95` keeps the 5-seed spread tight (soft 6.39–6.52 min, hard 50.78–51.38
+  min), but sampling variance is real: lowering `dropChance` toward 0.8 blows the soft range
+  out (observed 2.33–8.75 min). To reduce variance, raise `dropChance` toward 1.0 — never
+  widen the ±20% tolerance or re-neuter drops.
+- **Gold is deliberately a small lever.** `goldGrowth = 1.0` makes late-game gold rewards
+  flat, and steep upgrade costs mean only a few upgrade levels are ever affordable. Upgrades
+  smooth rough edges; they are not a second power curve.
+- **A single low-item-level weapon upgrade may not move the HUD DPS readout.** Integer
+  flooring plus a ×1.05 upgrade means a level-1 weapon's first several upgrades leave
+  `autoDps` unchanged; the observable power jump now comes from equipping a newer drop.
+  No engine change — flooring is intended.
 - **`resolveChoice('iap')` advances one stage in the current engine semantics.** It
   sets the current enemy's HP to 0 and runs normal kill resolution, which awards gold,
   rolls a drop, and spawns the next stage (whose stage-entry checks may raise a fresh
@@ -271,7 +312,7 @@ This is a prototype, and the honest edges matter:
   render disabled ("coming soon") so the free `wait` path is always the working one. The
   engine actions exist; only the host integration is missing.
 - **Late-game numerals are large and not abbreviated.** At the hard wall auto-DPS is
-  ≈**3e7** (and click damage ≈1.2e8). The HUD prints full integers, so the readout wraps
+  ≈**2.4e5** (and click damage ≈9.8e5). The HUD prints full integers, so the readout wraps
   at the widest end of the game. Compact notation (1.2K / 3.4M) is not implemented.
 - **Offline progress is capped and auto-DPS only.** The web host replays at most 8 h of
   away time in 1000 ms steps with no clicks, and backgrounded-tab time beyond the host's

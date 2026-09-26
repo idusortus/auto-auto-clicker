@@ -11,7 +11,13 @@ export interface GearDefinition {
   slot: GearSlot;
   dpsFactor: number;
   clickFactor: number;
-  levelExponent: number;
+  /**
+   * Per-item-level growth factor. Gear stats are EXPONENTIAL in item level
+   * (`floor(factor * gearGrowth^(itemLevel - 1))`), so gear drops supply the
+   * exponential power term that tracks the exponential enemy-HP curve. This is
+   * a content value, never persisted.
+   */
+  gearGrowth: number;
   upgradeCostBase: number;
   upgradeCostGrowth: number;
   upgradeStatMultiplier: number;

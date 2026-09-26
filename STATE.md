@@ -3,33 +3,42 @@
 > Cross-session memory for all agents. Update on exit; read on entry.
 
 ## Status
-Prototype complete (Phases 0–6). All acceptance gates green:
+Prototype complete (Phases 0–6), plus the 2026-09-26 economy reversal (drops-primary) and
+the follow-up review-fix round (`loadGame` recomputes the derived gear-stat cache; the sim's
+attribution now reports net-of-reset shares with the reset loss charged to gold).
+All acceptance gates green:
 
-- `npm run test` → 41 passed (7 files), exit 0.
-- `npm run sim` → `PACING OK`, all 5 sweep seeds PASS (soft 5.92 min @ stage 30, hard 52.23 min @ stage 60), exit 0.
+- `npm run test` → 45 passed (7 files), exit 0.
+- `npm run sim` → `PACING OK`: all 5 sweep seeds PASS (soft 6.39–6.52 min @ stage 30,
+  hard 50.78–51.38 min @ stage 50) **and** all 5 `DROPS-PRIMARY` (drop-attributed share of
+  **net** log-power growth ≈100% / gross 87.6%, with the equip reset loss charged to gold so
+  `goldNet = goldGross − resetLoss = 0`; free `wait` grant ≈4.5%), exit 0.
 - `npm run smoke` → 4 passed (Playwright mobile Chromium, 390×844), exit 0.
 - `npm run typecheck` / `npm run build` clean.
 
-Phase 6 (documentation) rewrote `README.md` for a new contributor (architecture + one-way
-dependency direction, the pure simulation contract, the save model, the pacing proof with
-observed numbers, honest trade-offs, a dependency-justification table, and a concrete
-"Porting to Expo" section). Corrected the stale "svelte and supabase" stack text in
-`PROJECT.md`/`AGENTS.md`. No code, balance, save schema, or tests were touched. Local-only:
-no backend, no auth, no Supabase, no network calls.
+The engine's power core is now drops-primary: gear stats are exponential in item level
+(`floor(factor * gearGrowth^(itemLevel - 1))`, `gearGrowth = 1.283`), `dropChance = 0.95`,
+and `DROP_LEVEL_OFFSET = 0`, so a killed stage reliably yields a weapon whose item level
+tracks that stage. Gold-funded upgrades are a minor smoothing lever
+(`upgradeStatMultiplier = 1.05`, `upgradeCostGrowth = 6`, flat `goldGrowth = 1.0`).
 
 ## In Flight
 None.
 
 ## Blockers / Known trade-offs
-- **Pacing is identical across seeds.** The power core is deterministic and drops are
-  bounded, so gear drops are flavour/low-impact and do NOT drive pacing. Any change meant
-  to make drops matter must edit `engine-core/src/balance.ts` + `engine-core/src/loot.ts`
-  together and re-run `npm run sim`.
+- **Drop RNG now affects pacing.** Because gear drops (not a deterministic gold curve)
+  carry the power, an unlucky drop stream can move the soft/hard timing. `dropChance = 0.95`
+  keeps the 5-seed spread tight (soft 6.39–6.52 min, hard 50.78–51.38 min), but lowering it
+  blows the range out (0.8 → soft 2.33–8.75 min). To reduce variance, raise `dropChance`
+  toward 1.0 — never widen the ±20% tolerance or re-neuter drops.
+- **Gold is deliberately a small lever** (`goldGrowth = 1.0`, `upgradeCostGrowth = 6`):
+  only ≈0.7 upgrade levels are affordable per equip, and equipping each new drop resets
+  `upgradeLevel` to 0. Upgrades smooth edges; they are not a second power curve.
 - **`resolveChoice('iap')` advances one stage** (defeats the current enemy, then normal
   kill/stage-entry resolution). `watchAd`/`iap` are disabled UI placeholders with no ad or
   payment SDK; the free `wait` path is the working one.
-- **Late-game numerals are large** (auto-DPS ~3.0e7 at the hard wall); the HUD prints full
-  integers and has no compact notation, so it wraps at the widest point.
+- **Late-game numerals are large** (auto-DPS ~2.4e5 at the hard wall); the HUD prints full
+  integers and has no compact notation.
 - **Offline progress is auto-DPS only** (no clicks replayed), capped at 8 h, and replayed
   in 1000 ms steps; hidden-tab time beyond the host's 10-step catch-up clamp is dropped
   until the next boot.
@@ -38,9 +47,10 @@ None.
 - **One gear slot and one enemy definition** ship today; the seams for more exist.
 
 ## Recent Decisions
-See `decisions.md`. The authoritative entries are Phase 3b "Deterministic power core:
-bounded RNG, bounded free grants, DPS-based swap", Phase 4 "Web host owns the clock, loop,
-and offline replay; renderer is a pure state projection", and Phase 5 "Playwright +
+See `decisions.md`. The authoritative entry is 2026-09-26 "Economy reversal: drops are the
+primary power lever, gold demoted", which **supersedes** the Phase 3b "Deterministic power
+core" entry (and the earlier determinism-by-construction acceptance). Also authoritative:
+Phase 4 "Web host owns the clock, loop, and offline replay" and Phase 5 "Playwright +
 Chromium for the /web mobile smoke test". Phase 6 was documentation-only.
 
 ## Next
@@ -49,8 +59,8 @@ No required work remains for this brief. If continuing:
    or Supabase) and a host clock driving `advance()` — see README "Porting to Expo".
 2. Optional polish: compact numeral formatting, tap/feedback cosmetics, bag sorting
    (would need a new engine action first).
-3. If drops should influence pacing, co-design `balance.ts` + `loot.ts` and re-run
-   `npm run sim` (all seeds will move together).
+3. If drop-RNG pacing variance becomes a concern, raise `dropChance` toward 1.0 (or add a
+   per-stage pity counter) and re-run `npm run sim` — do not widen the tolerance.
 
 ---
 

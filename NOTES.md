@@ -38,31 +38,47 @@
   `localStorage` so every test boots a fresh game instead of a stale autosave.
   Chromium v1243 was already in `~/.cache/ms-playwright`, so no browser download
   was needed. Dependency: `@playwright/test` (see `decisions.md`).
-- **First upgrade does not move the HUD DPS readout.** With the guaranteed
-  item-level-1 starter weapon, `autoDps = base(2) + floor(2 * 1.3^0) = 4`; after
-  one upgrade it is `2 + floor(2 * 1.3^1) = 2 + 2 = 4` (integer flooring). The
-  readout only rises on the second upgrade (`2 + floor(2 * 1.3^2) = 5`). The
-  smoke test therefore asserts the upgrade **counter** increments and gold is
-  spent on the first tap, then keeps upgrading until the DPS readout strictly
-  increases (observed at upgrade #2). No engine change: flooring is intended.
+- **Upgrades barely move the HUD DPS readout — drops do.** With the guaranteed
+  item-level-1 starter weapon and a ×1.05 upgrade multiplier, `autoDps = base(2) +
+  floor(2 * 1.05^u) = 4` for `u = 0..8` (integer flooring); the readout only rises
+  once a **newer drop** is equipped (e.g. item level 3 →
+  `floor(2 * 1.283^2) = 3`). This is intended: the economy is drops-primary, so the
+  power jump should come from gear. The smoke test asserts the upgrade **counter**
+  increments and gold is spent on the first tap, then taps until a higher-level drop
+  is in the bag, equips it, and asserts the DPS readout strictly increases
+  (`web/tests/smoke.spec.ts`). No engine change — flooring is intended.
 
 - **Phase 6 documentation pass.** `README.md` was rewritten for a new contributor:
   architecture and the one-way dependency direction (`web → engine-core`,
   `sim → engine-core`, never reverse), the engine-core purity contract, the pure
   `advance`/`applyAction` simulation contract (hosts own the clock and drive fixed 100 ms
   steps; offline replay goes through the same `advance` in bounded steps, auto-DPS only),
-  the versioned `SaveGame` + async `SaveRepository` model, the pacing proof with current
-  numbers (soft 5.92 min @ stage 30, hard 52.23 min @ stage 60, 5-seed hard assertion), the
+  the versioned `SaveGame` + async `SaveRepository` model, the pacing proof with the
+  then-current numbers (Phase-3b: soft 5.92 min @ stage 30, hard 52.23 min @ stage 60,
+  5-seed hard assertion — superseded by the 2026-09-26 drops-primary reversal below), the
   honest trade-offs, a dependency-justification table, and a concrete "Porting to Expo"
   section. The stale "svelte and supabase" stack text in `PROJECT.md` and `AGENTS.md` was
   corrected to TypeScript + Vite + vanilla DOM + pure engine, local-only. The earlier note
   "README is intentionally not updated this phase" is now superseded. No code, balance,
   save schema, or tests were touched.
 - **Documented-but-intentional gaps** (carried into the README trade-offs): `iap` advances
-  one stage; `watchAd`/`iap` are disabled placeholders with no SDK; HUD prints full
-  integers (late-game auto-DPS ~3e7, no compact notation); and pacing is identical across
-  seeds because the power core is deterministic and drops are bounded. These are scoped
-  limitations for this brief, not bugs.
+  one stage; `watchAd`/`iap` are disabled placeholders with no SDK; the HUD prints full
+  integers (late-game auto-DPS ~2.4e5, no compact notation). These are scoped limitations
+  for this brief, not bugs.
+- **2026-09-26 economy reversal (drops-primary).** The user reversed the Phase 3b
+  determinism-first design: gear stats are now exponential in item level
+  (`gearGrowth = 1.283`), `dropChance = 0.95`, `DROP_LEVEL_OFFSET = 0`, and gold upgrades
+  are a minor lever (`upgradeStatMultiplier = 1.05`, `upgradeCostGrowth = 6`,
+  `goldGrowth = 1.0`). The sim now carries a log-power attribution ledger and a hard
+  per-seed `drops-primary` gate (>50% of positive *net* log growth; the reset loss is charged
+  to gold, never subtracted from drops) plus a drop-stream sanity guard (equips must keep pace
+  with stages cleared). Observed: soft 6.39–6.52 min, hard 50.78–51.38 min, drops ≈100% net /
+  87.6% gross (`goldGross = resetLoss = 1.659`, so `goldNet = 0`). Pacing is no longer
+  deterministic across seeds — drop RNG now matters (see `decisions.md`).
+- **Derived gear stats are recomputed on load.** `GearInstance.dps`/`clickDamage` are a cache
+  of `computeGearStats`, so `loadGame` normalizes them for the equipped slot and every bag item
+  (the stat formula changed under an unchanged `CURRENT_SAVE_VERSION = 1`). The save shape is
+  unchanged; see `state.ts` `normalizeGearInstance` and the `save.test.ts` case.
 
 ## Ideas (not built)
 

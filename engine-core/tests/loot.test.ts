@@ -46,18 +46,21 @@ describe('loot', () => {
       if (killStage(seed, 5, true).gear.bag.length > 0) drops += 1;
     }
     const ratio = drops / trials;
-    // Observed frequency tracks the configured chance; a bounded RNG bonus,
-    // not a stage-scaled windfall.
+    // Observed frequency tracks the configured chance, so the sampled drop
+    // stream is the primary power source rather than a rare bonus.
     expect(ratio).toBeGreaterThan(BALANCE.gear.dropChance - 0.03);
     expect(ratio).toBeLessThan(BALANCE.gear.dropChance + 0.03);
   });
 
-  it('bounds a dropped instance itemLevel to max(1, stage - DROP_LEVEL_OFFSET)', () => {
+  it('tracks the killed stage in the dropped instance itemLevel', () => {
     const stage = DROP_LEVEL_OFFSET + 10;
     const after = killStage(1, stage, false);
 
     expect(after.gear.bag).toHaveLength(1);
-    expect(after.gear.bag[0]?.itemLevel).toBe(10);
+    // The drop's item level follows the killed stage (offset is small/zero), so
+    // the drop stream — not the gold curve — supplies stage-proportional power.
+    expect(after.gear.bag[0]?.itemLevel).toBe(Math.max(1, stage - DROP_LEVEL_OFFSET));
+    expect(DROP_LEVEL_OFFSET).toBeLessThanOrEqual(1);
     expect(after.gear.bag[0]?.definitionId).toBe('weapon');
     expect(after.gear.bag[0]?.upgradeLevel).toBe(0);
   });

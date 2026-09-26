@@ -2,6 +2,13 @@
 //
 // Every gameplay number, pacing threshold, and economy formula lives here.
 // Simulation code reads these helpers; it does not hardcode numbers.
+//
+// Economy shape (drops-primary): gear stats are EXPONENTIAL in item level
+// (`floor(factor * gearGrowth^(itemLevel - 1))`), so frequent gear drops are the
+// primary driver of power growth and track the exponential enemy-HP curve.
+// Gold-funded upgrades are a minor smoothing lever: a small multiplicative bump
+// (`upgradeStatMultiplier`) with steep cost growth, whose few affordable levels
+// are reset when a stronger drop is equipped.
 
 import type { GearDefinition } from './types';
 
@@ -23,30 +30,34 @@ export const BAG_CAP = 24;
 /**
  * Dropped gear spawns at `max(1, stage - DROP_LEVEL_OFFSET)`.
  *
- * Bounding the item level keeps a lucky drop a modest, small multiple of the
- * deterministic gold-funded upgrade curve instead of a stage-proportional
- * multiplier that swamps it.
+ * The offset is zero: a killed stage reliably yields a weapon whose item level
+ * tracks that stage, so the drop stream (not the gold curve) supplies the
+ * exponential power term. `dropChance` supplies the sampling; the item level
+ * itself is a modest integer in lockstep with the stage.
  */
-export const DROP_LEVEL_OFFSET = 6;
+export const DROP_LEVEL_OFFSET = 0;
 
 /**
  * Free-path choice grants are denominated in *upgrade levels* of the player's
  * current weapon, not in stage-scaled gold. They are therefore bounded and
- * translate directly into a predictable power bump for either path.
+ * translate directly into a predictable (small) power bump for either path.
  */
 export const WAIT_UPGRADE_GRANT_LEVELS = 2;
 export const WATCH_AD_UPGRADE_GRANT_LEVELS = 4;
 
-// Tuned (Phase 3b) for a deterministic power core: player power growth ≈1.29×
-// per stage while enemy HP grows 1.45×, so the fall-behind is structural rather
-// than a knife-edge between near-equal exponentials. The boss multiplier is a
-// true designed gate: the stage-30 boss is the soft check, the stage-60 boss is
-// the hard wall, for every seed.
+// Drops-primary tuning: enemy HP grows 1.42×/stage while the equipped weapon's
+// stat grows ≈gearGrowth (1.283×) per item level. Because drops track the stage
+// and almost every kill drops, player power grows ≈1.28×/stage and the
+// designed fall-behind ratio (≈1.11) makes the stage-30 boss the soft check and
+// the stage-50 boss the hard wall. Gold upgrades add a small multiplicative
+// smoothing on top (1.05× per level, steep costs) and are reset by each equip.
 export const BALANCE = {
   baseHp: 30,
-  hpGrowth: 1.45,
+  hpGrowth: 1.42,
   baseGold: 5,
-  goldGrowth: 1.35,
+  // Flat gold: upgrades are a minor lever, not a competing exponential, so gold
+  // income must not outpace the (level-indexed) upgrade costs.
+  goldGrowth: 1.0,
   bossStageInterval: 10,
   bossHpMultiplier: 2.25,
   bossGoldMultiplier: 4,
@@ -56,11 +67,11 @@ export const BALANCE = {
     slot: 'weapon' as const,
     dpsFactor: 2,
     clickFactor: 8,
-    levelExponent: 1.1,
+    gearGrowth: 1.283,
     upgradeCostBase: 10,
-    upgradeCostGrowth: 1.3,
-    upgradeStatMultiplier: 1.3,
-    dropChance: 0.08,
+    upgradeCostGrowth: 6,
+    upgradeStatMultiplier: 1.05,
+    dropChance: 0.95,
   },
 } as const;
 
@@ -79,12 +90,14 @@ export function goldReward(stage: number): number {
   return Math.floor(BALANCE.baseGold * Math.pow(BALANCE.goldGrowth, stage - 1) * bossMultiplier);
 }
 
+/** Base weapon DPS at `itemLevel`, before any upgrade levels (exponential). */
 export function gearBaseDps(itemLevel: number): number {
-  return Math.floor(BALANCE.gear.dpsFactor * Math.pow(itemLevel, BALANCE.gear.levelExponent));
+  return Math.floor(BALANCE.gear.dpsFactor * Math.pow(BALANCE.gear.gearGrowth, itemLevel - 1));
 }
 
+/** Base weapon click damage at `itemLevel`, before any upgrade levels (exponential). */
 export function gearBaseClickDamage(itemLevel: number): number {
-  return Math.floor(BALANCE.gear.clickFactor * Math.pow(itemLevel, BALANCE.gear.levelExponent));
+  return Math.floor(BALANCE.gear.clickFactor * Math.pow(BALANCE.gear.gearGrowth, itemLevel - 1));
 }
 
 export function applyUpgradeMultiplier(base: number, upgradeLevel: number): number {
@@ -108,12 +121,12 @@ export function choiceGoldGrant(currentUpgradeLevel: number, levels: number): nu
 
 function scaledGearStat(
   factor: number,
-  levelExponent: number,
+  gearGrowth: number,
   itemLevel: number,
   upgradeStatMultiplier: number,
   upgradeLevel: number,
 ): number {
-  const base = Math.floor(factor * Math.pow(itemLevel, levelExponent));
+  const base = Math.floor(factor * Math.pow(gearGrowth, itemLevel - 1));
   return Math.floor(base * Math.pow(upgradeStatMultiplier, upgradeLevel));
 }
 
@@ -126,14 +139,14 @@ export function computeGearStats(
   return {
     dps: scaledGearStat(
       definition.dpsFactor,
-      definition.levelExponent,
+      definition.gearGrowth,
       itemLevel,
       definition.upgradeStatMultiplier,
       upgradeLevel,
     ),
     clickDamage: scaledGearStat(
       definition.clickFactor,
-      definition.levelExponent,
+      definition.gearGrowth,
       itemLevel,
       definition.upgradeStatMultiplier,
       upgradeLevel,

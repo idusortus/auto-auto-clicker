@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { advance, createGame, loadGame, saveGame } from '../src/index';
+import { computeGearStats } from '../src/balance';
+import { WEAPON_DEFINITION } from '../src/content';
 import { LocalStorageSaveRepository } from '../save/index';
 import type { SaveGame } from '../src/types';
+import { makeGear, makeState } from './helpers';
 
 describe('save serialization', () => {
   it('round-trips createGame -> saveGame -> loadGame identically', () => {
@@ -19,6 +22,30 @@ describe('save serialization', () => {
     // Survives JSON transport (localStorage / Supabase jsonb).
     const transported = JSON.parse(JSON.stringify(save)) as SaveGame;
     expect(loadGame(transported)).toEqual(state);
+  });
+
+  it('recomputes stale derived gear stats on load (equipped and bag)', () => {
+    // A version-1 save written under the old power-law formula carries a stale
+    // `dps`/`clickDamage` cache. `loadGame` must normalize both the equipped slot
+    // and every bag entry from the current formula without a schema bump.
+    const staleWeapon = { ...makeGear(30, 2, 'stale-equipped'), dps: 84, clickDamage: 84 };
+    const staleBagItem = { ...makeGear(5, 0, 'stale-bag'), dps: -1, clickDamage: -1 };
+    const state = makeState({ equippedWeapon: staleWeapon, bag: [staleBagItem] });
+    const save: SaveGame = { version: 1, savedAt: 0, state };
+
+    const loaded = loadGame(save);
+
+    const expectedWeapon = computeGearStats(WEAPON_DEFINITION, 30, 2);
+    expect(loaded.gear.equipped.weapon?.dps).toBe(expectedWeapon.dps);
+    expect(loaded.gear.equipped.weapon?.clickDamage).toBe(expectedWeapon.clickDamage);
+    expect(loaded.gear.equipped.weapon?.dps).not.toBe(84);
+
+    const expectedBag = computeGearStats(WEAPON_DEFINITION, 5, 0);
+    expect(loaded.gear.bag[0]?.dps).toBe(expectedBag.dps);
+    expect(loaded.gear.bag[0]?.clickDamage).toBe(expectedBag.clickDamage);
+
+    // The input save is never mutated by the normalization.
+    expect(state.gear.equipped.weapon?.dps).toBe(84);
   });
 
   it('throws on unsupported save versions', () => {

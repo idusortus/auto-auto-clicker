@@ -11,7 +11,7 @@ export const WEAPON_DEFINITION: GearDefinition = {
   slot: 'weapon',
   dpsFactor: BALANCE.gear.dpsFactor,
   clickFactor: BALANCE.gear.clickFactor,
-  levelExponent: BALANCE.gear.levelExponent,
+  gearGrowth: BALANCE.gear.gearGrowth,
   upgradeCostBase: BALANCE.gear.upgradeCostBase,
   upgradeCostGrowth: BALANCE.gear.upgradeCostGrowth,
   upgradeStatMultiplier: BALANCE.gear.upgradeStatMultiplier,

@@ -7,10 +7,12 @@
 import {
   ACTIVE_CLICKS_PER_SECOND,
   BALANCE,
+  computeGearStats,
   CURRENT_SAVE_VERSION,
   enemyMaxHp,
   upgradeCost,
 } from './balance';
+import { gearDefinitionFor, WEAPON_DEFINITION } from './content';
 import type { GameState, GearInstance, GearSlot, SaveGame } from './types';
 
 /** Build a fresh game at stage 1. `now` defaults to 0 for deterministic tests. */
@@ -100,6 +102,21 @@ export function getUpgradeCost(state: GameState, slot: GearSlot): number | null 
   return upgradeCost(item.upgradeLevel);
 }
 
+/**
+ * Recompute a persisted instance's derived battle stats.
+ *
+ * `GearInstance.dps`/`clickDamage` are a cache of `computeGearStats`, not an
+ * independent source of truth: the stat formula can change under an unchanged
+ * `CURRENT_SAVE_VERSION` (a formula change is not a schema change). Recomputing
+ * on load keeps an old save coherent instead of letting a stale cache drive
+ * combat and the HUD until the next equip/upgrade.
+ */
+function normalizeGearInstance(instance: GearInstance): GearInstance {
+  const definition = gearDefinitionFor(instance.definitionId) ?? WEAPON_DEFINITION;
+  const stats = computeGearStats(definition, instance.itemLevel, instance.upgradeLevel);
+  return { ...instance, dps: stats.dps, clickDamage: stats.clickDamage };
+}
+
 /** Wrap a state in the versioned save blob. `savedAt` defaults to 0 for determinism. */
 export function saveGame(state: GameState, savedAt = 0): SaveGame {
   return {
@@ -109,7 +126,12 @@ export function saveGame(state: GameState, savedAt = 0): SaveGame {
   };
 }
 
-/** Validate and hydrate a save blob. Throws on unsupported/malformed versions. */
+/**
+ * Validate and hydrate a save blob. Throws on unsupported/malformed versions.
+ *
+ * Derived gear stats are normalized (recomputed) so a save written under an
+ * older stat formula loads with current stats. The persisted shape is unchanged.
+ */
 export function loadGame(save: SaveGame): GameState {
   if (!save || typeof save.version !== 'number') {
     throw new Error('Invalid save: missing version');
@@ -120,5 +142,12 @@ export function loadGame(save: SaveGame): GameState {
   if (save.state === null || typeof save.state !== 'object' || Array.isArray(save.state)) {
     throw new Error(`Invalid save: version ${save.version} has a missing or invalid state`);
   }
-  return cloneGameState(save.state);
+
+  const state = cloneGameState(save.state);
+  for (const slot of Object.keys(state.gear.equipped) as GearSlot[]) {
+    const item = state.gear.equipped[slot];
+    if (item) state.gear.equipped[slot] = normalizeGearInstance(item);
+  }
+  state.gear.bag = state.gear.bag.map(normalizeGearInstance);
+  return state;
 }

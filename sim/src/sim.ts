@@ -5,21 +5,37 @@
 //   1. buy weapon upgrades while affordable;
 //   2. equip a bag weapon only when it strictly raises total active DPS
 //      (auto DPS + ACTIVE_CLICKS_PER_SECOND * click damage).
-// Step 2 deliberately replaces the old "swap on higher itemLevel" policy, which
-// let a fresh level-0 drop reset the whole upgrade curve and made pacing a
-// knife-edge function of drop RNG.
+//
+// Drops are the PRIMARY power lever (Phase 3b reversed): every kill almost
+// always drops a weapon whose item level tracks the killed stage, and gear stats
+// are exponential in item level, so equipping a newer drop is the dominant power
+// jump. Gold-funded upgrades are a minor multiplicative smoothing bonus whose
+// few affordable levels are reset by each equip.
 //
 // Asserts the pacing targets for EVERY sweep seed (all are hard assertions):
 //   - soft boss check lands 6.0 min  (±20% → [4.8, 7.2])
 //   - hard progression wall 54.0 min (±20% → [43.2, 64.8])
-// plus the design guards: soft is an early boss (stage <= 40), hard wall stage
-// <= 90, the canonical seed is comfortably inside its targets, and no reported
-// stat is Infinity/NaN. Exit code 1 when any seed misses any target.
+// plus the design guards (soft is an early boss, hard wall stage <= 90, no
+// Infinity/NaN), a drops-primary gate: the drop-attributed share of the run's
+// positive NET log-power growth must exceed 50%, and a drop-stream sanity guard
+// (equips must keep pace with stages cleared). Exit code 1 when any seed misses
+// any target.
+//
+// Power attribution: the equipped weapon's stat is multiplicative —
+//   ln(stat) = ln(factor) + (itemLevel - 1) * ln(gearGrowth)
+//                       + upgradeLevel * ln(upgradeStatMultiplier)
+// so the run's log-power growth decomposes EXACTLY into per-equip deltas
+// (item-level gain) and per-upgrade deltas. Each equip resets the (gold-funded)
+// upgradeLevel to 0, so that upgrade power — and the gold that bought it — is
+// destroyed on every swap: gold's NET contribution is ~0. The reset loss is
+// therefore charged to GOLD (`goldNet = goldGross - resetLoss`), never
+// subtracted from drops, and both a net-of-reset and a gross share are reported.
 
 import {
   ACTIVE_CLICKS_PER_SECOND,
   advance,
   applyAction,
+  BALANCE,
   createGame,
   getEffectiveStats,
   getUpgradeCost,
@@ -51,6 +67,14 @@ const MAX_SOFT_AUTO_DPS = 1e10;
 const CANONICAL_SOFT_MS_RANGE: readonly [number, number] = [5.2 * 60 * 1000, 6.8 * 60 * 1000];
 const CANONICAL_HARD_MS_RANGE: readonly [number, number] = [48 * 60 * 1000, 60 * 60 * 1000];
 
+// Drops-primary gate: drop-attributed share of positive NET log-power growth.
+const MIN_DROP_LOG_SHARE = 0.5;
+// Drop-stream sanity: equips must keep pace with progress (at least 1 equip per
+// 5 stages cleared). A run whose attributed drops never actually happened cannot
+// pass, even if arithmetic alone would clear the share gate. Generous on purpose
+// — the real rate is ~1 equip/stage — so it only catches a dead drop stream.
+const MIN_EQUIPS_PER_STAGE = 1 / 5;
+
 interface Milestone {
   ms: number;
   stage: number;
@@ -64,12 +88,33 @@ interface SimRecord {
   hard: Milestone | null;
 }
 
+/** Log-power bookkeeping accumulated over a run. All values are natural logs. */
+interface Attribution {
+  /** Sum of item-level gains on each equip: Δ(itemLevel - 1) * ln(gearGrowth). */
+  dropGross: number;
+  /** Sum of +ln(upgradeStatMultiplier) for every upgrade purchased. */
+  goldGross: number;
+  /** Sum of oldUpgradeLevel * ln(upgradeStatMultiplier) lost on each equip. */
+  resetLoss: number;
+  equips: number;
+  upgrades: number;
+  killGold: number;
+  waitGold: number;
+}
+
 interface SimResult {
   seed: number;
   totalMs: number;
   start: Milestone;
   soft: Milestone | null;
   hard: Milestone | null;
+  /** Stage the run ended on (the wall/stop stage); stages cleared = endStage - 1. */
+  endStage: number;
+  attr: Attribution;
+}
+
+function emptyAttribution(): Attribution {
+  return { dropGross: 0, goldGross: 0, resetLoss: 0, equips: 0, upgrades: 0, killGold: 0, waitGold: 0 };
 }
 
 function milestone(state: GameState, ms: number, projectedKillMs: number | null): Milestone {
@@ -89,6 +134,7 @@ function processEvents(
   atMs: number,
   state: GameState,
   record: SimRecord,
+  attr: Attribution,
 ): void {
   for (const event of events) {
     if (event.type === 'bossCheckFailed' && record.soft === null) {
@@ -97,6 +143,7 @@ function processEvents(
     if (event.type === 'progressionWall' && record.hard === null) {
       record.hard = milestone(state, atMs, event.projectedKillMs);
     }
+    if (event.type === 'enemyKilled') attr.killGold += event.gold;
   }
 }
 
@@ -115,11 +162,18 @@ function candidateActiveDps(state: GameState, item: GearInstance): number {
 /**
  * Greedy economy: buy every affordable upgrade, then equip the single bag
  * weapon that strictly raises total active DPS; repeat until neither action
- * changes the state. Equipping is DPS-based, so a level-0 drop never resets a
- * deeply upgraded weapon.
+ * changes the state. Equipping is DPS-based, so a weaker bag item never resets
+ * an upgraded weapon — but with drops-primary tuning the newest (highest item
+ * level) drop is always the strongest, so drops drive the power curve.
+ *
+ * Attribution is recorded on real state changes only: each upgrade adds
+ * +ln(upgradeStatMultiplier); each equip adds Δ(itemLevel - 1) * ln(gearGrowth)
+ * and charges the reset loss of the discarded weapon's upgrade levels.
  */
-function runEconomy(state: GameState): GameState {
+function runEconomy(state: GameState, attr: Attribution): GameState {
   let next = state;
+  const lnGrowth = Math.log(BALANCE.gear.gearGrowth);
+  const lnUpgrade = Math.log(BALANCE.gear.upgradeStatMultiplier);
 
   for (let pass = 0; pass < MAX_ECONOMY_PASSES; pass += 1) {
     let changed = false;
@@ -130,6 +184,8 @@ function runEconomy(state: GameState): GameState {
       const upgraded = applyAction(next, { type: 'upgradeEquipped', slot: 'weapon' });
       if (upgraded.state === next) break;
       next = upgraded.state;
+      attr.goldGross += lnUpgrade;
+      attr.upgrades += 1;
       changed = true;
     }
 
@@ -145,9 +201,15 @@ function runEconomy(state: GameState): GameState {
     }
 
     if (best === null) break;
+    const old = next.gear.equipped.weapon;
+    const oldItemLevel = old ? old.itemLevel : 1;
+    const oldUpgradeLevel = old ? old.upgradeLevel : 0;
     const swapped = applyAction(next, { type: 'equip', instanceId: best.id });
     if (swapped.state === next) break;
     next = swapped.state;
+    attr.dropGross += (best.itemLevel - oldItemLevel) * lnGrowth;
+    attr.resetLoss += oldUpgradeLevel * lnUpgrade;
+    attr.equips += 1;
     changed = true;
 
     if (!changed) break;
@@ -159,6 +221,7 @@ function runEconomy(state: GameState): GameState {
 function runSim(seed: number): SimResult {
   const initial = createGame(seed, 0);
   const record: SimRecord = { soft: null, hard: null };
+  const attr = emptyAttribution();
   const start = milestone(initial, 0, null);
 
   let state = initial;
@@ -169,28 +232,82 @@ function runSim(seed: number): SimResult {
     const tick = advance(state, STEP_MS);
     state = tick.state;
     totalMs += STEP_MS;
-    processEvents(tick.events, totalMs, state, record);
+    processEvents(tick.events, totalMs, state, record, attr);
 
     clickAcc += STEP_MS;
     if (clickAcc >= CLICK_INTERVAL_MS) {
       clickAcc -= CLICK_INTERVAL_MS;
       const clicked = applyAction(state, { type: 'click' });
       state = clicked.state;
-      processEvents(clicked.events, totalMs, state, record);
+      processEvents(clicked.events, totalMs, state, record, attr);
     }
 
     if (record.hard !== null) break;
 
     if (state.choices.pending) {
+      const goldBefore = state.player.gold;
       const resolved = applyAction(state, { type: 'resolveChoice', choice: 'wait' });
       state = resolved.state;
-      processEvents(resolved.events, totalMs, state, record);
+      attr.waitGold += state.player.gold - goldBefore;
+      processEvents(resolved.events, totalMs, state, record, attr);
     }
 
-    state = runEconomy(state);
+    state = runEconomy(state, attr);
   }
 
-  return { seed, totalMs, start, soft: record.soft, hard: record.hard };
+  return { seed, totalMs, start, soft: record.soft, hard: record.hard, endStage: state.combat.stage, attr };
+}
+
+interface AttributionSummary {
+  dropGross: number;
+  goldGross: number;
+  resetLoss: number;
+  /** Drop-attributed NET log growth. Drops carry no reset loss, so this is gross. */
+  dropNet: number;
+  /** Gold-attributed NET log growth after the reset loss each equip destroys (≈0). */
+  goldNet: number;
+  /** Total NET log-power growth over the run (`dropNet + goldNet`). */
+  totalNet: number;
+  /** Gross positive log growth (drops + upgrades), before reset losses. */
+  grossTotal: number;
+  /** Denominator for the net share: `dropNet + max(goldNet, 0)` (never negative). */
+  netTotal: number;
+  /** Drop share of positive NET log-power growth (the drops-primary metric). */
+  dropShareNet: number;
+  /** Drop share of GROSS positive log growth. */
+  dropShareGross: number;
+  /** Approximate share of net growth funded by the free `wait` grants. */
+  freeShare: number;
+  equips: number;
+  upgrades: number;
+}
+
+function summarizeAttribution(attr: Attribution): AttributionSummary {
+  // Each equip resets the gold-funded upgradeLevel to 0, so the upgrade power
+  // (and the gold that bought it) is destroyed by the swap. Charge that loss to
+  // GOLD, the lever it came from — never to drops.
+  const dropNet = attr.dropGross;
+  const goldNet = attr.goldGross - attr.resetLoss;
+  const totalNet = dropNet + goldNet;
+  const netTotal = dropNet + Math.max(goldNet, 0);
+  const grossTotal = attr.dropGross + attr.goldGross;
+  const goldIncome = attr.killGold + attr.waitGold;
+  const freeGoldShare = goldIncome > 0 ? attr.waitGold / goldIncome : 0;
+  return {
+    dropGross: attr.dropGross,
+    goldGross: attr.goldGross,
+    resetLoss: attr.resetLoss,
+    dropNet,
+    goldNet,
+    totalNet,
+    grossTotal,
+    netTotal,
+    dropShareNet: netTotal > 0 ? dropNet / netTotal : 0,
+    dropShareGross: grossTotal > 0 ? attr.dropGross / grossTotal : 0,
+    freeShare: netTotal > 0 ? (freeGoldShare * attr.goldGross) / netTotal : 0,
+    equips: attr.equips,
+    upgrades: attr.upgrades,
+  };
 }
 
 function toMinutes(ms: number): number {
@@ -251,6 +368,36 @@ function targetLine(label: string, targetMs: number, actual: Milestone | null): 
   );
 }
 
+function formatLog(value: number): string {
+  return `${value >= 0 ? '+' : ''}${value.toFixed(3)}`;
+}
+
+function formatPercent(fraction: number): string {
+  return `${(fraction * 100).toFixed(1)}%`;
+}
+
+/** Stages cleared by a run: it ends on the wall/stop stage, which it has not cleared. */
+function stagesCleared(result: SimResult): number {
+  return Math.max(0, result.endStage - 1);
+}
+
+function attributionLine(result: SimResult): string {
+  const a = summarizeAttribution(result.attr);
+  const cleared = stagesCleared(result);
+  const equipsPerStage = cleared > 0 ? a.equips / cleared : 0;
+  const marker = result.seed === CANONICAL_SEED ? '*' : ' ';
+  return (
+    ` ${marker} seed ${String(result.seed).padEnd(9)} equips=${String(a.equips).padStart(3)} ` +
+    `upgrades=${String(a.upgrades).padStart(3)}  ` +
+    `drop-gross ${formatLog(a.dropGross)}  gold-gross ${formatLog(a.goldGross)}  ` +
+    `reset-loss ${a.resetLoss.toFixed(3)}  gold-net ${formatLog(a.goldNet)}  ` +
+    `drop-share net ${formatPercent(a.dropShareNet)} / gross ${formatPercent(a.dropShareGross)}  ` +
+    `eq/stage ${equipsPerStage.toFixed(2)} (${a.equips}/${cleared})  ` +
+    `free-path ${formatPercent(a.freeShare)}  ` +
+    `[${a.dropShareNet > MIN_DROP_LOG_SHARE ? 'DROPS-PRIMARY' : 'GOLD-PRIMARY'}]`
+  );
+}
+
 interface SeedVerdict {
   seed: number;
   problems: string[];
@@ -283,6 +430,26 @@ function evaluateSeed(result: SimResult): SeedVerdict {
     if (hard.stage > HARD_MAX_STAGE) problems.push(`hard stage ${hard.stage} > ${HARD_MAX_STAGE}`);
   }
 
+  const attribution = summarizeAttribution(result.attr);
+  if (!(attribution.totalNet > 0)) {
+    problems.push('attribution: net log-power growth is not positive');
+  } else if (attribution.dropShareNet <= MIN_DROP_LOG_SHARE) {
+    problems.push(
+      `drops-primary: drop share of net log-power growth ${formatPercent(attribution.dropShareNet)} ` +
+        `<= ${formatPercent(MIN_DROP_LOG_SHARE)}`,
+    );
+  }
+
+  // Second, independent sanity metric: the attributed drops must correspond to
+  // real equip events keeping pace with progress, not one telescoping final drop.
+  const cleared = stagesCleared(result);
+  if (cleared > 0 && attribution.equips < cleared * MIN_EQUIPS_PER_STAGE) {
+    problems.push(
+      `drop-stream sanity: ${attribution.equips} equips < ${MIN_EQUIPS_PER_STAGE} per clear ` +
+        `(${cleared} stages cleared)`,
+    );
+  }
+
   if (result.seed === CANONICAL_SEED) {
     if (soft !== null && (soft.ms < CANONICAL_SOFT_MS_RANGE[0] || soft.ms > CANONICAL_SOFT_MS_RANGE[1])) {
       problems.push(
@@ -307,6 +474,10 @@ function main(): void {
     `canonical seed=${CANONICAL_SEED}  step=${STEP_MS}ms  click=${CLICK_INTERVAL_MS}ms  ` +
       `max=${formatMinutes(MAX_SIM_MS)}min`,
   );
+  console.log(
+    `dropChance=${BALANCE.gear.dropChance}  gearGrowth=${BALANCE.gear.gearGrowth}  ` +
+      `upgradeStatMultiplier=${BALANCE.gear.upgradeStatMultiplier}`,
+  );
   console.log('');
 
   const results = SWEEP_SEEDS.map((seed) => runSim(seed));
@@ -321,6 +492,12 @@ function main(): void {
   console.log('targets (canonical seed)');
   console.log(targetLine('soft', SOFT_TARGET_MS, canonical.soft));
   console.log(targetLine('hard', HARD_TARGET_MS, canonical.hard));
+  console.log('');
+
+  console.log('power attribution (log-power decomposition; net-of-reset drops-primary gate > 50%)');
+  for (const result of results) {
+    console.log(attributionLine(result));
+  }
   console.log('');
 
   console.log('seed sweep (every seed is a hard assertion)');

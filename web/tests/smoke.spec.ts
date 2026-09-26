@@ -1,4 +1,5 @@
 import { expect, test as base } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 
 // Phase 5 — mobile-viewport smoke test for the /web host.
 //
@@ -101,7 +102,6 @@ test('earning gold enables a weapon upgrade that increments the counter and spen
 
   // Earn enough gold to afford the first upgrade, then bank the readouts.
   await tapUntilEnabled(enemy, upgradeBtn, 60);
-  const dpsBefore = parseLeadingInt(await dps.textContent());
   const goldBefore = parseLeadingInt(await gold.textContent());
   const levelBefore = await readUpgradeLevel(page);
 
@@ -112,17 +112,16 @@ test('earning gold enables a weapon upgrade that increments the counter and spen
   expect(levelAfter).toBe(levelBefore + 1); // "tap upgrade, counter increments"
   expect(goldAfter).toBeLessThan(goldBefore); // upgrade spends gold
 
-  // Keep upgrading until the HUD DPS readout strictly increases. The readout is
-  // the floor of auto-DPS; integer flooring means a level-1 weapon's first
-  // upgrade (floor(2 * 1.3^1) = 2) does not move it, while the second
-  // (floor(2 * 1.3^2) = 3) does. Observed by the loop, not assumed.
-  let dpsAfter = dpsBefore;
-  for (let attempt = 0; attempt < 6 && dpsAfter <= dpsBefore; attempt += 1) {
-    await tapUntilEnabled(enemy, upgradeBtn, 80);
-    await upgradeBtn.click();
-    dpsAfter = parseLeadingInt(await dps.textContent());
-  }
-  expect(dpsAfter).toBeGreaterThan(dpsBefore);
+  // The economy is drops-primary: gear drops (not cheap upgrades) drive power,
+  // and a single upgrade is a small multiplicative bump the floored auto-DPS
+  // readout may not even show at low item levels. Assert the loop the economy is
+  // built on — equipping a higher-level drop strictly raises the HUD DPS
+  // readout. Every number is read from the DOM; none are hard-coded here.
+  const dpsBeforeDrop = parseLeadingInt(await dps.textContent());
+  await tapUntil(page, enemy, async () => (await bagMaxLevel(page)) >= 3, 80);
+  await equipHighestLevelDrop(page);
+  const dpsAfterDrop = parseLeadingInt(await dps.textContent());
+  expect(dpsAfterDrop).toBeGreaterThan(dpsBeforeDrop);
   expect(consoleErrors).toEqual([]);
 });
 
@@ -191,4 +190,49 @@ async function tapUntilEnabled(
     await enemy.click();
   }
   await expect(button).toBeEnabled();
+}
+
+/** Tap the enemy until `predicate` holds (bounded, then a real assertion). */
+async function tapUntil(
+  page: Page,
+  enemy: Locator,
+  predicate: () => Promise<boolean>,
+  maxTaps: number,
+): Promise<void> {
+  for (let tap = 0; tap < maxTaps; tap += 1) {
+    if (await predicate()) return;
+    await enemy.click();
+  }
+  await expect(await predicate()).toBe(true);
+}
+
+/** Highest item level currently offered in the bag (read from the DOM). */
+async function bagMaxLevel(page: Page): Promise<number> {
+  const texts = await page
+    .getByTestId('equip-btn')
+    .evaluateAll((buttons) => buttons.map((button) => button.closest('li')?.textContent ?? ''));
+  let max = 0;
+  for (const text of texts) {
+    const match = text.match(/Level (\d+)/);
+    if (match) max = Math.max(max, Number(match[1]));
+  }
+  return max;
+}
+
+/** Equip the bag item with the highest item level (newest, strongest drop). */
+async function equipHighestLevelDrop(page: Page): Promise<void> {
+  const buttons = page.getByTestId('equip-btn');
+  const count = await buttons.count();
+  let bestIndex = 0;
+  let bestLevel = -1;
+  for (let i = 0; i < count; i += 1) {
+    const text = await buttons.nth(i).evaluate((el) => el.closest('li')?.textContent ?? '');
+    const match = text.match(/Level (\d+)/);
+    const level = match ? Number(match[1]) : -1;
+    if (level > bestLevel) {
+      bestLevel = level;
+      bestIndex = i;
+    }
+  }
+  await buttons.nth(bestIndex).click();
 }

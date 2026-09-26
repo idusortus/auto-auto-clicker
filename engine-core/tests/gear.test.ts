@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applyAction, getEffectiveStats, getUpgradeCost } from '../src/index';
-import { BALANCE, computeGearStats, upgradeCost } from '../src/balance';
+import { BALANCE, computeGearStats, gearBaseDps, upgradeCost } from '../src/balance';
 import { WEAPON_DEFINITION } from '../src/content';
 import { makeGear, makeState } from './helpers';
 
@@ -47,7 +47,9 @@ describe('gear — equip', () => {
 
 describe('gear — upgrade', () => {
   it('deducts gold and raises stats', () => {
-    const weapon = makeGear(5);
+    // Large item level so the small (×1.05) upgrade multiplier is not masked by
+    // integer flooring of the base stat.
+    const weapon = makeGear(20);
     const start = makeState({ gold: 1000, equippedWeapon: weapon });
     const cost = getUpgradeCost(start, 'weapon');
     expect(cost).toBe(upgradeCost(0));
@@ -70,7 +72,7 @@ describe('gear — upgrade', () => {
     });
 
     const stats = getEffectiveStats(state);
-    const expected = computeGearStats(WEAPON_DEFINITION, 5, 1);
+    const expected = computeGearStats(WEAPON_DEFINITION, 20, 1);
     expect(stats.autoDps).toBe(BALANCE.baseAutoDps + expected.dps);
     expect(stats.clickDamage).toBe(BALANCE.baseClickDamage + expected.clickDamage);
     expect(stats.autoDps).toBeGreaterThan(getEffectiveStats(start).autoDps);
@@ -90,5 +92,37 @@ describe('gear — upgrade', () => {
     const result = applyAction(start, { type: 'upgradeEquipped', slot: 'weapon' });
     expect(result.state).toBe(start);
     expect(result.events).toEqual([]);
+  });
+});
+
+describe('gear — stat rule (drops-primary)', () => {
+  it('base stats grow EXPONENTIALLY in item level, not polynomially', () => {
+    // A constant ratio across the range is the signature of an exponential; a
+    // power law with exponent > 1 would have a rising ratio.
+    const r20 = gearBaseDps(20) / gearBaseDps(19);
+    const r21 = gearBaseDps(21) / gearBaseDps(20);
+    const r22 = gearBaseDps(22) / gearBaseDps(21);
+    expect(r20).toBeCloseTo(BALANCE.gear.gearGrowth, 2);
+    expect(r21).toBeCloseTo(BALANCE.gear.gearGrowth, 2);
+    expect(r22).toBeCloseTo(BALANCE.gear.gearGrowth, 2);
+  });
+
+  it('a single item-level step outweighs any single upgrade step', () => {
+    // Drops must dominate gold upgrades: one extra item level multiplies the
+    // stat by more than one upgrade level does.
+    expect(BALANCE.gear.gearGrowth).toBeGreaterThan(BALANCE.gear.upgradeStatMultiplier);
+    expect(BALANCE.gear.gearGrowth).toBeGreaterThan(1.2);
+    expect(BALANCE.gear.upgradeStatMultiplier).toBeLessThan(1.15);
+  });
+
+  it('applies the upgrade multiplier multiplicatively on top of the item base', () => {
+    const base = computeGearStats(WEAPON_DEFINITION, 20, 0);
+    const upgraded = computeGearStats(WEAPON_DEFINITION, 20, 2);
+    const expected = Math.floor(
+      gearBaseDps(20) * Math.pow(BALANCE.gear.upgradeStatMultiplier, 2),
+    );
+    expect(upgraded.dps).toBe(expected);
+    expect(upgraded.dps).toBeGreaterThan(base.dps);
+    expect(upgraded.clickDamage).toBeGreaterThan(base.clickDamage);
   });
 });
