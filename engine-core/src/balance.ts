@@ -10,10 +10,65 @@
 // (`upgradeStatMultiplier`) with steep cost growth, whose few affordable levels
 // are reset when a stronger drop is equipped.
 
-import type { GearDefinition } from './types';
+import type { GearDefinition, GearSlot } from './types';
 
 /** Save schema version understood by this engine build. */
-export const CURRENT_SAVE_VERSION = 2;
+export const CURRENT_SAVE_VERSION = 3;
+
+/**
+ * Hard ceiling on total critical chance from all slots. Critical strikes are
+ * modelled as an EXPECTED-DPS multiplier (not a per-hit roll) so the engine
+ * stays deterministic and `getProjectedKillMs` stays exact; without a cap the
+ * exponential ring scaling could drive expected DPS to infinity.
+ */
+export const CRIT_CHANCE_CAP = 0.75;
+
+/**
+ * Hard ceilings on the TOTAL multiplicative bonuses from rings and the necklace.
+ *
+ * Ring/necklace contributions scale by `gearGrowth^(itemLevel - 1)` exactly like
+ * the weapon's raw stats, but they are *multiplicative* on top of those stats.
+ * An exponential lever compounded multiplicatively explodes (a single item-level
+ * 50 ring contributes ~20000 to the crit multiplier), which would let a real
+ * player trivialise the enemy-HP curve and would make the pacing proof
+ * meaningless. The weapon stays the single unbounded exponential power lever;
+ * these caps bound the secondary slots so their effect is real but finite.
+ *
+ * Crit is an expected-DPS multiplier, so the total crit multiplier is clamped
+ * (not just the chance). All three are applied in the `getCritStats` /
+ * `getGlobalBonuses` getters, never to the raw per-item content values.
+ */
+export const CRIT_MULTIPLIER_CAP = 1.18;
+export const POWER_MULTIPLIER_CAP = 0.02;
+/**
+ * The gold cap is looser than the power/crit caps on purpose: kill gold is a
+ * flat base (goldGrowth 1.0), so a bonus below ~20% is erased by the integer
+ * floor in `getGoldReward` and the necklace's gold lever would be invisible.
+ * 25% moves the readout while gold stays the deliberately minor lever.
+ */
+export const GOLD_MULTIPLIER_CAP = 0.25;
+
+/**
+ * Per-slot drop sampling weights. `rollGearDrop` first rolls the global
+ * `gear.dropChance` for "does anything drop", then picks a slot in proportion
+ * to these weights.
+ *
+ * The weapon weight must dominate: the weapon is the only unbounded
+ * exponential power lever, so a thinned weapon stream means the equipped weapon
+ * lags the stage by ~2 item levels, clears slow down, and the soft boss check
+ * lands late. When rings were weighted 0.25 apiece the weapon weight was 1.0 of
+ * a 1.52 total, so only ~66% of drops were weapons and the soft check drifted to
+ * ~7.2–7.6 min (out of the ±20% window). At 0.04 apiece the weapon share is
+ * ~91%, the weapon tracks the stage again, and the pacing proof lands inside its
+ * window. Rings/necklaces are secondary, bounded levers (see the caps above);
+ * necklaces stay deliberately rarer at 0.02.
+ */
+export const SLOT_DROP_WEIGHTS: Record<GearSlot, number> = {
+  weapon: 1.0,
+  ring1: 0.04,
+  ring2: 0.04,
+  necklace: 0.02,
+};
 
 /** Boss stages must fall within this projected kill time or a choice is offered. */
 export const BOSS_TIMER_MS = 60_000;
@@ -73,11 +128,47 @@ export const BALANCE = {
     upgradeStatMultiplier: 1.05,
     dropChance: 0.95,
   },
+  // Non-weapon gear contributions (content, never persisted). Base values are
+  // at item level 1 and scale by `gearGrowth^(itemLevel - 1)` exactly like the
+  // weapon stats, but unlike the weapon they are CLAMPED by CRIT_MULTIPLIER_CAP
+  // / CRIT_CHANCE_CAP / POWER_MULTIPLIER_CAP / GOLD_MULTIPLIER_CAP in the state
+  // getters, so the weapon remains the single exponential power lever. Note the
+  // necklace power base (0.05) already exceeds POWER_MULTIPLIER_CAP (0.02), so
+  // ANY necklace saturates the power bonus immediately by design; only the ring
+  // crit bonuses and the necklace gold bonus grow before hitting their caps.
+  ring: {
+    critChance: 0.02,
+    critMultiplier: 0.05,
+  },
+  necklace: {
+    goldMultiplier: 0.05,
+    powerMultiplier: 0.05,
+  },
 } as const;
 
 /** Boss stages occur every `bossStageInterval` stages (stage 1 is not a boss). */
 export function isBoss(stage: number): boolean {
   return stage % BALANCE.bossStageInterval === 0;
+}
+
+/**
+ * Deterministically map a uniform `[0, 1)` roll to a gear slot in proportion to
+ * `SLOT_DROP_WEIGHTS`. Kept here with the weights so tuning a single table
+ * changes the drop distribution. Falls back to `'weapon'` for a non-finite roll
+ * or a degenerate (all-zero) table.
+ */
+export function pickWeightedSlot(roll: number): GearSlot {
+  const slots = Object.keys(SLOT_DROP_WEIGHTS) as GearSlot[];
+  let total = 0;
+  for (const slot of slots) total += SLOT_DROP_WEIGHTS[slot];
+  if (!Number.isFinite(roll) || total <= 0) return 'weapon';
+
+  let threshold = roll * total;
+  for (const slot of slots) {
+    threshold -= SLOT_DROP_WEIGHTS[slot];
+    if (threshold < 0) return slot;
+  }
+  return slots[slots.length - 1] ?? 'weapon';
 }
 
 export function enemyMaxHp(stage: number): number {
@@ -130,12 +221,40 @@ function scaledGearStat(
   return Math.floor(base * Math.pow(upgradeStatMultiplier, upgradeLevel));
 }
 
+/**
+ * Scale a fractional effect contribution (crit/gold/power) by item level and
+ * upgrade level. Unlike `scaledGearStat` there is NO floor: these are fractions
+ * (chance/multiplier bonuses), flooring would erase them.
+ */
+function scaledGearBonus(
+  base: number,
+  gearGrowth: number,
+  itemLevel: number,
+  upgradeStatMultiplier: number,
+  upgradeLevel: number,
+): number {
+  return base * Math.pow(gearGrowth, itemLevel - 1) * Math.pow(upgradeStatMultiplier, upgradeLevel);
+}
+
+/**
+ * Derived battle stats and effect contributions of one gear instance. `dps` and
+ * `clickDamage` are integers; the four effect fields are fractions.
+ */
+export interface GearStats {
+  dps: number;
+  clickDamage: number;
+  critChance: number;
+  critMultiplier: number;
+  goldMultiplier: number;
+  powerMultiplier: number;
+}
+
 /** Recompute an instance's battle stats from its definition, item level, and upgrade level. */
 export function computeGearStats(
   definition: GearDefinition,
   itemLevel: number,
   upgradeLevel: number,
-): { dps: number; clickDamage: number } {
+): GearStats {
   return {
     dps: scaledGearStat(
       definition.dpsFactor,
@@ -146,6 +265,34 @@ export function computeGearStats(
     ),
     clickDamage: scaledGearStat(
       definition.clickFactor,
+      definition.gearGrowth,
+      itemLevel,
+      definition.upgradeStatMultiplier,
+      upgradeLevel,
+    ),
+    critChance: scaledGearBonus(
+      definition.critChance,
+      definition.gearGrowth,
+      itemLevel,
+      definition.upgradeStatMultiplier,
+      upgradeLevel,
+    ),
+    critMultiplier: scaledGearBonus(
+      definition.critMultiplier,
+      definition.gearGrowth,
+      itemLevel,
+      definition.upgradeStatMultiplier,
+      upgradeLevel,
+    ),
+    goldMultiplier: scaledGearBonus(
+      definition.goldMultiplier,
+      definition.gearGrowth,
+      itemLevel,
+      definition.upgradeStatMultiplier,
+      upgradeLevel,
+    ),
+    powerMultiplier: scaledGearBonus(
+      definition.powerMultiplier,
       definition.gearGrowth,
       itemLevel,
       definition.upgradeStatMultiplier,

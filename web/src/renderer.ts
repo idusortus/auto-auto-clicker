@@ -5,16 +5,33 @@
 // it displays comes from engine-core (state fields or exported getters). All
 // player input is forwarded to the host through the handlers passed to
 // mountRenderer; the renderer never dispatches actions itself.
+//
+// Achievement splashes are driven by diffing the unlocked-id list across
+// renders (the host passes no events here). A splash is purely visual: it never
+// touches engine state and never pauses the tick loop, and unlocks are queued so
+// a burst of them is shown one after another. Any tap dismisses the current
+// splash early — the tap still reaches the game underneath (the overlay is
+// pointer-events:none), so the splash is non-blocking.
 
 import {
+  ACHIEVEMENTS,
+  gearDefinitionFor,
+  getCritStats,
   getEffectiveStats,
   getEnemyMaxHp,
   getGearStats,
+  getGlobalBonuses,
   getProjectedKillMs,
   getUpgradeCost,
   isBoss,
 } from '@auto-auto-clicker/engine-core';
-import type { GameState, GearInstance, PendingChoice } from '@auto-auto-clicker/engine-core';
+import type {
+  AchievementDefinition,
+  GameState,
+  GearInstance,
+  GearSlot,
+  PendingChoice,
+} from '@auto-auto-clicker/engine-core';
 
 type ChoiceOption = PendingChoice['options'][number];
 
@@ -47,11 +64,18 @@ export interface Renderer {
   showOfflineSummary(summary: OfflineSummary): void;
 }
 
-// Presentation constant: CSS widths are expressed in percent.
+// Presentation constants: CSS widths are expressed in percent; durations are
+// human-readable formatting, not gameplay numbers.
 const FULL_PERCENT = 100;
-// Presentation constants for human-readable durations (not gameplay numbers).
 const MS_PER_MINUTE = 60_000;
 const MINUTES_PER_HOUR = 60;
+/** How long a splash stays up before auto-dismissing. */
+const SPLASH_DURATION_MS = 2600;
+
+/** Achievement catalog keyed by id, for splash lookup. */
+const ACHIEVEMENT_BY_ID = new Map<string, AchievementDefinition>(
+  ACHIEVEMENTS.map((achievement) => [achievement.id, achievement]),
+);
 
 interface Refs {
   gold: HTMLElement;
@@ -69,6 +93,8 @@ interface Refs {
   bagList: HTMLElement;
   bagEmpty: HTMLElement;
   bagCount: HTMLElement;
+  achievementsList: HTMLElement;
+  achievementsCount: HTMLElement;
   choices: HTMLElement;
   choicesTitle: HTMLElement;
   choicesBody: HTMLElement;
@@ -78,6 +104,9 @@ interface Refs {
   offline: HTMLElement;
   offlineText: HTMLElement;
   offlineDismiss: HTMLButtonElement;
+  splash: HTMLElement;
+  splashTitle: HTMLElement;
+  splashDesc: HTMLElement;
 }
 
 const SKELETON = `
@@ -127,6 +156,21 @@ const SKELETON = `
       <ul class="bag" data-role="bag-list"></ul>
       <p class="hint" data-role="bag-empty">No drops yet — defeat enemies to find gear.</p>
     </section>
+
+    <section class="panel" aria-labelledby="achievements-title">
+      <div class="panel__header">
+        <h2 class="panel__title" id="achievements-title">Achievements</h2>
+        <span class="panel__meta"><span data-testid="achievements-count">0</span> unlocked</span>
+      </div>
+      <ul class="ach" data-testid="achievements-list"></ul>
+    </section>
+  </div>
+
+  <div class="splash" data-role="splash" data-testid="achievement-splash" hidden aria-live="polite">
+    <span class="splash__burst" aria-hidden="true"></span>
+    <span class="splash__kicker">Achievement unlocked</span>
+    <span class="splash__title" data-testid="achievement-splash-title"></span>
+    <span class="splash__desc" data-role="splash-desc"></span>
   </div>
 
   <div class="overlay" data-role="choices" hidden>
@@ -159,6 +203,56 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
   let lastEquippedSignature = '';
   let lastBagSignature = '';
   let lastChoiceKey = '';
+  let lastAchievementsSignature: string | null = null;
+
+  // Achievement splash state: a queue so a burst of unlocks is never lost, and
+  // a timer that auto-dismisses the current one.
+  const splashQueue: AchievementDefinition[] = [];
+  let splashTimer: number | null = null;
+  // `null` until the first render seeds the set, so achievements restored from a
+  // save (or unlocked during offline replay) do not replay as splashes at boot.
+  let seenAchievements: Set<string> | null = null;
+
+  function showNextSplash(): void {
+    const definition = splashQueue.shift();
+    if (definition === undefined) {
+      splashTimer = null;
+      refs.splash.hidden = true;
+      refs.splash.classList.remove('splash--in');
+      return;
+    }
+    refs.splashTitle.textContent = definition.title;
+    refs.splashDesc.textContent = definition.description;
+    refs.splash.hidden = false;
+    // Restart the entrance animation even if a splash is already animating.
+    refs.splash.classList.remove('splash--in');
+    void refs.splash.offsetWidth;
+    refs.splash.classList.add('splash--in');
+    if (splashTimer !== null) window.clearTimeout(splashTimer);
+    splashTimer = window.setTimeout(dismissSplash, SPLASH_DURATION_MS);
+  }
+
+  function enqueueSplash(definition: AchievementDefinition): void {
+    splashQueue.push(definition);
+    if (splashTimer === null) showNextSplash();
+  }
+
+  function dismissSplash(): void {
+    if (splashTimer === null) return;
+    window.clearTimeout(splashTimer);
+    splashTimer = null;
+    showNextSplash();
+  }
+
+  // Any tap dismisses the current splash early. The overlay never captures the
+  // pointer, so the tap also reaches the game underneath (non-blocking).
+  root.ownerDocument.addEventListener(
+    'pointerdown',
+    () => {
+      if (splashTimer !== null) dismissSplash();
+    },
+    { capture: true },
+  );
 
   function render(state: GameState): void {
     const stats = getEffectiveStats(state);
@@ -175,13 +269,11 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     refs.enemyHp.textContent = `${formatInt(Math.min(state.combat.enemyHp, maxHp))} / ${formatInt(maxHp)}`;
     refs.hpFill.style.width = `${hpPercent(state) * FULL_PERCENT}%`;
 
-    const equippedWeapon = state.gear.equipped.weapon;
-    const equippedSignature = equippedWeapon
-      ? `${equippedWeapon.id}:${equippedWeapon.itemLevel}:${equippedWeapon.upgradeLevel}`
-      : 'empty';
+    const equippedSignature = EQUIP_SLOTS.map((slot) => gearSignature(state.gear.equipped[slot]))
+      .join('|');
     if (equippedSignature !== lastEquippedSignature) {
       lastEquippedSignature = equippedSignature;
-      refs.equipped.replaceChildren(...equippedNodes(equippedWeapon));
+      refs.equipped.replaceChildren(...equippedNodes(state));
     }
 
     const bagSignature = state.gear.bag
@@ -194,12 +286,37 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     }
     refs.bagCount.textContent = formatInt(state.gear.bag.length);
 
+    const equippedWeapon = state.gear.equipped.weapon;
     const cost = getUpgradeCost(state, 'weapon');
     refs.upgradeCost.textContent = cost === null ? '—' : `Cost ${formatInt(cost)}`;
     refs.upgradeBtn.disabled = cost === null || state.player.gold < cost;
     refs.upgradeHint.textContent = equippedWeapon === null ? 'Equip a weapon from your bag to upgrade it.' : '';
 
+    renderAchievements(state);
     renderChoice(state);
+  }
+
+  function renderAchievements(state: GameState): void {
+    const unlocked = new Set(state.meta.achievements);
+
+    if (seenAchievements === null) {
+      seenAchievements = new Set(state.meta.achievements);
+    } else {
+      for (const id of state.meta.achievements) {
+        if (seenAchievements.has(id)) continue;
+        seenAchievements.add(id);
+        const definition = ACHIEVEMENT_BY_ID.get(id);
+        if (definition) enqueueSplash(definition);
+      }
+    }
+
+    refs.achievementsCount.textContent = formatInt(unlocked.size);
+
+    const signature = state.meta.achievements.join('|');
+    if (signature !== lastAchievementsSignature) {
+      lastAchievementsSignature = signature;
+      refs.achievementsList.replaceChildren(...achievementNodes(unlocked));
+    }
   }
 
   function renderChoice(state: GameState): void {
@@ -223,6 +340,9 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
   return { render, showOfflineSummary };
 }
 
+/** Every occupiable gear slot, in display order. */
+const EQUIP_SLOTS: readonly GearSlot[] = ['weapon', 'ring1', 'ring2', 'necklace'];
+
 function collectRefs(root: HTMLElement): Refs {
   return {
     gold: req(root, '[data-testid="gold"]'),
@@ -240,6 +360,8 @@ function collectRefs(root: HTMLElement): Refs {
     bagList: req(root, '[data-role="bag-list"]'),
     bagEmpty: req(root, '[data-role="bag-empty"]'),
     bagCount: req(root, '[data-role="bag-count"]'),
+    achievementsList: req(root, '[data-testid="achievements-list"]'),
+    achievementsCount: req(root, '[data-testid="achievements-count"]'),
     choices: req(root, '[data-role="choices"]'),
     choicesTitle: req(root, '[data-role="choices-title"]'),
     choicesBody: req(root, '[data-role="choices-body"]'),
@@ -249,6 +371,9 @@ function collectRefs(root: HTMLElement): Refs {
     offline: req(root, '[data-role="offline"]'),
     offlineText: req(root, '[data-role="offline-text"]'),
     offlineDismiss: req(root, '[data-role="offline-dismiss"]'),
+    splash: req(root, '[data-role="splash"]'),
+    splashTitle: req(root, '[data-testid="achievement-splash-title"]'),
+    splashDesc: req(root, '[data-role="splash-desc"]'),
   };
 }
 
@@ -273,45 +398,136 @@ function wireHandlers(refs: Refs, handlers: RendererHandlers): void {
   });
 }
 
-function equippedNodes(weapon: GearInstance | null): Node[] {
+/** Cache signature for one equipped slot (or its emptiness). */
+function gearSignature(item: GearInstance | null): string {
+  return item ? `${item.id}:${item.itemLevel}:${item.upgradeLevel}` : '-';
+}
+
+/**
+ * The equipped panel: a weapon card plus a card for each equipped ring/necklace.
+ * Empty non-weapon slots are omitted to keep the panel compact; the weapon slot
+ * always renders (as an empty placeholder before the first weapon).
+ */
+function equippedNodes(state: GameState): Node[] {
+  const cards: Node[] = [gearCard(state, 'weapon', state.gear.equipped.weapon)];
+  for (const slot of EQUIP_SLOTS) {
+    if (slot === 'weapon') continue;
+    const item = state.gear.equipped[slot];
+    if (item) cards.push(gearCard(state, slot, item));
+  }
+  return cards;
+}
+
+function gearCard(state: GameState, slot: GearSlot, item: GearInstance | null): Node {
   const card = document.createElement('div');
   card.className = 'card';
 
   const title = document.createElement('p');
   title.className = 'card__title';
-  title.textContent = weapon ? `Weapon · level ${formatInt(weapon.itemLevel)}` : 'No weapon equipped';
+  title.textContent = slotLabel(slot, item);
 
   const stats = document.createElement('p');
   stats.className = 'card__stats';
-  if (weapon) {
-    const gear = getGearStats(weapon);
-    stats.textContent = `DPS ${formatInt(gear.dps)} · click ${formatInt(gear.clickDamage)} · upgrades ${formatInt(weapon.upgradeLevel)}`;
-  } else {
-    stats.textContent = 'Equip a drop from your bag.';
-  }
+  stats.textContent = item ? gearStatLine(state, slot, item) : 'Equip a drop from your bag.';
 
   card.append(title, stats);
-  return [card];
+  return card;
+}
+
+function slotLabel(slot: GearSlot, item: GearInstance | null): string {
+  const level = item ? formatInt(item.itemLevel) : null;
+  if (slot === 'weapon') return item ? `Weapon · level ${level}` : 'No weapon equipped';
+  if (slot === 'ring1') return item ? `Ring (left) · level ${level}` : 'No left ring';
+  if (slot === 'ring2') return item ? `Ring (right) · level ${level}` : 'No right ring';
+  return item ? `Necklace · level ${level}` : 'No necklace';
+}
+
+/**
+ * Equipped-card stat line. The per-item crit/gold/power values are the item's
+ * own RAW contribution, which the engine then clamps when it aggregates both
+ * rings and the necklace — so each is labelled "(raw)" and the card also shows
+ * the current CAPPED totals (via `getCritStats`/`getGlobalBonuses`). This keeps
+ * the card honest without hard-coding any balance number in `/web`.
+ */
+function gearStatLine(state: GameState, slot: GearSlot, item: GearInstance): string {
+  const gear = getGearStats(item);
+  if (slot === 'weapon') {
+    return `DPS ${formatInt(gear.dps)} · click ${formatInt(gear.clickDamage)} · upgrades ${formatInt(item.upgradeLevel)}`;
+  }
+  if (slot === 'necklace') {
+    const { goldMultiplier, powerMultiplier } = getGlobalBonuses(state);
+    return (
+      `gold +${formatPercent(gear.goldMultiplier)} (raw) · power +${formatPercent(gear.powerMultiplier)} (raw) · ` +
+      `total gold +${formatPercent(goldMultiplier)} · power +${formatPercent(powerMultiplier)} (capped)`
+    );
+  }
+  const { critChance, critMultiplier } = getCritStats(state);
+  return (
+    `crit ${formatPercent(gear.critChance)} (raw) · crit dmg +${formatPercent(gear.critMultiplier)} (raw) · ` +
+    `total crit ${formatPercent(critChance)} · crit dmg +${formatPercent(critMultiplier - 1)} (capped)`
+  );
 }
 
 function bagItemNode(item: GearInstance): Node {
   const li = document.createElement('li');
   li.className = 'bag__item';
+  const slot = gearDefinitionFor(item.definitionId)?.slot ?? 'weapon';
+  li.setAttribute('data-slot', slot);
 
-  const gear = getGearStats(item);
   const info = document.createElement('span');
   info.className = 'bag__info';
-  info.textContent = `Level ${formatInt(item.itemLevel)} · DPS ${formatInt(gear.dps)} · click ${formatInt(gear.clickDamage)}`;
+  info.textContent = bagItemSummary(slot, item);
 
   const equipButton = document.createElement('button');
   equipButton.className = 'btn btn--small';
   equipButton.type = 'button';
   equipButton.textContent = 'Equip';
   equipButton.setAttribute('data-testid', 'equip-btn');
+  equipButton.setAttribute('data-slot', slot);
   equipButton.setAttribute('data-instance-id', item.id);
 
   li.append(info, equipButton);
   return li;
+}
+
+/**
+ * Slot-aware one-line summary of a bag item (no balance numbers hard-coded).
+ * A bag item's crit/gold/power values are labelled "(raw)": they are the item's
+ * own contribution before the engine clamps the aggregate, and a bag item is not
+ * equipped so there is no meaningful total to show here.
+ */
+function bagItemSummary(slot: GearSlot, item: GearInstance): string {
+  const gear = getGearStats(item);
+  const level = `Level ${formatInt(item.itemLevel)}`;
+  if (slot === 'necklace') {
+    return `${level} · gold +${formatPercent(gear.goldMultiplier)} (raw) · power +${formatPercent(gear.powerMultiplier)} (raw)`;
+  }
+  if (slot === 'ring1' || slot === 'ring2') {
+    return `${level} · crit ${formatPercent(gear.critChance)} (raw) · crit dmg +${formatPercent(gear.critMultiplier)} (raw)`;
+  }
+  return `${level} · DPS ${formatInt(gear.dps)} · click ${formatInt(gear.clickDamage)}`;
+}
+
+/** The achievements shelf: unlocked entries show title+description, locked tease. */
+function achievementNodes(unlocked: Set<string>): Node[] {
+  return ACHIEVEMENTS.map((definition) => {
+    const isUnlocked = unlocked.has(definition.id);
+    const li = document.createElement('li');
+    li.className = `ach__item${isUnlocked ? ' ach__item--unlocked' : ''}`;
+    li.setAttribute('data-testid', 'achievement-item');
+    if (isUnlocked) li.setAttribute('data-unlocked', 'true');
+
+    const title = document.createElement('span');
+    title.className = 'ach__title';
+    title.textContent = isUnlocked ? definition.title : '???';
+
+    const description = document.createElement('span');
+    description.className = 'ach__desc';
+    description.textContent = isUnlocked ? definition.description : 'Locked';
+
+    li.append(title, description);
+    return li;
+  });
 }
 
 function choiceBody(state: GameState, pending: PendingChoice): string {
@@ -340,6 +556,11 @@ function hpPercent(state: GameState): number {
 
 function formatInt(value: number): string {
   return String(Math.floor(value));
+}
+
+/** Format a fractional contribution (crit/gold/power) as a percentage. */
+function formatPercent(fraction: number): string {
+  return `${(fraction * 100).toFixed(1)}%`;
 }
 
 function formatDuration(ms: number): string {

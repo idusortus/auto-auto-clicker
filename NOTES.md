@@ -84,6 +84,41 @@
   recomputing a cache; the localStorage key is unchanged (`auto-auto-clicker.save.v1`) so old
   saves are still found and migrated. See `state.ts` `migrateV1ToV2` and the `save.test.ts`
   migration case.
+- **2026-09-27 Phase 1: rings, necklaces, achievements, save v3 (engine-core only).**
+  `GearSlot` now has four slots (`weapon`/`ring1`/`ring2`/`necklace`). Rings add critical
+  chance/multiplier; the necklace adds a gold bonus and an overall-DPS bonus. Crit is an
+  *expected-DPS* multiplier (never a per-hit RNG roll) so `getProjectedKillMs` stays exact;
+  total crit chance is capped at `CRIT_CHANCE_CAP = 0.75`. `getEffectiveStats` still returns
+  `{autoDps, clickDamage}` but may now be fractional. 12 achievements initially lived in
+  `achievements.ts` (ids persisted in `meta.achievements`) and are evaluated at the
+  `advance`/`applyAction` entry points. Save schema is **v3**: `loadGame` accepts 1/2/3 and a
+  single parser defaults `ring1`/`ring2`/`necklace` to `null` and `achievements` to `[]`.
+  At the time the pacing sim missed its ±20% windows (soft 7.22–7.56 min, hard 47–57 min)
+  because non-weapon drops thinned the weapon stream and the new factors were placeholders;
+  Phase 2 owned the retune and Phase 3 owned the `/web` splash.
+  **Superseded by the Phase 3 note below** — the catalog is now 24 entries, the sim passes
+  every seed, the ring/necklace totals are capped, and the splash has shipped.
+- **2026-09-27 Phase 3: per-slot sim policy, bounded caps, 24 achievements + /web splash.**
+  The sim's economy now equips, for EVERY occupiable slot (weapon/ring1/ring2/necklace), the
+  bag item that most raises engine-derived effective power, so rings/necklaces are actually
+  exercised by the pacing proof. Their multiplicative crit/power totals are clamped in the
+  state getters (`CRIT_CHANCE_CAP = 0.75`, `CRIT_MULTIPLIER_CAP = 1.18`,
+  `POWER_MULTIPLIER_CAP = 0.02`, `GOLD_MULTIPLIER_CAP = 0.25`), so the realized bounded lever
+  saturates at ≈**+16% DPS** (≈10% pacing effect) instead of exploding. `npm run sim` passes
+  all 5 seeds (soft 5.91–6.42 min, hard 45.10–49.07 min, all DROPS-PRIMARY). The achievements
+  catalog is now **24** entries, and `/web` adds a brief non-blocking unlock splash
+  (`achievement-splash` / `achievement-splash-title`, `pointer-events: none`, ~2.6 s,
+  reduced-motion safe) alongside the shelf.
+- **Armor and dodge are explicitly deferred.** Phase 1 was scoped to rings (crit) and
+  necklaces (gold/power) only. There is still **no player HP, no incoming damage, no armor
+  mitigation, and no dodge** in `engine-core`; do not add mechanics that imply them (or
+  achievements that fake a death). Any future defensive layer needs its own design pass.
+- **"Luck beats a boss" is explicitly deferred.** Letting a lucky crit actually beat a boss
+  the projection says is out of reach **requires changing the wall from a projection check to
+  an actual-fight check**, which trades away pacing determinism: the whole proof rests on
+  `getProjectedKillMs` being exact and RNG-free against `BOSS_TIMER_MS` /
+  `HARD_WALL_PROJECTED_KILL_MS`. Out of scope until a design preserves the deterministic
+  pacing proof.
 
 ## Ideas (not built)
 

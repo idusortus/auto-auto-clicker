@@ -3,15 +3,34 @@
 // Rolls consume RNG state from the passed draft and thread the new state back
 // into draft.meta.rngState. Callers operate on a freshly cloned draft, never on
 // the caller's input state.
+//
+// Every kill consumes EXACTLY two RNG draws, in a fixed order:
+//   1. the global drop-chance roll (`BALANCE.gear.dropChance`);
+//   2. the slot roll, mapped through `pickWeightedSlot` / `SLOT_DROP_WEIGHTS`.
+// Consuming a fixed two draws per kill keeps the sampled stream reproducible
+// regardless of which branch is taken, so the sim stays deterministic. Slot
+// weighting lives in balance.ts alongside the drop chance.
 
-import { BAG_CAP, DROP_LEVEL_OFFSET } from './balance';
-import { WEAPON_DEFINITION } from './content';
+import { BAG_CAP, BALANCE, DROP_LEVEL_OFFSET, pickWeightedSlot } from './balance';
+import { CONTENT, gearDefinitionFor } from './content';
 import { nextRng } from './rng';
-import type { GearInstance, GameState } from './types';
+import type { GearDefinition, GearInstance, GameState, GearSlot } from './types';
+
+/** A slot's canonical definition. One definition per slot keeps routing a lookup. */
+function definitionForSlot(slot: GearSlot): GearDefinition {
+  const definition = CONTENT.gear[slot];
+  return definition;
+}
+
+/** True when the player already has a weapon equipped or in the bag. */
+function ownsWeapon(draft: GameState): boolean {
+  if (draft.gear.equipped.weapon) return true;
+  return draft.gear.bag.some((item) => gearDefinitionFor(item.definitionId)?.slot === 'weapon');
+}
 
 /**
  * Roll a drop for killing `stage`. On success the instance is added to the bag
- * and returned; the RNG is always advanced exactly once per kill.
+ * and returned; the RNG is always advanced exactly twice per kill.
  *
  * The dropped item level tracks the killed stage (`DROP_LEVEL_OFFSET` is 0), so
  * the drop stream supplies the exponential power term that matches the enemy-HP
@@ -20,18 +39,24 @@ import type { GearInstance, GameState } from './types';
  *
  * The FIRST weapon is guaranteed: without one the player is unarmed forever
  * (no upgrades possible, base DPS fixed), which turns early luck into a hard
- * wall.
+ * wall. Until a weapon is owned the slot roll is overridden to `'weapon'`.
  */
 export function rollGearDrop(draft: GameState, stage: number): GearInstance | null {
-  const roll = nextRng(draft.meta.rngState);
-  draft.meta.rngState = roll.state;
-  const ownsWeapon = draft.gear.equipped.weapon !== null || draft.gear.bag.length > 0;
-  if (roll.value >= WEAPON_DEFINITION.dropChance && ownsWeapon) return null;
+  const dropRoll = nextRng(draft.meta.rngState);
+  draft.meta.rngState = dropRoll.state;
+  const slotRoll = nextRng(draft.meta.rngState);
+  draft.meta.rngState = slotRoll.state;
+
+  const hasWeapon = ownsWeapon(draft);
+  if (dropRoll.value >= BALANCE.gear.dropChance && hasWeapon) return null;
+
+  const slot: GearSlot = hasWeapon ? pickWeightedSlot(slotRoll.value) : 'weapon';
+  const definition = definitionForSlot(slot);
 
   const itemLevel = Math.max(1, stage - DROP_LEVEL_OFFSET);
   const instance: GearInstance = {
     id: `gear-${draft.gear.nextInstanceId}`,
-    definitionId: WEAPON_DEFINITION.id,
+    definitionId: definition.id,
     itemLevel,
     upgradeLevel: 0,
   };

@@ -3,14 +3,22 @@
 // Drives `advance`/`applyAction` with a fixed 100 ms step and a 2-clicks/sec
 // active player. The economy policy is greedy and deterministic:
 //   1. buy weapon upgrades while affordable;
-//   2. equip a bag weapon only when it strictly raises total active DPS
-//      (auto DPS + ACTIVE_CLICKS_PER_SECOND * click damage).
+//   2. equip, for EVERY occupiable slot (weapon, ring1, ring2, necklace), the
+//      bag item that most raises the player's TOTAL effective power. The power
+//      score is built from engine getters only (`getEffectiveStats` folds the
+//      weapon stats, the expected-DPS crit multiplier, and the necklace power
+//      bonus; `getGlobalBonuses` adds the necklace gold bonus), so a candidate
+//      is ranked by its real effect. The equip POLICY duplicates no balance
+//      math; only the attribution ledger re-derives the crit/power factor shape
+//      (`bonusLog`), because no engine getter returns the combined factor.
 //
 // Drops are the PRIMARY power lever (Phase 3b reversed): every kill almost
 // always drops a weapon whose item level tracks the killed stage, and gear stats
 // are exponential in item level, so equipping a newer drop is the dominant power
-// jump. Gold-funded upgrades are a minor multiplicative smoothing bonus whose
-// few affordable levels are reset by each equip.
+// jump. Rings/necklaces are secondary, bounded levers (their totals are clamped
+// in the engine getters) that are still drop-attributed. Gold-funded upgrades
+// are a minor multiplicative smoothing bonus whose few affordable levels are
+// reset by each equip.
 //
 // Asserts the pacing targets for EVERY sweep seed (all are hard assertions):
 //   - soft boss check lands 6.0 min  (±20% → [4.8, 7.2])
@@ -30,19 +38,24 @@
 // destroyed on every swap: gold's NET contribution is ~0. The reset loss is
 // therefore charged to GOLD (`goldNet = goldGross - resetLoss`), never
 // subtracted from drops, and both a net-of-reset and a gross share are reported.
+// Rings and the necklace are DROPS too: the log delta of the bounded crit/power
+// factor each non-weapon equip contributes is accumulated as `bonusGross` and
+// counted with the weapon's drop gain, so the drops-vs-gold story stays honest.
 
 import {
   ACTIVE_CLICKS_PER_SECOND,
   advance,
   applyAction,
   BALANCE,
+  CONTENT,
   createGame,
+  getCritStats,
   getEffectiveStats,
-  getGearStats,
+  getGlobalBonuses,
   getUpgradeCost,
   isBoss,
 } from '@auto-auto-clicker/engine-core';
-import type { GameEvent, GameState, GearInstance } from '@auto-auto-clicker/engine-core';
+import type { GameEvent, GameState, GearInstance, GearSlot } from '@auto-auto-clicker/engine-core';
 
 const STEP_MS = 100;
 const CLICK_INTERVAL_MS = 1000 / ACTIVE_CLICKS_PER_SECOND; // 500 ms → 2 clicks/sec
@@ -55,6 +68,13 @@ const MAX_ECONOMY_PASSES = 10_000;
 
 const CANONICAL_SEED = 12345;
 const SWEEP_SEEDS = [CANONICAL_SEED, 1, 999, 424242, 20250925];
+
+/** Occupiable slots, in a fixed order that makes the greedy equip deterministic. */
+const EQUIP_SLOTS: readonly GearSlot[] = ['weapon', 'ring1', 'ring2', 'necklace'];
+/** `definitionId` -> slot, so a bag item can be routed without balance math. */
+const SLOT_FOR_DEFINITION: Record<string, GearSlot> = Object.fromEntries(
+  EQUIP_SLOTS.map((slot) => [CONTENT.gear[slot].id, slot]),
+);
 
 const SOFT_TARGET_MS = 6 * 60 * 1000;
 const HARD_TARGET_MS = 54 * 60 * 1000;
@@ -91,8 +111,13 @@ interface SimRecord {
 
 /** Log-power bookkeeping accumulated over a run. All values are natural logs. */
 interface Attribution {
-  /** Sum of item-level gains on each equip: Δ(itemLevel - 1) * ln(gearGrowth). */
+  /** Sum of item-level gains on each WEAPON equip: Δ(itemLevel - 1) * ln(gearGrowth). */
   dropGross: number;
+  /**
+   * Sum of the log delta of the bounded ring/necklace crit+power factor on each
+   * non-weapon equip. Drop-attributed (the item came from a drop).
+   */
+  bonusGross: number;
   /** Sum of +ln(upgradeStatMultiplier) for every upgrade purchased. */
   goldGross: number;
   /** Sum of oldUpgradeLevel * ln(upgradeStatMultiplier) lost on each equip. */
@@ -115,7 +140,16 @@ interface SimResult {
 }
 
 function emptyAttribution(): Attribution {
-  return { dropGross: 0, goldGross: 0, resetLoss: 0, equips: 0, upgrades: 0, killGold: 0, waitGold: 0 };
+  return {
+    dropGross: 0,
+    bonusGross: 0,
+    goldGross: 0,
+    resetLoss: 0,
+    equips: 0,
+    upgrades: 0,
+    killGold: 0,
+    waitGold: 0,
+  };
 }
 
 function milestone(state: GameState, ms: number, projectedKillMs: number | null): Milestone {
@@ -148,32 +182,59 @@ function processEvents(
   }
 }
 
-function totalActiveDps(state: GameState): number {
+/**
+ * Total effective power of a state, built ONLY from engine getters.
+ * `getEffectiveStats` already folds the weapon stats, the expected-DPS crit
+ * multiplier and the necklace power bonus; scaling by the necklace gold bonus
+ * values the last lever the necklace supplies. One comparable number lets the
+ * greedy policy rank a candidate for ANY slot by its real effect.
+ */
+function powerScore(state: GameState): number {
   const stats = getEffectiveStats(state);
-  return stats.autoDps + ACTIVE_CLICKS_PER_SECOND * stats.clickDamage;
-}
-
-/** Total active DPS the player would have if `item` replaced the equipped weapon. */
-function candidateActiveDps(state: GameState, item: GearInstance): number {
-  // Same derivation the engine uses: BALANCE base stats + the item's computed
-  // gear stats, so candidate DPS and the engine's `getEffectiveStats` never
-  // diverge.
-  const stats = getGearStats(item);
-  const autoDps = BALANCE.baseAutoDps + stats.dps;
-  const clickDamage = BALANCE.baseClickDamage + stats.clickDamage;
-  return autoDps + ACTIVE_CLICKS_PER_SECOND * clickDamage;
+  const { goldMultiplier } = getGlobalBonuses(state);
+  return (stats.autoDps + ACTIVE_CLICKS_PER_SECOND * stats.clickDamage) * (1 + goldMultiplier);
 }
 
 /**
- * Greedy economy: buy every affordable upgrade, then equip the single bag
- * weapon that strictly raises total active DPS; repeat until neither action
- * changes the state. Equipping is DPS-based, so a weaker bag item never resets
- * an upgraded weapon — but with drops-primary tuning the newest (highest item
- * level) drop is always the strongest, so drops drive the power curve.
+ * Power score of a hypothetical state with `item` equipped in `slot`. A shallow
+ * structural copy is enough: the engine getters are pure reads. The caller
+ * applies the winning equip through `applyAction` so the real state machine
+ * (bag swap, events, achievements) still runs.
+ */
+function scoreWithEquip(state: GameState, slot: GearSlot, item: GearInstance): number {
+  const candidate: GameState = {
+    ...state,
+    gear: {
+      ...state.gear,
+      equipped: { ...state.gear.equipped, [slot]: item },
+    },
+  };
+  return powerScore(candidate);
+}
+
+/**
+ * Log of the bounded ring/necklace factor that `getEffectiveStats` folds in.
+ * Re-derived here because no engine getter exposes the combined factor:
+ * `getEffectiveStats` mixes it into the weapon-inclusive auto/click values, and
+ * `getCritStats`/`getGlobalBonuses` return the parts separately.
+ */
+function bonusLog(state: GameState): number {
+  const { critChance, critMultiplier } = getCritStats(state);
+  const { powerMultiplier } = getGlobalBonuses(state);
+  return Math.log((1 + critChance * (critMultiplier - 1)) * (1 + powerMultiplier));
+}
+
+/**
+ * Greedy economy: buy every affordable weapon upgrade, then equip the single
+ * bag item (across ALL slots) that most raises total effective power; repeat
+ * until neither action changes the state. Every equip strictly raises the
+ * bounded `powerScore`, so the loop converges.
  *
  * Attribution is recorded on real state changes only: each upgrade adds
- * +ln(upgradeStatMultiplier); each equip adds Δ(itemLevel - 1) * ln(gearGrowth)
- * and charges the reset loss of the discarded weapon's upgrade levels.
+ * +ln(upgradeStatMultiplier); each WEAPON equip adds Δ(itemLevel - 1) *
+ * ln(gearGrowth) and charges the reset loss of the discarded weapon's upgrade
+ * levels; each ring/necklace equip adds the log delta of the crit/power factor
+ * (drop-attributed, never gold-attributed).
  */
 function runEconomy(state: GameState, attr: Attribution): GameState {
   let next = state;
@@ -181,8 +242,6 @@ function runEconomy(state: GameState, attr: Attribution): GameState {
   const lnUpgrade = Math.log(BALANCE.gear.upgradeStatMultiplier);
 
   for (let pass = 0; pass < MAX_ECONOMY_PASSES; pass += 1) {
-    let changed = false;
-
     for (;;) {
       const cost = getUpgradeCost(next, 'weapon');
       if (cost === null || next.player.gold < cost) break;
@@ -191,33 +250,40 @@ function runEconomy(state: GameState, attr: Attribution): GameState {
       next = upgraded.state;
       attr.goldGross += lnUpgrade;
       attr.upgrades += 1;
-      changed = true;
     }
 
-    const currentDps = totalActiveDps(next);
-    let best: GearInstance | null = null;
-    let bestDps = currentDps;
-    for (const item of next.gear.bag) {
-      const dps = candidateActiveDps(next, item);
-      if (dps > bestDps) {
-        bestDps = dps;
-        best = item;
+    const currentScore = powerScore(next);
+    let bestItem: GearInstance | null = null;
+    let bestSlot: GearSlot | null = null;
+    let bestScore = currentScore;
+    for (const slot of EQUIP_SLOTS) {
+      for (const item of next.gear.bag) {
+        if (SLOT_FOR_DEFINITION[item.definitionId] !== slot) continue;
+        const score = scoreWithEquip(next, slot, item);
+        if (score > bestScore) {
+          bestScore = score;
+          bestItem = item;
+          bestSlot = slot;
+        }
       }
     }
 
-    if (best === null) break;
-    const old = next.gear.equipped.weapon;
-    const oldItemLevel = old ? old.itemLevel : 1;
-    const oldUpgradeLevel = old ? old.upgradeLevel : 0;
-    const swapped = applyAction(next, { type: 'equip', instanceId: best.id });
-    if (swapped.state === next) break;
-    next = swapped.state;
-    attr.dropGross += (best.itemLevel - oldItemLevel) * lnGrowth;
-    attr.resetLoss += oldUpgradeLevel * lnUpgrade;
-    attr.equips += 1;
-    changed = true;
+    if (bestItem === null || bestSlot === null) break;
 
-    if (!changed) break;
+    const beforeBonus = bonusLog(next);
+    const swapped = applyAction(next, { type: 'equip', instanceId: bestItem.id });
+    if (swapped.state === next) break;
+
+    const old = next.gear.equipped[bestSlot];
+    if (bestSlot === 'weapon') {
+      const oldItemLevel = old ? old.itemLevel : 1;
+      const oldUpgradeLevel = old ? old.upgradeLevel : 0;
+      attr.dropGross += (bestItem.itemLevel - oldItemLevel) * lnGrowth;
+      attr.resetLoss += oldUpgradeLevel * lnUpgrade;
+    }
+    next = swapped.state;
+    attr.bonusGross += Math.max(0, bonusLog(next) - beforeBonus);
+    attr.equips += 1;
   }
 
   return next;
@@ -264,16 +330,19 @@ function runSim(seed: number): SimResult {
 }
 
 interface AttributionSummary {
+  /** Weapon item-level drop gain (log). */
   dropGross: number;
+  /** Ring/necklace crit+power drop gain (log). */
+  bonusGross: number;
   goldGross: number;
   resetLoss: number;
-  /** Drop-attributed NET log growth. Drops carry no reset loss, so this is gross. */
+  /** Drop-attributed NET log growth (weapon drop + non-weapon bonus). */
   dropNet: number;
   /** Gold-attributed NET log growth after the reset loss each equip destroys (≈0). */
   goldNet: number;
   /** Total NET log-power growth over the run (`dropNet + goldNet`). */
   totalNet: number;
-  /** Gross positive log growth (drops + upgrades), before reset losses. */
+  /** Gross positive log growth (drops + bonus + upgrades), before reset losses. */
   grossTotal: number;
   /** Denominator for the net share: `dropNet + max(goldNet, 0)` (never negative). */
   netTotal: number;
@@ -290,16 +359,18 @@ interface AttributionSummary {
 function summarizeAttribution(attr: Attribution): AttributionSummary {
   // Each equip resets the gold-funded upgradeLevel to 0, so the upgrade power
   // (and the gold that bought it) is destroyed by the swap. Charge that loss to
-  // GOLD, the lever it came from — never to drops.
-  const dropNet = attr.dropGross;
+  // GOLD, the lever it came from — never to drops. Rings/necklaces are drops,
+  // so their bounded crit/power contribution counts with the weapon drops.
+  const dropNet = attr.dropGross + attr.bonusGross;
   const goldNet = attr.goldGross - attr.resetLoss;
   const totalNet = dropNet + goldNet;
   const netTotal = dropNet + Math.max(goldNet, 0);
-  const grossTotal = attr.dropGross + attr.goldGross;
+  const grossTotal = dropNet + attr.goldGross;
   const goldIncome = attr.killGold + attr.waitGold;
   const freeGoldShare = goldIncome > 0 ? attr.waitGold / goldIncome : 0;
   return {
     dropGross: attr.dropGross,
+    bonusGross: attr.bonusGross,
     goldGross: attr.goldGross,
     resetLoss: attr.resetLoss,
     dropNet,
@@ -308,7 +379,7 @@ function summarizeAttribution(attr: Attribution): AttributionSummary {
     grossTotal,
     netTotal,
     dropShareNet: netTotal > 0 ? dropNet / netTotal : 0,
-    dropShareGross: grossTotal > 0 ? attr.dropGross / grossTotal : 0,
+    dropShareGross: grossTotal > 0 ? dropNet / grossTotal : 0,
     freeShare: netTotal > 0 ? (freeGoldShare * attr.goldGross) / netTotal : 0,
     equips: attr.equips,
     upgrades: attr.upgrades,
@@ -394,7 +465,8 @@ function attributionLine(result: SimResult): string {
   return (
     ` ${marker} seed ${String(result.seed).padEnd(9)} equips=${String(a.equips).padStart(3)} ` +
     `upgrades=${String(a.upgrades).padStart(3)}  ` +
-    `drop-gross ${formatLog(a.dropGross)}  gold-gross ${formatLog(a.goldGross)}  ` +
+    `drop-gross ${formatLog(a.dropGross)}  bonus-gross ${formatLog(a.bonusGross)}  ` +
+    `gold-gross ${formatLog(a.goldGross)}  ` +
     `reset-loss ${a.resetLoss.toFixed(3)}  gold-net ${formatLog(a.goldNet)}  ` +
     `drop-share net ${formatPercent(a.dropShareNet)} / gross ${formatPercent(a.dropShareGross)}  ` +
     `eq/stage ${equipsPerStage.toFixed(2)} (${a.equips}/${cleared})  ` +

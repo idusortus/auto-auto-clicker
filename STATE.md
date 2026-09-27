@@ -3,64 +3,85 @@
 > Cross-session memory for all agents. Update on exit; read on entry.
 
 ## Status
-Prototype complete (Phases 0–6), plus the 2026-09-26 economy reversal (drops-primary), the
-follow-up review-fix round (`loadGame` recomputes the derived gear-stat cache; the sim's
-attribution now reports net-of-reset shares with the reset loss charged to gold), and the
-structural save-schema v2 change (derived values are no longer persisted; v1 saves migrate
-on load).
-All acceptance gates green:
+Phases 1–3 of the 3-phase extension are implemented. Phase 1 added the ring/necklace/
+achievement engine + save schema v3; Phase 2 retuned the drop weights to restore pacing;
+Phase 3 corrected the sim's equip policy so rings/necklaces are actually validated, capped
+their multiplicative bonuses, and shipped the /web achievements splash + shelf. The earlier
+prototype (Phases 0–6), the 2026-09-26 economy reversal, and the structural save-schema v2
+change remain in place underneath.
 
-- `npm run test` → 45 passed (7 files), exit 0.
-- `npm run sim` → `PACING OK`: all 5 sweep seeds PASS (soft 6.39–6.52 min @ stage 30,
-  hard 50.78–51.38 min @ stage 50) **and** all 5 `DROPS-PRIMARY` (drop-attributed share of
-  **net** log-power growth ≈100% / gross 87.6%, with the equip reset loss charged to gold so
-  `goldNet = goldGross − resetLoss = 0`; free `wait` grant ≈4.5%), exit 0.
-- `npm run smoke` → 4 passed (Playwright mobile Chromium, 390×844), exit 0.
-- `npm run typecheck` / `npm run build` clean.
+Phase 3 gates (this session):
+- `npm run typecheck` → clean for all three workspaces (`engine-core`, `web`, `sim`).
+- `npm run test` → **84 passed (8 files), exit 0**.
+- `npm run sim` → **PACING OK, exit 0**. All 5 seeds PASS; canonical soft 5.97 min (−0.6%),
+  hard 49.07 min (−9.1%); drops-primary net 99.6–100.0% / gross 87.4–87.8%; eq/stage 0.84–0.98.
+- `npm run build` → exit 0. `npm run smoke` → **5 passed, exit 0**.
 
-Save schema is **version 2**: `GameState` persists source fields only (gold, combat
-stage/HP/carry, gear instances as id/definitionId/itemLevel/upgradeLevel, meta/choices);
-gear stats, base auto/click stats, and enemy max HP are computed on read via `getGearStats`
-/ `getEffectiveStats` / `getEnemyMaxHp`. `loadGame` migrates version-1 saves
-(`migrateV1ToV2`) and rejects any other version.
+### Phase 3 changes
+- **Sim equip policy is now per-slot.** `sim/src/sim.ts` equips the bag item that most raises a
+  single `powerScore` built ONLY from engine getters (`getEffectiveStats` × necklace gold bonus
+  from `getGlobalBonuses`), for EACH of weapon/ring1/ring2/necklace; the winning equip is applied
+  through the real `applyAction`. Rings/necklaces ARE now equipped (1–4 non-weapon equips/run).
+  The attribution ledger gained a `bonusGross` term (the log delta of the bounded crit/power
+  factor on each non-weapon equip) counted with drops; the drops-primary gate and drop-stream
+  sanity guard remain hard per-seed assertions.
+- **Bonuses capped** in `balance.ts` + the state getters: `CRIT_MULTIPLIER_CAP = 1.18`,
+  `POWER_MULTIPLIER_CAP = 0.02`, `GOLD_MULTIPLIER_CAP = 0.25` (plus the existing
+  `CRIT_CHANCE_CAP = 0.75`), and ring base `critMultiplier` 0.1 → 0.05. Capping (not
+  de-exponentialising) keeps drops the exponential lever. `GOLD_MULTIPLIER_CAP` is looser so the
+  flat-gold floor cannot erase the necklace gold bonus.
+- **Achievements expanded** to 24 snarky entries (stable ids; new `first-click`, `wall-hit`,
+  `choice-made`, `first-upgrade`, `ring-bearer`, `bling`, `full-kit`, `big-iron`, `hoarder`,
+  `crit-half`, `loose-change`, `grass-30`), all triggerable by existing mechanics.
+- **/web**: brief over-the-top achievement splash (full-screen, non-blocking `pointer-events:none`,
+  auto-dismiss ~2.6 s, tap to dismiss, queued, reduced-motion safe) + an achievements shelf
+  (`achievements-list`/`achievements-count`, locked = `???`), and slot-aware bag/equipped rendering
+  (rings show crit, necklace shows gold/power). New testids added; no existing testid changed;
+  `/web` still holds no balance numbers (`gearDefinitionFor` newly exported).
 
-The engine's power core is now drops-primary: gear stats are exponential in item level
-(`floor(factor * gearGrowth^(itemLevel - 1))`, `gearGrowth = 1.283`), `dropChance = 0.95`,
-and `DROP_LEVEL_OFFSET = 0`, so a killed stage reliably yields a weapon whose item level
-tracks that stage. Gold-funded upgrades are a minor smoothing lever
-(`upgradeStatMultiplier = 1.05`, `upgradeCostGrowth = 6`, flat `goldGrowth = 1.0`).
+### Phase 2 change (pacing retune)
+- `SLOT_DROP_WEIGHTS` rings 0.25/0.25 → **0.04/0.04** (weapon 1.0, necklace 0.02).
+
+### Phase 1 additions
+- `GearSlot` = `'weapon' | 'ring1' | 'ring2' | 'necklace'`; `GearDefinition` gained
+  `critChance`/`critMultiplier`/`goldMultiplier`/`powerMultiplier` (item-level-scaled content).
+- Crit is an **expected-DPS multiplier** (`getCritStats`), capped at `CRIT_CHANCE_CAP = 0.75`;
+  the necklace supplies `getGlobalBonuses`. `getEffectiveStats` folds both in (same
+  `{autoDps, clickDamage}` shape) and may return fractional values; damage application floors.
+- Loot is slot-weighted with a generalized guaranteed-first-weapon rule; two fixed RNG draws per
+  kill. **Save schema is version 3** (`loadGame` accepts 1/2/3); `DEFAULT_SAVE_KEY` unchanged.
+
+### Prior prototype status (still true)
+The engine's power core is drops-primary: gear stats are exponential in item level
+(`floor(factor * gearGrowth^(itemLevel - 1))`, `gearGrowth = 1.283`), and gold-funded upgrades
+are a minor smoothing lever (`upgradeStatMultiplier = 1.05`, `upgradeCostGrowth = 6`, flat
+`goldGrowth = 1.0`).
 
 ## In Flight
-None.
+None. Phases 1–3 are complete and green.
 
 ## Blockers / Known trade-offs
-- **Drop RNG now affects pacing.** Because gear drops (not a deterministic gold curve)
-  carry the power, an unlucky drop stream can move the soft/hard timing. `dropChance = 0.95`
-  keeps the 5-seed spread tight (soft 6.39–6.52 min, hard 50.78–51.38 min), but lowering it
-  blows the range out (0.8 → soft 2.33–8.75 min). To reduce variance, raise `dropChance`
-  toward 1.0 — never widen the ±20% tolerance or re-neuter drops.
-- **Gold is deliberately a small lever** (`goldGrowth = 1.0`, `upgradeCostGrowth = 6`):
-  only ≈0.7 upgrade levels are affordable per equip, and equipping each new drop resets
-  `upgradeLevel` to 0. Upgrades smooth edges; they are not a second power curve.
-- **`resolveChoice('iap')` advances one stage** (defeats the current enemy, then normal
-  kill/stage-entry resolution). `watchAd`/`iap` are disabled UI placeholders with no ad or
-  payment SDK; the free `wait` path is the working one.
-- **Late-game numerals are large** (auto-DPS ~2.4e5 at the hard wall); the HUD prints full
-  integers and has no compact notation.
-- **Offline progress is auto-DPS only** (no clicks replayed), capped at 8 h, and replayed
-  in 1000 ms steps; hidden-tab time beyond the host's 10-step catch-up clamp is dropped
-  until the next boot.
-- **Two save versions, one migration path.** `loadGame` accepts version 1 (migrated to
-  version 2 on load) and version 2; any other version throws. `SaveRepository` has no `clear()`.
-- **One gear slot and one enemy definition** ship today; the seams for more exist.
+- **Pacing is in tolerance** (all 5 seeds) with the corrected per-slot equip policy. Do NOT widen
+  the ±20% window.
+- **Rings/necklaces are bounded secondary levers.** Their crit/power totals are capped, so the
+  realized factor saturates at ≈**+16% DPS** (`×1.158`) and shifts pacing ≈**10%**; they do not
+  change the soft/hard *stage* selection. An unbounded ring/necklace lever would need a
+  non-exponential stat channel.
+- **Effective stats are fractional** (crit/power multipliers). Integer damage is preserved only
+  by flooring at the `advance` accumulation and the `click` action boundary.
+- **Drop RNG still affects pacing.** See the 2026-09-26 entry.
+- **Gold is deliberately a small lever** (`goldGrowth = 1.0`).
+- **`watchAd`/`iap` remain disabled UI placeholders.**
+- **Three save schema versions, one migration path**; `SaveRepository` has no `clear()`.
+- **No player HP / armor / dodge / enemy attacks** — explicitly deferred (see `NOTES.md`).
 
 ## Recent Decisions
-See `decisions.md`. The most recent authoritative entry is 2026-09-26 "Save schema v2: persist
-source fields only, derive everything on read" (a real save-schema bump with v1→v2 migration;
-it supersedes the earlier recompute-on-load patch). Also authoritative: 2026-09-26 "Economy
-reversal: drops are the primary power lever, gold demoted", Phase 4 "Web host owns the clock,
-loop, and offline replay", and Phase 5 "Playwright + Chromium for the /web mobile smoke test".
-Phase 6 was documentation-only.
+See `decisions.md`. Most recent: 2026-09-27 "Phase 3 — sim equip policy values every slot;
+ring/necklace bonuses capped" and "Phase 3 — /web achievements: snarky catalog, brief
+non-blocking splash, shelf". Also authoritative: 2026-09-27 "Phase 2 — restore pacing by
+restoring the weapon drop share", "Multi-slot gear: rings (crit) + necklace (gold/power),
+expected-DPS crit model", "Save schema v3", and "Economy reversal: drops are the primary power
+lever, gold demoted".
 
 ## Next
 No required work remains for this brief. If continuing:
@@ -68,8 +89,6 @@ No required work remains for this brief. If continuing:
    or Supabase) and a host clock driving `advance()` — see README "Porting to Expo".
 2. Optional polish: compact numeral formatting, tap/feedback cosmetics, bag sorting
    (would need a new engine action first).
-3. If drop-RNG pacing variance becomes a concern, raise `dropChance` toward 1.0 (or add a
-   per-stage pity counter) and re-run `npm run sim` — do not widen the tolerance.
 
 ---
 

@@ -4,9 +4,9 @@
 // pass a state produced by cloneGameState; they then return that draft as the
 // new state. Nothing in this file touches the caller's input.
 
-import { BOSS_TIMER_MS, HARD_WALL_PROJECTED_KILL_MS, enemyMaxHp, goldReward, isBoss } from './balance';
+import { BOSS_TIMER_MS, HARD_WALL_PROJECTED_KILL_MS, enemyMaxHp, isBoss } from './balance';
 import { rollGearDrop } from './loot';
-import { getProjectedKillMs } from './state';
+import { getGoldReward, getProjectedKillMs } from './state';
 import type { GameEvent, GameState, GearInstance } from './types';
 
 /**
@@ -37,7 +37,7 @@ export function evaluateStageEntry(draft: GameState): GameEvent[] {
 export function killCurrentEnemy(draft: GameState): GameEvent[] {
   const events: GameEvent[] = [];
   const killedStage = draft.combat.stage;
-  const gold = goldReward(killedStage);
+  const gold = getGoldReward(draft, killedStage);
 
   draft.player.gold += gold;
   events.push({ type: 'goldChanged', amount: gold, total: draft.player.gold, reason: 'enemyKilled' });

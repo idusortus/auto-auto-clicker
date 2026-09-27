@@ -3,32 +3,47 @@
 // applyAction is total: invalid or unaffordable actions return the SAME state
 // object with an empty event list. Valid actions clone, mutate the clone, and
 // return it. Input state is never mutated.
+//
+// Achievement evaluation is applied once at this entry point (and once in
+// `advance`) after any successful change, so every state transition — click,
+// equip, upgrade, choice — is observed with a real before/after pair. Doing it
+// here (rather than inside `killCurrentEnemy`) also covers equip, which no kill
+// ever sees.
 
 import {
-  choiceGoldGrant,
   upgradeCost,
   WAIT_UPGRADE_GRANT_LEVELS,
   WATCH_AD_UPGRADE_GRANT_LEVELS,
 } from './balance';
 import { gearDefinitionFor } from './content';
+import { grantAchievements } from './achievements';
 import { applyDamageToEnemy, killCurrentEnemy } from './combat';
-import { cloneGameState, getEffectiveStats } from './state';
+import { cloneGameState, getChoiceGoldGrant, getEffectiveStats } from './state';
 import type { Action, GameEvent, GearSlot, GameState } from './types';
 
 export function applyAction(
   state: GameState,
   action: Action,
 ): { state: GameState; events: GameEvent[] } {
+  let result: { state: GameState; events: GameEvent[] } = { state, events: [] };
   switch (action.type) {
     case 'click':
-      return applyClick(state);
+      result = applyClick(state);
+      break;
     case 'equip':
-      return applyEquip(state, action.instanceId);
+      result = applyEquip(state, action.instanceId);
+      break;
     case 'upgradeEquipped':
-      return applyUpgrade(state, action.slot);
+      result = applyUpgrade(state, action.slot);
+      break;
     case 'resolveChoice':
-      return applyResolveChoice(state, action.choice);
+      result = applyResolveChoice(state, action.choice);
+      break;
   }
+
+  // A same-reference result means the action was a no-op; nothing to evaluate.
+  if (result.state !== state) grantAchievements(state, result.state, result.events);
+  return result;
 }
 
 function applyClick(state: GameState): { state: GameState; events: GameEvent[] } {
@@ -36,7 +51,9 @@ function applyClick(state: GameState): { state: GameState; events: GameEvent[] }
 
   const { clickDamage } = getEffectiveStats(state);
   const draft = cloneGameState(state);
-  const events = applyDamageToEnemy(draft, clickDamage, 'click');
+  // Damage application is integer-based; crit/power multipliers can make the
+  // effective click damage fractional, so floor it here.
+  const events = applyDamageToEnemy(draft, Math.floor(clickDamage), 'click');
   return { state: draft, events };
 }
 
@@ -98,11 +115,12 @@ function applyResolveChoice(
 
   if (choice === 'wait' || choice === 'watchAd') {
     // Bounded grant: a fixed number of upgrades from the player's current
-    // upgrade level. `watchAd` grants strictly more levels than `wait`.
+    // upgrade level. `watchAd` grants strictly more levels than `wait`. The
+    // necklace gold bonus is folded in by `getChoiceGoldGrant`.
     const currentUpgradeLevel = state.gear.equipped.weapon?.upgradeLevel ?? 0;
     const levels =
       choice === 'wait' ? WAIT_UPGRADE_GRANT_LEVELS : WATCH_AD_UPGRADE_GRANT_LEVELS;
-    const gold = choiceGoldGrant(currentUpgradeLevel, levels);
+    const gold = getChoiceGoldGrant(draft, currentUpgradeLevel, levels);
     draft.player.gold += gold;
     events.push({
       type: 'goldChanged',

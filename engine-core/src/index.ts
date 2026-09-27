@@ -9,27 +9,53 @@ export {
   BAG_CAP,
   BALANCE,
   BOSS_TIMER_MS,
+  CRIT_CHANCE_CAP,
+  CRIT_MULTIPLIER_CAP,
   CURRENT_SAVE_VERSION,
+  GOLD_MULTIPLIER_CAP,
   HARD_WALL_PROJECTED_KILL_MS,
   isBoss,
+  POWER_MULTIPLIER_CAP,
+  SLOT_DROP_WEIGHTS,
 } from './balance';
 
-export { CONTENT, GRUNT_DEFINITION, WEAPON_DEFINITION } from './content';
+export {
+  CONTENT,
+  gearDefinitionFor,
+  GRUNT_DEFINITION,
+  NECKLACE_DEFINITION,
+  RING_DEFINITION,
+  RING_DEFINITION_2,
+  WEAPON_DEFINITION,
+} from './content';
 
 export {
   cloneGameState,
   createGame,
+  getChoiceGoldGrant,
+  getCritStats,
   getEffectiveStats,
   getEnemyMaxHp,
   getGearStats,
+  getGlobalBonuses,
+  getGoldReward,
   getProjectedKillMs,
   getUpgradeCost,
   loadGame,
   saveGame,
 } from './state';
 
+export { ACHIEVEMENTS, evaluateAchievements, grantAchievements } from './achievements';
+
 export { advance } from './advance';
 export { applyAction } from './actions';
+
+export type { GearStats } from './balance';
+
+export type {
+  AchievementContext,
+  AchievementDefinition,
+} from './achievements';
 
 export type {
   Action,

@@ -118,8 +118,8 @@ test('earning gold enables a weapon upgrade that increments the counter and spen
   // built on — equipping a higher-level drop strictly raises the HUD DPS
   // readout. Every number is read from the DOM; none are hard-coded here.
   const dpsBeforeDrop = parseLeadingInt(await dps.textContent());
-  await tapUntil(page, enemy, async () => (await bagMaxLevel(page)) >= 3, 80);
-  await equipHighestLevelDrop(page);
+  await tapUntil(page, enemy, async () => (await bagMaxWeaponLevel(page)) >= 3, 80);
+  await equipHighestLevelWeapon(page);
   const dpsAfterDrop = parseLeadingInt(await dps.textContent());
   expect(dpsAfterDrop).toBeGreaterThan(dpsBeforeDrop);
   expect(consoleErrors).toEqual([]);
@@ -147,6 +147,43 @@ test('enemy and upgrade controls meet the 44px touch-target minimum', async ({
     expect(box.width, `${name} width`).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
     expect(box.height, `${name} height`).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
   }
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('unlocking an achievement shows a splash and increments the count', async ({
+  page,
+  consoleErrors,
+}) => {
+  await page.goto('/');
+
+  const enemy = page.getByTestId('enemy');
+  const count = page.getByTestId('achievements-count');
+  const splash = page.getByTestId('achievement-splash');
+  const splashTitle = page.getByTestId('achievement-splash-title');
+
+  await expect(enemy).toBeVisible();
+  await expect(splash).toBeHidden();
+  await expect(count).toHaveText('0');
+  expect(await page.getByTestId('achievement-item').count()).toBeGreaterThanOrEqual(18);
+
+  // The first tap deals click damage, which unlocks "Finger Guns".
+  await enemy.click();
+
+  await expect(splash).toBeVisible();
+  await expect(splashTitle).toHaveText('Finger Guns');
+  await expect(count).toHaveText('1');
+
+  // The shelf marks exactly one entry unlocked.
+  await expect(
+    page.locator('[data-testid="achievement-item"][data-unlocked="true"]'),
+  ).toHaveCount(1);
+
+  // Non-blocking: the enemy can still be hit while the splash is up.
+  const hpBefore = parseLeadingInt(await page.getByTestId('enemy-hp').textContent());
+  await enemy.click();
+  const hpAfter = parseLeadingInt(await page.getByTestId('enemy-hp').textContent());
+  expect(hpAfter).toBeLessThan(hpBefore);
 
   expect(consoleErrors).toEqual([]);
 });
@@ -206,10 +243,10 @@ async function tapUntil(
   await expect(await predicate()).toBe(true);
 }
 
-/** Highest item level currently offered in the bag (read from the DOM). */
-async function bagMaxLevel(page: Page): Promise<number> {
+/** Highest WEAPON item level currently offered in the bag (read from the DOM). */
+async function bagMaxWeaponLevel(page: Page): Promise<number> {
   const texts = await page
-    .getByTestId('equip-btn')
+    .locator('[data-testid="equip-btn"][data-slot="weapon"]')
     .evaluateAll((buttons) => buttons.map((button) => button.closest('li')?.textContent ?? ''));
   let max = 0;
   for (const text of texts) {
@@ -219,9 +256,9 @@ async function bagMaxLevel(page: Page): Promise<number> {
   return max;
 }
 
-/** Equip the bag item with the highest item level (newest, strongest drop). */
-async function equipHighestLevelDrop(page: Page): Promise<void> {
-  const buttons = page.getByTestId('equip-btn');
+/** Equip the bag WEAPON with the highest item level (newest, strongest drop). */
+async function equipHighestLevelWeapon(page: Page): Promise<void> {
+  const buttons = page.locator('[data-testid="equip-btn"][data-slot="weapon"]');
   const count = await buttons.count();
   let bestIndex = 0;
   let bestLevel = -1;

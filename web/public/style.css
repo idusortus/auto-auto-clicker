@@ -724,6 +724,13 @@ p {
     animation: none;
   }
 
+  /* The splash still appears (it is information), but without the pop, shake,
+     or spinning burst. */
+  .splash--in,
+  .splash--in * {
+    animation: none !important;
+  }
+
   /* Keep visible press feedback without movement. */
   .enemy:active {
     transform: none;
@@ -751,5 +758,175 @@ p {
     --text-dim: #c3ccdd;
     --text-muted: #c3ccdd;
     --text-disabled: #8b95a8;
+  }
+}
+
+/* ==========================================================================
+   15. Achievements shelf
+   ========================================================================== */
+
+.ach {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ach__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px dashed var(--line);
+  border-radius: var(--r-md);
+  background: var(--ink-800);
+}
+
+.ach__item--unlocked {
+  border-style: solid;
+  border-left: 3px solid var(--ember);
+  background: linear-gradient(180deg, var(--ink-600), var(--ink-700));
+}
+
+.ach__title {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.ach__item--unlocked .ach__title {
+  color: var(--text);
+}
+
+.ach__desc {
+  font-size: var(--fs-xs);
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+.ach__item--unlocked .ach__desc {
+  color: var(--text-dim);
+}
+
+/* ==========================================================================
+   16. Achievement splash — brief, loud, and non-blocking
+   ========================================================================== */
+
+/* pointer-events:none keeps the splash purely visual: gameplay taps pass
+   through to the game underneath, so the loop is never blocked. Any tap still
+   dismisses it early via the renderer's document-level listener. */
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  padding: var(--sp-5);
+  text-align: center;
+  overflow: hidden;
+  pointer-events: none;
+  background: radial-gradient(120% 80% at 50% 50%, rgba(255, 157, 60, 0.2), rgba(3, 5, 8, 0) 62%);
+}
+
+.splash__burst {
+  position: absolute;
+  width: 150vmax;
+  height: 150vmax;
+  border-radius: 50%;
+  background: repeating-conic-gradient(
+    from 0deg,
+    rgba(255, 157, 60, 0.32) 0deg 5deg,
+    rgba(255, 157, 60, 0) 5deg 16deg
+  );
+  -webkit-mask: radial-gradient(circle, transparent 42%, #000 47%, #000 66%, transparent 72%);
+  mask: radial-gradient(circle, transparent 42%, #000 47%, #000 66%, transparent 72%);
+  opacity: 0.6;
+}
+
+.splash__kicker {
+  position: relative;
+  font-size: var(--fs-xs);
+  font-weight: 800;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--ember);
+}
+
+.splash__title {
+  position: relative;
+  max-width: 12ch;
+  font-size: clamp(34px, 11vw, 58px);
+  font-weight: 900;
+  line-height: 0.98;
+  letter-spacing: -0.03em;
+  color: var(--text);
+  text-shadow: 0 0 30px rgba(255, 157, 60, 0.55), 0 4px 0 rgba(0, 0, 0, 0.4);
+}
+
+.splash__desc {
+  position: relative;
+  max-width: 30ch;
+  font-size: var(--fs-base);
+  color: var(--text-dim);
+}
+
+.splash--in {
+  animation: splash-shake 900ms 220ms ease-in-out 1;
+}
+
+.splash--in .splash__burst {
+  animation: splash-spin 7s linear infinite;
+}
+
+.splash--in .splash__title {
+  animation: splash-pop 620ms var(--ease) both;
+}
+
+.splash--in .splash__kicker {
+  animation: splash-pop 560ms var(--ease) both;
+}
+
+@keyframes splash-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes splash-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.35) rotate(-10deg);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.14) rotate(3deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+@keyframes splash-shake {
+  0%,
+  100% {
+    transform: translateX(0) rotate(0deg);
+  }
+  20% {
+    transform: translateX(-7px) rotate(-1.5deg);
+  }
+  40% {
+    transform: translateX(7px) rotate(1.5deg);
+  }
+  60% {
+    transform: translateX(-5px) rotate(-1deg);
+  }
+  80% {
+    transform: translateX(5px) rotate(1deg);
   }
 }

@@ -41,14 +41,21 @@ npm run typecheck    # typecheck all three workspaces (engine-core + web + sim)
 ### How to play
 
 Tap the enemy to deal click damage (the weapon's click damage, derived from its item level); auto-DPS ticks in the
-background. Kills grant gold and almost always **drop a weapon whose item level tracks the
+background. Kills grant gold and almost always **drop gear whose item level tracks the
 killed stage** — equip it: drops are the primary source of power. Gear stats grow
-exponentially with item level, so a newer drop is the power jump; spending gold on a few
-**upgrades** is only a minor multiplicative smoothing bonus (and equipping a new drop resets
-the upgrade level). Every 10th stage is a boss; if the projected time-to-kill is too slow, or
-if a stage becomes a progression wall, a choice appears. The free `wait` path always works
-(it grants gold equal to a fixed number of upgrade levels); the "watch ad" and "buy" options
-are visible but disabled placeholders in this build.
+exponentially with item level, so a newer drop is the power jump. Besides the **weapon**
+(DPS/click), gear now includes two **ring** slots (critical chance/multiplier) and a rare
+**necklace** (gold gain + overall DPS bonus); critical strikes are modelled as an
+*expected-DPS* multiplier, so the pacing projection stays exact, and the ring/necklace
+totals are **clamped** so those secondary slots cannot out-scale the weapon. Spending gold on a
+few **upgrades** is only a minor multiplicative smoothing bonus (and equipping a new drop resets
+the upgrade level). Progress unlocks ~2 dozen snarky **achievements** (persisted by id), each
+with a brief over-the-top **splash** (non-blocking — it never pauses the simulation; tap to
+dismiss early) and an **achievements shelf** showing unlocked vs `???` entries. Every 10th stage
+is a boss; if the projected time-to-kill is too slow, or if a stage becomes a progression wall, a
+choice appears. The free `wait` path always works (it grants gold equal to a fixed number of
+upgrade levels); the "watch ad" and "buy" options are visible but disabled placeholders in
+this build.
 
 ---
 
@@ -70,6 +77,8 @@ auto-auto-clicker/
 │   │   ├── types.ts             # GameState, Action, GameEvent, SaveGame, content definitions
 │   │   ├── balance.ts           # every gameplay number + economy formula (the one tuner file)
 │   │   ├── content.ts           # GearDefinition / EnemyDefinition catalog (never persisted)
+│   │   ├── achievements.ts      # static achievement catalog + pure evaluator (never persisted)
+│   │   ├── gear-stats.ts        # leaf: getGearStats / getCritStats / getGlobalBonuses (derived gear reads)
 │   │   ├── state.ts             # createGame / cloneGameState / derived reads / saveGame / loadGame
 │   │   ├── advance.ts           # advance(state, deltaMs) — time-based simulation
 │   │   ├── actions.ts           # applyAction(state, action) — explicit player commands
@@ -182,7 +191,7 @@ Persistence is one versioned, serializable blob written through an async interfa
 
 ```ts
 interface SaveGame {
-  version: number;   // CURRENT_SAVE_VERSION = 2
+  version: number;   // CURRENT_SAVE_VERSION = 3
   savedAt: number;   // host wall-clock ms when written (used for offline replay)
   state: GameState;  // the entire per-player state
 }
@@ -197,18 +206,24 @@ interface SaveRepository {
   per-player save state.** They describe the game catalog and are never persisted — only
   `GameState` is saved. (`GameState.meta.seed` and `meta.rngState` are persisted so a
   reload continues the exact deterministic stream.)
-- **Version 2 persists source fields only; every derived value is computed on read.**
+- **Version 3 persists source fields only; every derived value is computed on read.**
   `GameState` stores `player.gold`, `combat.{stage,enemyHp,damageCarry}`, each gear instance as
-  `{id, definitionId, itemLevel, upgradeLevel}`, and the meta/choice bookkeeping. Gear battle
-  stats (`getGearStats`), the base auto/click stats (`getEffectiveStats`), and the enemy's max
-  HP (`getEnemyMaxHp`) are all derived from those sources plus `BALANCE`/`computeGearStats` at
-  read time — they are never persisted. A balance or stat-formula change therefore cannot drift
-  a stale copy on an existing save.
-- **Version 1 saves are migrated on load.** Version 1 persisted those derived copies
-  (`player.baseAutoDps`/`baseClickDamage`, `combat.enemyMaxHp`, and per-instance
-  `dps`/`clickDamage`). `loadGame` accepts version 1, strips the derived fields via
-  `migrateV1ToV2`, and returns a version-2 state; a version-2 blob round-trips as-is. Any other
-  version throws a descriptive error.
+  `{id, definitionId, itemLevel, upgradeLevel}` under a four-slot `equipped` map
+  (`weapon`/`ring1`/`ring2`/`necklace`), and the meta (including unlocked achievement **ids**)
+  plus choice bookkeeping. Gear battle stats and effect contributions (`getGearStats` — DPS,
+  click damage, crit chance/multiplier, gold/power bonuses), the final auto/click stats
+  (`getEffectiveStats` — includes the expected-crit and necklace-power multipliers), and the
+  enemy's max HP (`getEnemyMaxHp`) are all derived from those sources plus
+  `BALANCE`/`computeGearStats` at read time — they are never persisted. A balance or
+  stat-formula change therefore cannot drift a stale copy on an existing save. The achievement
+  catalog itself is static content (`achievements.ts`), not save state.
+- **Version 1 and 2 saves are migrated on load.** Version 1 persisted derived copies
+  (`player.baseAutoDps`/`baseClickDamage`, `combat.enemyMaxHp`, per-instance
+  `dps`/`clickDamage`); version 2 dropped those but predates rings, necklaces, and
+  achievements. A single source-field parser behind `migrateV1ToV2`/`migrateV2ToV3` drops any
+  derived copies and defaults the new fields (`equipped.ring1`/`ring2`/`necklace` to `null`,
+  `meta.achievements` to `[]`), so a v1 or v2 blob hydrates as a version-3 state. A version-3
+  blob round-trips as-is. Any other version throws a descriptive error.
 - **The blob is one serializable object.** Today it is written to `localStorage` under
   `auto-auto-clicker.save.v1` by `LocalStorageSaveRepository`; `JSON.parse` failures and
   unsupported versions fall back to a fresh game rather than crashing the boot.
@@ -233,8 +248,12 @@ targets are:
 `npm run sim` asserts this. It drives the engine with:
 
 - a **fixed 100 ms step** (the same step the web host uses);
-- a **greedy, deterministic active-play policy**: equip a bag weapon whenever it *strictly
-  raises total active DPS*, then spend remaining gold on upgrades;
+- a **greedy, deterministic active-play policy**: for **every occupiable slot** (weapon,
+  ring1, ring2, necklace) equip the bag item that most raises the player's *total effective
+  power*, where the score is built from engine getters only (the shared
+  `getEffectiveStats` auto-DPS/click folded with the necklace gold bonus via
+  `getGlobalBonuses`) — so rings/necklaces are judged by their real crit/power effect and
+  the sim duplicates no balance formula; then spend remaining gold on weapon upgrades;
 - **2 clicks/second** (`ACTIVE_CLICKS_PER_SECOND`);
 - resolution of every pending choice on the **free `wait` path**;
 - a **5-seed hard assertion** — `SWEEP_SEEDS = [12345, 1, 999, 424242, 20250925]`. Every
@@ -249,49 +268,60 @@ targets are:
   (≥ 1 equip per 5 stages cleared), so a run whose attributed drops never actually happened
   cannot pass even if arithmetic alone would clear the share gate.
 
-Current observed result (5 sweep seeds):
+Current observed result (5 sweep seeds, `npm run sim` → exit 0). Every seed is inside its ±20%
+window and the canonical seed is inside its stricter comfortable range:
 
 ```
-seed     12345: soft 6.49 min st30  hard 50.88 min st50  dNet 100.0% dGross 87.6%  [DROPS-PRIMARY]
-seed         1: soft 6.44 min st30  hard 51.23 min st50  dNet 100.0% dGross 87.6%  [DROPS-PRIMARY]
-seed       999: soft 6.39 min st30  hard 50.78 min st50  dNet 100.0% dGross 87.6%  [DROPS-PRIMARY]
-seed    424242: soft 6.49 min st30  hard 51.38 min st50  dNet 100.0% dGross 87.6%  [DROPS-PRIMARY]
-seed  20250925: soft 6.52 min st30  hard 50.92 min st50  dNet 100.0% dGross 87.6%  [DROPS-PRIMARY]
-soft 6.00 min target ±20% → actual 6.49 min (delta +8.1%)  [PASS]
-hard 54.00 min target ±20% → actual 50.88 min (delta -5.8%)  [PASS]
+seed     12345: soft 5.97 min st30  hard 49.07 min st50  dNet 99.6%  dGross 87.8%  [DROPS-PRIMARY]
+seed         1: soft 6.42 min st30  hard 46.55 min st50  dNet 100.0% dGross 87.4%  [DROPS-PRIMARY]
+seed       999: soft 5.97 min st30  hard 45.10 min st50  dNet 100.0% dGross 87.7%  [DROPS-PRIMARY]
+seed    424242: soft 5.91 min st30  hard 47.29 min st50  dNet 100.0% dGross 87.7%  [DROPS-PRIMARY]
+seed  20250925: soft 6.00 min st30  hard 46.03 min st50  dNet 99.6%  dGross 87.5%  [DROPS-PRIMARY]
+soft 6.00 min target ±20% → actual 5.97 min (delta -0.6%)  [PASS]
+hard 54.00 min target ±20% → actual 49.07 min (delta -9.1%)  [PASS]
 PACING OK
 ```
 
 Raw milestone snapshot (canonical seed):
 
 ```
-soft check   t=6.49min  stage=30  autoDps=1673      clickDamage=6688
-hard wall    t=50.88min stage=50  autoDps=244166    clickDamage=976660
+soft check   t=5.97min  stage=30  autoDps=1899     clickDamage=7591
+hard wall    t=49.07min stage=50  autoDps=226800   clickDamage=907198
 ```
 
 **Drops are the primary power lever.** Gear stats are **exponential in item level**
 (`floor(factor * gearGrowth^(itemLevel - 1))`, `gearGrowth = 1.283`), and `dropChance` is
-0.95 with `DROP_LEVEL_OFFSET = 0`, so a killed stage reliably yields a weapon whose item
-level tracks that stage (`itemLevel = max(1, stage)`). Equipping each new drop is the power
-jump. Enemy HP grows faster (`hpGrowth = 1.42` vs player power ≈1.28×/stage), so the
-fall-behind — and therefore the walls — is designed in. Gold is a **minor smoothing lever**:
-`upgradeStatMultiplier = 1.05` with steep costs (`upgradeCostGrowth = 6`) and flat gold
-(`goldGrowth = 1.0`) means only ≈0.7 upgrade levels are affordable per equip, and equipping a
-new drop resets `upgradeLevel` to 0 (cheap next to the ≈28% item-level jump). Free-path
-choices grant a fixed number of upgrade levels rather than stage-scaled gold. See
-`engine-core/src/balance.ts`.
+0.95 with `DROP_LEVEL_OFFSET = 0`, so a killed stage reliably yields a piece of gear whose
+item level tracks that stage (`itemLevel = max(1, stage)`). The slot is then drawn from
+`SLOT_DROP_WEIGHTS` (weapon 1.0, each ring 0.04, necklace 0.02), and a **weapon is guaranteed
+first**: until the player owns one, the slot roll is forced to `weapon`. The weapon weight must
+dominate: the weapon is the only *unbounded* exponential power lever, so a heavy ring weight
+thins the weapon stream (the equipped weapon lags the stage and the soft check drifts late).
+Rings/necklaces are **bounded** secondary levers: their crit/power totals are clamped
+(`CRIT_CHANCE_CAP`, `CRIT_MULTIPLIER_CAP`, `POWER_MULTIPLIER_CAP`, `GOLD_MULTIPLIER_CAP`) in the
+state getters, so an exponential item remains an exponential *item* without letting the
+multiplicative bonus explode. Equipping each new drop is the power jump. Enemy HP grows faster
+(`hpGrowth = 1.42` vs player power ≈1.28×/stage)
+before the bounded crit/necklace multipliers, so the fall-behind — and therefore the walls — is
+designed in. Gold is a **minor smoothing lever**: `upgradeStatMultiplier = 1.05` with steep costs
+(`upgradeCostGrowth = 6`) and flat gold (`goldGrowth = 1.0`) means only ≈0.7 upgrade levels are
+affordable per equip, and equipping a new drop resets `upgradeLevel` to 0 (cheap next to the
+≈28% item-level jump). Free-path choices grant a fixed number of upgrade levels rather than
+stage-scaled gold. See `engine-core/src/balance.ts`.
 
 The **power-attribution ledger** in `sim/src/sim.ts` proves the split exactly. The equipped
 stat's log is `ln(factor) + (itemLevel − 1)·ln(gearGrowth) + upgradeLevel·ln(upgradeStatMultiplier)`,
 so the run decomposes into per-equip `Δ(itemLevel − 1)·ln(gearGrowth)` plus per-upgrade
-`+ln(upgradeStatMultiplier)` — computed only from exported engine values. Each equip resets the
-gold-funded `upgradeLevel` to 0, so the upgrade power bought with gold is destroyed by the swap.
-Charging that reset loss to the lever it came from (`goldNet = goldGross − resetLoss`) makes
-gold's **net** contribution ≈0 while drops carry **≈100% of net log-power growth**. The ledger
-reports both conventions unambiguously: **drops ≈100% of NET** log-power growth and **≈87.6% of
-GROSS** (drops against raw gold purchased). On the sweep seeds `goldGross = resetLoss = 1.659`
-exactly, so `goldNet = 0`; the free `wait` grant is ≈4.5% — a transient smoothing contribution,
-not a net power source.
+`+ln(upgradeStatMultiplier)` — computed only from exported engine values. Ring/necklace equips are
+**also drops**, so the log delta of the bounded crit/power factor they contribute (`bonus-gross`)
+is counted with the weapon's drop gain; only gold-funded upgrade power counts as gold. Each
+equip resets the gold-funded `upgradeLevel` to 0, so the upgrade power bought with gold is
+destroyed by the swap. Charging that reset loss to the lever it came from
+(`goldNet = goldGross − resetLoss`) makes gold's **net** contribution ≈0 while drops carry
+**≈100% of net log-power growth**. The ledger reports both conventions unambiguously: **drops
+≈100% of NET** log-power growth and **≈87.6% of GROSS** (drops against raw gold purchased). On the
+sweep seeds `goldGross = resetLoss = 1.659` exactly, so `goldNet = 0`; the free `wait` grant is
+≈4.5% — a transient smoothing contribution, not a net power source.
 
 ---
 
@@ -325,12 +355,18 @@ This is a prototype, and the honest edges matter:
   away time in 1000 ms steps with no clicks, and backgrounded-tab time beyond the host's
   10-step catch-up clamp is dropped until the next boot. Both are deliberate host
   policies chosen to avoid catch-up spirals and offline windfalls.
-- **Two save schema versions, one migration path.** `loadGame` accepts version 1 (migrated to
-  version 2 on load) and version 2; any other version throws. There is still no `clear()` on
-  `SaveRepository`.
-- **A single gear slot and a single enemy definition.** The seams for more exist
-  (`GearSlot`, `CONTENT`, `gearDefinitionFor`), but this build ships one weapon type and
-  one "grunt" enemy.
+- **Three save schema versions, one migration path.** `loadGame` accepts version 1 and 2
+  (both migrated to version 3 through the same source-field parser) and version 3. Older saves
+  gain a four-slot `equipped` map with `ring1`/`ring2`/`necklace` set to `null` and
+  `meta.achievements` set to `[]`. There is still no `clear()` on `SaveRepository`.
+- **Rings/necklaces are real but bounded, secondary levers.** The sim now equips them (its
+  policy ranks every slot by the engine's own effective stats / global bonuses), the pacing
+  proof exercises them, and their crit/power totals are clamped so the multiplicative bonus
+  cannot explode late. In the UI a per-item value is labelled **(raw)** — the item's own
+  contribution before the engine clamps the aggregate — and an equipped card also shows the
+  current **capped** totals (`getCritStats`/`getGlobalBonuses`), so a mid-game ring no longer
+  reads as an impossible `crit 211%`. There is still a single enemy definition and no player
+  HP / armor / dodge.
 
 ---
 

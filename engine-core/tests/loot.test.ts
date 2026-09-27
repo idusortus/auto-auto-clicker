@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { applyAction, createGame, getEffectiveStats } from '../src/index';
-import { BALANCE, BAG_CAP, DROP_LEVEL_OFFSET } from '../src/balance';
+import {
+  BALANCE,
+  BAG_CAP,
+  DROP_LEVEL_OFFSET,
+  pickWeightedSlot,
+  SLOT_DROP_WEIGHTS,
+} from '../src/balance';
+import { gearDefinitionFor } from '../src/content';
 import { nextRng } from '../src/rng';
-import { makeGear, makeState } from './helpers';
-import type { GameState } from '../src/types';
+import { makeGear, makeRing, makeState } from './helpers';
+import type { GameState, GearSlot } from '../src/types';
 
 /** Kill one stage from a state, optionally starting with a weapon equipped. */
 function killStage(seed: number, stage = 1, armed = false): GameState {
@@ -93,5 +100,80 @@ describe('createGame', () => {
       autoDps: BALANCE.baseAutoDps,
       clickDamage: BALANCE.baseClickDamage,
     });
+  });
+});
+
+describe('loot — slot weighting', () => {
+  it('maps rolls to slots in proportion to SLOT_DROP_WEIGHTS', () => {
+    const total = Object.values(SLOT_DROP_WEIGHTS).reduce((sum, weight) => sum + weight, 0);
+    expect(pickWeightedSlot(0)).toBe('weapon');
+    expect(pickWeightedSlot(SLOT_DROP_WEIGHTS.weapon / total + 1e-9)).toBe('ring1');
+    expect(
+      pickWeightedSlot((SLOT_DROP_WEIGHTS.weapon + SLOT_DROP_WEIGHTS.ring1) / total + 1e-9),
+    ).toBe('ring2');
+    expect(pickWeightedSlot(1 - 1e-9)).toBe('necklace');
+    // Non-finite rolls fall back to the weapon rather than producing NaN.
+    expect(pickWeightedSlot(Number.NaN)).toBe('weapon');
+  });
+
+  it('samples slots by weight and makes necklaces rare', () => {
+    const trials = 6000;
+    const counts: Record<GearSlot, number> = { weapon: 0, ring1: 0, ring2: 0, necklace: 0 };
+    let drops = 0;
+    for (let seed = 1; seed <= trials; seed += 1) {
+      const after = killStage(seed, 5, true);
+      const drop = after.gear.bag[0];
+      if (!drop) continue;
+      drops += 1;
+      const definition = gearDefinitionFor(drop.definitionId);
+      expect(definition).not.toBeNull();
+      if (!definition) continue;
+      counts[definition.slot] = (counts[definition.slot] ?? 0) + 1;
+    }
+
+    expect(drops).toBeGreaterThan(trials * 0.9);
+    const weaponShare = counts.weapon / drops;
+    const necklaceShare = counts.necklace / drops;
+    // Weapon is the dominant stream; the necklace is rare.
+    expect(weaponShare).toBeGreaterThan(counts.ring1 / drops);
+    expect(counts.weapon).toBeGreaterThan(counts.ring1);
+    expect(counts.necklace).toBeGreaterThan(0);
+    expect(necklaceShare).toBeLessThan(0.03);
+    // Both ring slots appear, roughly equally.
+    expect(counts.ring1).toBeGreaterThan(0);
+    expect(counts.ring2).toBeGreaterThan(0);
+    expect(Math.abs(counts.ring1 - counts.ring2) / drops).toBeLessThan(0.05);
+  });
+
+  it('is deterministic for a fixed seed', () => {
+    const first = killStage(777, 5, true);
+    const second = killStage(777, 5, true);
+    expect(first.gear.bag).toEqual(second.gear.bag);
+    expect(first.meta.rngState).toBe(second.meta.rngState);
+  });
+
+  it('guarantees a weapon before any other slot can drop', () => {
+    // Bag holds a ring but no weapon: ownsWeapon is false, so every drop is
+    // forced to the weapon slot regardless of the slot roll.
+    for (let seed = 1; seed <= 200; seed += 1) {
+      const setup = makeState({ seed, stage: 5, enemyHp: 1, bag: [makeRing(3)] });
+      const after = applyAction(setup, { type: 'click' }).state;
+      const drop = after.gear.bag.find((item) => item.id.startsWith('gear-'));
+      expect(drop?.definitionId).toBe('weapon');
+    }
+  });
+
+  it('allows non-weapon slots once a weapon is owned', () => {
+    let sawRing = false;
+    let sawNecklace = false;
+    for (let seed = 1; seed <= 6000 && !(sawRing && sawNecklace); seed += 1) {
+      const drop = killStage(seed, 5, true).gear.bag[0];
+      if (!drop) continue;
+      const slot = gearDefinitionFor(drop.definitionId)?.slot;
+      if (slot === 'ring1' || slot === 'ring2') sawRing = true;
+      if (slot === 'necklace') sawNecklace = true;
+    }
+    expect(sawRing).toBe(true);
+    expect(sawNecklace).toBe(true);
   });
 });

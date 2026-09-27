@@ -1,6 +1,6 @@
 // Shared test helpers. Not a *.test.ts file, so vitest does not collect it.
 
-import { WEAPON_DEFINITION } from '../src/content';
+import { NECKLACE_DEFINITION, RING_DEFINITION, RING_DEFINITION_2, WEAPON_DEFINITION } from '../src/content';
 import { createGame } from '../src/state';
 import type { GearInstance, GameState, PendingChoice } from '../src/types';
 
@@ -8,11 +8,15 @@ export interface StateOverrides {
   seed?: number;
   rngState?: number;
   totalPlayedMs?: number;
+  achievements?: string[];
   gold?: number;
   stage?: number;
   enemyHp?: number;
   damageCarry?: number;
   equippedWeapon?: GearInstance | null;
+  equippedRing1?: GearInstance | null;
+  equippedRing2?: GearInstance | null;
+  equippedNecklace?: GearInstance | null;
   bag?: GearInstance[];
   nextInstanceId?: number;
   pending?: PendingChoice | null;
@@ -26,6 +30,7 @@ export function makeState(overrides: StateOverrides = {}): GameState {
       ...base.meta,
       rngState: overrides.rngState ?? base.meta.rngState,
       totalPlayedMs: overrides.totalPlayedMs ?? base.meta.totalPlayedMs,
+      achievements: overrides.achievements ?? base.meta.achievements,
     },
     player: {
       gold: overrides.gold ?? base.player.gold,
@@ -36,7 +41,12 @@ export function makeState(overrides: StateOverrides = {}): GameState {
       damageCarry: overrides.damageCarry ?? base.combat.damageCarry,
     },
     gear: {
-      equipped: { weapon: overrides.equippedWeapon ?? null },
+      equipped: {
+        weapon: overrides.equippedWeapon ?? null,
+        ring1: overrides.equippedRing1 ?? null,
+        ring2: overrides.equippedRing2 ?? null,
+        necklace: overrides.equippedNecklace ?? null,
+      },
       bag: overrides.bag ?? [],
       nextInstanceId: overrides.nextInstanceId ?? 1,
     },
@@ -57,6 +67,26 @@ export function makeGear(itemLevel: number, upgradeLevel = 0, id = `test-gear-${
     itemLevel,
     upgradeLevel,
   };
+}
+
+/** Build a ring instance bound to `ring1` or `ring2`. */
+export function makeRing(
+  itemLevel: number,
+  slot: 'ring1' | 'ring2' = 'ring1',
+  upgradeLevel = 0,
+  id = `test-${slot}-${itemLevel}`,
+): GearInstance {
+  const definition = slot === 'ring1' ? RING_DEFINITION : RING_DEFINITION_2;
+  return { id, definitionId: definition.id, itemLevel, upgradeLevel };
+}
+
+/** Build a necklace instance. */
+export function makeNecklace(
+  itemLevel: number,
+  upgradeLevel = 0,
+  id = `test-necklace-${itemLevel}`,
+): GearInstance {
+  return { id, definitionId: NECKLACE_DEFINITION.id, itemLevel, upgradeLevel };
 }
 
 /** Recursively freeze a value so any mutation attempt throws in strict mode. */

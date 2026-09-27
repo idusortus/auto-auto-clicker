@@ -4,7 +4,7 @@
 // catalog and never live inside per-player save state. GameState is the only
 // thing persisted, wrapped by the versioned SaveGame blob.
 
-export type GearSlot = 'weapon';
+export type GearSlot = 'weapon' | 'ring1' | 'ring2' | 'necklace';
 
 export interface GearDefinition {
   id: string;
@@ -22,6 +22,23 @@ export interface GearDefinition {
   upgradeCostGrowth: number;
   upgradeStatMultiplier: number;
   dropChance: number;
+  /**
+   * Base effect contributions at item level 1. They scale by the SAME
+   * `gearGrowth^(itemLevel - 1)` (and upgrade multiplier) as the weapon stats,
+   * so a slot's effect tracks item level just like `dpsFactor`/`clickFactor`.
+   * All four are 0 for slots that do not provide that effect; `critChance` and
+   * `critMultiplier` come from rings, `goldMultiplier`/`powerMultiplier` from
+   * the necklace.
+   *
+   * `critMultiplier` is a CONTRIBUTION to the critical-damage bonus: the total
+   * critical multiplier is `1 + sum(contributions)`, so a contribution of 0.5
+   * means critical hits deal 1.5x. A contribution of 0 therefore leaves the
+   * total at the neutral 1x and cannot turn a crit into a penalty.
+   */
+  critChance: number;
+  critMultiplier: number;
+  goldMultiplier: number;
+  powerMultiplier: number;
 }
 
 export interface EnemyDefinition {
@@ -58,6 +75,11 @@ export interface GameState {
     rngState: number;
     createdAt: number;
     totalPlayedMs: number;
+    /**
+     * Ids of unlocked achievements. Only ids are persisted; the catalog lives
+     * in content-like static data (`achievements.ts`), never in save state.
+     */
+    achievements: string[];
   };
   // SOURCE fields only. The base auto/click stats are `BALANCE.baseAutoDps` /
   // `BALANCE.baseClickDamage`; the enemy's max HP is `enemyMaxHp(combat.stage)`.
@@ -95,7 +117,8 @@ export type GameEvent =
   | { type: 'goldChanged'; amount: number; total: number; reason: string }
   | { type: 'bossCheckFailed'; stage: number; projectedKillMs: number }
   | { type: 'progressionWall'; stage: number; projectedKillMs: number }
-  | { type: 'choiceResolved'; choice: 'wait' | 'watchAd' | 'iap' };
+  | { type: 'choiceResolved'; choice: 'wait' | 'watchAd' | 'iap' }
+  | { type: 'achievementUnlocked'; id: string; title: string };
 
 export interface SaveGame {
   version: number;

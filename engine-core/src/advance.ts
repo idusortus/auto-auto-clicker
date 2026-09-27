@@ -3,6 +3,7 @@
 // Pure and deterministic: same (state, deltaMs) always yields the same
 // (state, events). No clocks or randomness beyond GameState.meta.rngState.
 
+import { grantAchievements } from './achievements';
 import { applyDamageToEnemy } from './combat';
 import { cloneGameState, getEffectiveStats } from './state';
 import type { GameEvent, GameState } from './types';
@@ -26,5 +27,6 @@ export function advance(state: GameState, deltaMs: number): { state: GameState; 
   draft.combat.damageCarry = Math.floor((accumulated - integerDamage) * 1000) / 1000;
 
   const events = applyDamageToEnemy(draft, integerDamage, 'auto');
+  grantAchievements(state, draft, events);
   return { state: draft, events };
 }

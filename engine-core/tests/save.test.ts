@@ -20,10 +20,10 @@ describe('save serialization', () => {
     const state = advance(createGame(987654321, 111), 200_000).state;
     const save = saveGame(state, 222);
 
-    expect(save.version).toBe(2);
+    expect(save.version).toBe(3);
     expect(save.savedAt).toBe(222);
 
-    // Version 2 persists SOURCE fields only — no derived copies.
+    // Version 3 persists SOURCE fields only — no derived copies.
     expect('baseAutoDps' in save.state.player).toBe(false);
     expect('baseClickDamage' in save.state.player).toBe(false);
     expect('enemyMaxHp' in save.state.combat).toBe(false);
@@ -37,7 +37,7 @@ describe('save serialization', () => {
     expect(loadGame(transported)).toEqual(state);
   });
 
-  it('migrates a version-1 save (derived values persisted) to version 2', () => {
+  it('migrates a version-1 save (derived values persisted) forward to version 3', () => {
     // A hand-built version-1 state: it carries the derived copies v2 dropped —
     // the base stat copies, the enemy max-HP copy, and per-instance dps/click.
     const v1Weapon = { ...makeGear(30, 2, 'stale-equipped'), dps: 84, clickDamage: 84 };
@@ -67,7 +67,7 @@ describe('save serialization', () => {
     expect('clickDamage' in (migratedBagItem as object)).toBe(false);
 
     // Source fields survive untouched (instances reduced to their source shape).
-    expect(loaded.meta.saveVersion).toBe(2);
+    expect(loaded.meta.saveVersion).toBe(3);
     expect(loaded.player.gold).toBe(123);
     expect(loaded.combat.stage).toBe(5);
     expect(loaded.combat.enemyHp).toBe(42);
@@ -97,13 +97,99 @@ describe('save serialization', () => {
     expect(stats.autoDps).not.toBe(BALANCE.baseAutoDps + 84);
   });
 
+  it('migrates a version-2 save with no ring/necklace/achievements fields to version 3', () => {
+    // A version-2 blob predates ring/necklace slots and achievements. It has a
+    // single weapon equipped and nothing else in the four-slot map.
+    const v2Weapon = makeGear(8, 1, 'v2-weapon');
+    const v2State = {
+      meta: { saveVersion: 2, seed: 9, rngState: 9, createdAt: 0, totalPlayedMs: 5000 },
+      player: { gold: 77 },
+      combat: { stage: 12, enemyHp: 345, damageCarry: 0.5 },
+      gear: { equipped: { weapon: v2Weapon }, bag: [], nextInstanceId: 3 },
+      choices: { pending: null },
+    };
+    const save = { version: 2, savedAt: 0, state: v2State } as unknown as SaveGame;
+
+    const loaded = loadGame(save);
+
+    expect(loaded.meta.saveVersion).toBe(3);
+    // New in v3: every missing slot defaults to null and achievements to [].
+    expect(loaded.gear.equipped).toEqual({
+      weapon: v2Weapon,
+      ring1: null,
+      ring2: null,
+      necklace: null,
+    });
+    expect(loaded.meta.achievements).toEqual([]);
+    // Everything else survives untouched.
+    expect(loaded.player.gold).toBe(77);
+    expect(loaded.combat.stage).toBe(12);
+    expect(loaded.combat.enemyHp).toBe(345);
+    expect(loaded.combat.damageCarry).toBe(0.5);
+    expect(loaded.gear.nextInstanceId).toBe(3);
+    expect(loaded.meta.totalPlayedMs).toBe(5000);
+  });
+
+  it('migrates a version-1 save with no new fields and keeps v1->v3 defaults', () => {
+    const v1State = {
+      meta: { saveVersion: 1, seed: 3, rngState: 3, createdAt: 0, totalPlayedMs: 10 },
+      player: { gold: 5, baseAutoDps: 2, baseClickDamage: 2 },
+      combat: { stage: 2, enemyHp: 20, enemyMaxHp: 999, damageCarry: 0 },
+      gear: { equipped: { weapon: null }, bag: [], nextInstanceId: 1 },
+      choices: { pending: null },
+    };
+    const save = { version: 1, savedAt: 0, state: v1State } as unknown as SaveGame;
+
+    const loaded = loadGame(save);
+
+    expect(loaded.meta.saveVersion).toBe(3);
+    expect(loaded.gear.equipped).toEqual({
+      weapon: null,
+      ring1: null,
+      ring2: null,
+      necklace: null,
+    });
+    expect(loaded.meta.achievements).toEqual([]);
+  });
+
+  it('persists and validates unlocked achievement ids', () => {
+    const state = makeState({ achievements: ['first-blood', 'geared-up'] });
+    const loaded = loadGame(saveGame(state));
+    expect(loaded.meta.achievements).toEqual(['first-blood', 'geared-up']);
+
+    // Non-string entries are rejected.
+    const save = saveGame(createGame(1, 0));
+    const raw = JSON.parse(JSON.stringify(save)) as { state: { meta: Record<string, unknown> } };
+    raw.state.meta.achievements = ['first-blood', 42];
+    expect(() => loadGame({ version: 3, savedAt: 0, state: raw.state } as unknown as SaveGame)).toThrow(
+      /Invalid save: version 3\.meta\.achievements\[1\] must be a string/,
+    );
+
+    // A non-array value is rejected.
+    raw.state.meta.achievements = 'first-blood';
+    expect(() => loadGame({ version: 3, savedAt: 0, state: raw.state } as unknown as SaveGame)).toThrow(
+      /Invalid save: version 3\.meta\.achievements must be an array of strings/,
+    );
+  });
+
+  it('drops unknown achievement ids and collapses duplicates on load', () => {
+    // A save whose id list drifted from the current catalog: an id that no
+    // longer exists and a repeated id. Both recover by filtering, not by
+    // rejecting the whole save.
+    const state = makeState({
+      achievements: ['first-blood', 'not-a-real-achievement', 'geared-up', 'first-blood'],
+    });
+    const loaded = loadGame(saveGame(state));
+    expect(loaded.meta.achievements).toEqual(['first-blood', 'geared-up']);
+  });
+
   it('throws on unsupported save versions, naming every accepted version', () => {
     const state = createGame(1, 0);
-    expect(() => loadGame({ version: 3, savedAt: 0, state })).toThrow(
-      `Unsupported save version 3; expected 1 or ${CURRENT_SAVE_VERSION}`,
+    expect(() => loadGame({ version: 4, savedAt: 0, state })).toThrow(
+      `Unsupported save version 4; expected 1, 2, or ${CURRENT_SAVE_VERSION}`,
     );
     expect(() => loadGame({ version: 0, savedAt: 0, state })).toThrow(
-      `Unsupported save version 0; expected 1 or ${CURRENT_SAVE_VERSION}`,
+      `Unsupported save version 0; expected 1, 2, or ${CURRENT_SAVE_VERSION}`,
     );
   });
 
@@ -117,14 +203,14 @@ describe('save serialization', () => {
       },
     });
     expect(() => loadGame(saveGame(equippedState))).toThrow(
-      /Invalid save: version 2\.gear\.equipped\.weapon\.definitionId "bogus" does not match a known gear definition/,
+      /Invalid save: version 3\.gear\.equipped\.weapon\.definitionId "bogus" does not match a known gear definition/,
     );
 
     const bagState = makeState({
       bag: [{ id: 'bogus-bag', definitionId: 'bogus', itemLevel: 1, upgradeLevel: 0 }],
     });
     expect(() => loadGame(saveGame(bagState))).toThrow(
-      /Invalid save: version 2\.gear\.bag\[0\]\.definitionId "bogus" does not match a known gear definition/,
+      /Invalid save: version 3\.gear\.bag\[0\]\.definitionId "bogus" does not match a known gear definition/,
     );
   });
 
@@ -136,14 +222,14 @@ describe('save serialization', () => {
     // A stray slot key ('armor') must not leak past Record<GearSlot, ...>.
     gear.equipped = { weapon: null, armor: null };
     expect(() => loadGame({ version: CURRENT_SAVE_VERSION, savedAt: 0, state } as unknown as SaveGame)).toThrow(
-      /Invalid save: version 2\.gear\.equipped\.armor is not a known gear slot \(expected weapon\)/,
+      /Invalid save: version 3\.gear\.equipped\.armor is not a known gear slot \(expected weapon, ring1, ring2, necklace\)/,
     );
 
     // `__proto__` from JSON.parse is an OWN enumerable key, so it must be
     // rejected like any other unknown slot instead of becoming the prototype.
     gear.equipped = JSON.parse('{"weapon": null, "__proto__": null}') as Record<string, unknown>;
     expect(() => loadGame({ version: CURRENT_SAVE_VERSION, savedAt: 0, state } as unknown as SaveGame)).toThrow(
-      /Invalid save: version 2\.gear\.equipped\.__proto__ is not a known gear slot/,
+      /Invalid save: version 3\.gear\.equipped\.__proto__ is not a known gear slot/,
     );
   });
 
