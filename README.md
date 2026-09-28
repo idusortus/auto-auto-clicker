@@ -20,6 +20,7 @@ npm run dev          # play at http://localhost:5173  (Vite dev server)
 npm run test         # engine-core unit tests (Vitest)
 npm run sim          # headless pacing proof; fails loudly if pacing drifts
 npm run smoke        # Playwright mobile-viewport smoke test (390x844, touch)
+npm run theme:check  # validate the active theme against the theme contract
 npm run build        # engine-core typecheck + production web bundle
 npm run typecheck    # typecheck all three workspaces (engine-core + web + sim)
 ```
@@ -37,6 +38,12 @@ npm run typecheck    # typecheck all three workspaces (engine-core + web + sim)
 - **`npm run build`** runs `engine-core`'s `tsc --noEmit` (typecheck-only — the engine is
   shipped as TypeScript *source* through workspace resolution) followed by `vite build`
   for `/web` (output in `web/dist/`).
+- **`npm run theme:check`** validates the active theme against the theme contract (see
+  [Theming](#theming)) and prints a readable report — the limits table with the observed
+  maximum per group. It exits non-zero with an actionable list if a theme is missing a
+  slot, has an over-long string or template return value, references an unknown
+  achievement id, tries to rename an identity key, or has a malformed asset section. It
+  runs in CI too, via the engine unit suite.
 
 ### How to play
 
@@ -100,6 +107,7 @@ auto-auto-clicker/
 │   │   ├── theme/                # ALL user-facing TEXT (display) — see Theming
 │   │   │   ├── types.ts          # `Theme` contract (leaf: imports nothing)
 │   │   │   ├── fantasy.ts        # default "Standard Fantasy RPG" theme (current wording, verbatim)
+│   │   │   ├── contract.ts       # the declared limits/slots + `validateTheme` (build-time contract)
 │   │   │   └── index.ts          # `ACTIVE_THEME` — the ONE-LINE theme switch
 │   │   ├── gear-stats.ts        # leaf: derived gear reads + the shared powerScore metric
 │   │   ├── advisory.ts         # leaf: upgrade/stall guidance (surfaces facts; never equips)
@@ -109,6 +117,8 @@ auto-auto-clicker/
 │   │   ├── combat.ts            # damage, kills, stage entry, boss/wall pacing checks
 │   │   ├── loot.ts              # frequent gear drops; item level tracks the killed stage
 │   │   └── rng.ts               # seeded mulberry32 (state lives in GameState.meta.rngState)
+│   ├── scripts/
+│   │   └── check-theme.ts        # `npm run theme:check` — validate the active theme (tsx, no deps)
 │   ├── save/
 │   │   ├── index.ts             # ./save subpath export
 │   │   ├── repository.ts        # async SaveRepository interface
@@ -197,9 +207,31 @@ export const ACTIVE_THEME: Theme = fantasy;
   functions taking the same parameters, so a swapped theme cannot change the rendered bytes.
 - **The theme is a leaf.** `theme/types.ts` imports nothing; `fantasy.ts` imports only the
   contract; `index.ts` selects the active theme. `engine-core/src` stays acyclic.
-- **This phase extracts text only.** Colors, pixel art, and animation are later phases; the
-  default theme reproduces the existing wording verbatim, so the rendered output is
-  byte-identical.
+- **A theme must match a declared contract, and the contract is enforced.**
+  `engine-core/src/theme/contract.ts` is the *template* every theme must satisfy. It
+  declares per-group character limits, the required achievement catalog id set, the
+  forbidden identity keys, and the required asset slots — and `validateTheme(theme)`
+  re-checks all of it **at runtime**, reporting *every* problem at once (each with a
+  path, a kind — `missing` / `wrong-type` / `too-long` / `bad-key` / `identity-key` /
+  `missing-achievement` / `extra-achievement` / `bad-filename` — and a message that
+  names the actual value and the allowance). Run it any time while authoring:
+  `npm run theme:check` validates the active theme and exits non-zero on any problem.
+  The engine unit suite also validates the active theme on every run, so a theme edit
+  is self-checking in CI. Limits are **measured, not invented**: they sit comfortably
+  above the current theme's longest rendered strings (see each group's `rationale`), so
+  text stays generous while genuinely broken copy ("someone pasted a paragraph", or a
+  template whose returned value exploded) fails loudly.
+- **Assets are a declared contract, not yet loaded.** The theme's `assets` section maps
+  each required asset slot to a file name; the canonical slot names and expected pixel
+  dimensions live in `contract.ts` `ASSET_SLOTS` (4 gear slots × 4 tiers + 16
+  character/spawn slots = 32). `validateTheme` checks the section is well-formed (all
+  slots present, string file names, lower-kebab-case `.png`), but **does not** require
+  the files to exist or measure them — the on-disk existence check and pixel-size
+  verification land in **T4**, the asset seam, along with actual image loading. No PNG
+  is loaded or rendered in this phase.
+- **This phase extracts text and declares the contract; it adds no rendering.** Colors,
+  pixel art, and animation are later phases; the default theme reproduces the existing
+  wording verbatim, so the rendered output is byte-identical.
 
 ---
 

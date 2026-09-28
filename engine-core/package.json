@@ -18,7 +18,8 @@
   "scripts": {
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "theme:check": "tsx scripts/check-theme.ts"
   },
   "devDependencies": {
     "@types/node": "^22.20.4",

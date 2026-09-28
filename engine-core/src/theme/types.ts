@@ -211,4 +211,18 @@ export interface Theme {
       empty: string;
     };
   };
+
+  /**
+   * Declared art this theme supplies, keyed by ASSET SLOT NAME (the canonical
+   * names + pixel dimensions + naming convention live in `theme/contract.ts`
+   * `ASSET_SLOTS`, the single source of truth T4 consumes). Each value is a
+   * file name following the contract convention, e.g. `player-idle.png`.
+   *
+   * T3 declares this contract ONLY: nothing loads, measures, or renders these
+   * files yet. T4 (the asset seam) adds on-disk existence + dimension checking
+   * and the loader. `validateTheme` checks this section is well-formed
+   * (all slots present, string file names, convention-respecting) but does NOT
+   * require the files to exist.
+   */
+  assets: Record<string, string>;
 }
