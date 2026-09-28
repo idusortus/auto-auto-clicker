@@ -3,7 +3,26 @@
 > Cross-session memory for all agents. Update on exit; read on entry.
 
 ## Status
-**Gold is now an ALLOCATION decision (Phase C): per-slot upgrade controls + derived milestone
+**Option A gold retune: gold is now a MINOR but LEGIBLE lever, and the every-3-levels milestone
+system genuinely fires — `npm run sim` is GREEN with no threshold, tolerance, canonical range,
+or assertion touched.** The cost curve flattened (`upgradeCostBase` 10→**3**, `upgradeCostGrowth`
+6→**1.25**) and each level became a smaller nudge (`upgradeStatMultiplier` 1.05→**1.01**), so a run
+affords a steady stream of cheap levels on the weapon's per-stage lifetime (measured per-item peak
+**8–12** levels, was 2–7) and **17–23 milestones fire per run** (was 0–2). Gold stays minor because
+`gearGrowth` (1.283) still dwarfs `upgradeStatMultiplier` (1.01): a newer drop beats any affordable
+upgrade stack, so the weapon keeps tracking the stage and most upgrade power is reset by each equip.
+
+Gates (this session):
+- `npm run typecheck` → clean for all three workspaces (`engine-core`, `web`, `sim`).
+- `npm run test` → **126 passed (10 files), exit 0** (no test edited; no balance value was hard-coded).
+- `npm run sim` → **PACING OK (exit 0).** Canonical soft 6.21 / hard 50.25 (inside comfortable);
+  all-seed soft 5.76–6.21, hard 45.01–46.80; drops-primary net 97.4–98.6%; per-slot upgrades
+  w86–101 / r0–13 / n0–7; milestones 17–23 (w16–19 / r0–4 / n0–2); per-item peak level 8–12;
+  free-path share 0.4%.
+- `npm run build` → exit 0. `npm run smoke` → **13 passed, exit 0**.
+
+### Prior: Phase C (per-slot upgrades + derived milestones, kept)
+**Gold is an ALLOCATION decision (Phase C): per-slot upgrade controls + derived milestone
 steps; `npm run sim` is GREEN with no threshold changed.** `/web` renders one upgrade control per
 equipped slot (weapon keeps `upgrade-btn`); every 3rd upgrade level in an item crosses a
 **milestone** that grants a small boost to that slot's *existing capped* stat and shows a
@@ -18,7 +37,7 @@ Gates (this session):
   all-seed soft 5.72–6.18, hard 43.90–45.88; drops-primary net 98.3–99.6%; eq/stage 0.82–0.96.
 - `npm run build` → exit 0. `npm run smoke` → **13 passed, exit 0**.
 
-### This session's changes (Phase C)
+### Prior Phase C changes
 - **Per-slot upgrade UI.** One control per equipped slot: `upgrade-btn` (weapon, kept) plus
   `upgrade-btn-ring1`/`-ring2`/`-necklace`, each with `upgrade-cost`/`upgrade-level` readouts and an
   independent disabled state; `onUpgrade(slot)` is now slot-aware. All existing testids/classes kept.
@@ -68,8 +87,17 @@ the canonical comfortable ranges / the drops-primary gate.
   milestone's *effective* gain small even though the badge shows the granted amount. This is
   intentional ("use the existing capped stats"); making milestones meaningful past the caps needs a
   new non-multiplicative channel, not a bigger number.
-- **The milestone interval is 3, not 5.** Item `upgradeLevel` peaks at 2–7 across the sweep seeds
-  (costs grow ×6 against flat gold), so interval 5 would be unreachable content.
+- **The milestone interval is 3 and now actually fires.** With the Option A curve the per-item
+  `upgradeLevel` peaks at 8–12 across the sweep seeds, so interval 3 crosses 2–4 times per item
+  lifetime; interval 5 would still be a stretch. Milestones are still bounded by the caps (below).
+- **The weapon still absorbs most upgrades; the per-slot split is genuine, not a policy bug.**
+  Measured per-slot upgrades are w86–101 / r0–13 / n0–7. The weapon wins the greedy comparison
+  because it is the only *unbounded* lever and its next level is always cheap (it resets to 0 each
+  equip); rings/necklaces reach their caps early (crit multiplier saturates by item level ~4, single
+  ring crit chance by ~15) so an upgrade there often scores exactly zero gain and is skipped. Seeds
+  that get a ring drop early with cap headroom DO invest in it (max ring level up to 12, r4
+  milestones); seeds whose only ring drops late get zero ring upgrades. This is the designed
+  ceiling, not a tuning miss.
 - **The Shiny reward is bounded by the hard window.** The per-claim frenzy wall budget is
   `D × (M−1) = 12 s` (test-pinned); the 151 s cadence exists to lift the canonical hard baseline to
   ~51.9 min and leave the ~2.4–3.9 min of slack the mix consumes. A longer/bigger frenzy or a larger

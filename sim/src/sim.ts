@@ -23,8 +23,9 @@
 // are exponential in item level, so equipping a newer drop is the dominant power
 // jump. Rings/necklaces are secondary, bounded levers (their totals are clamped
 // in the engine getters) that are still drop-attributed. Gold-funded upgrades
-// are a minor multiplicative smoothing bonus whose few affordable levels are
-// reset by each equip.
+// are a minor multiplicative smoothing bonus on a flat-ish cost curve: a steady
+// stream of cheap levels (good for milestone coverage) whose power is reset by
+// each equip because a newer drop still beats any affordable upgrade stack.
 //
 // Asserts the pacing targets for EVERY sweep seed (all are hard assertions):
 //   - soft boss check lands 6.0 min  (±20% → [4.8, 7.2])
@@ -161,6 +162,10 @@ interface Attribution {
   upgradesBySlot: Record<GearSlot, number>;
   /** Milestones crossed over the run (derived, gold-funded power steps). */
   milestones: number;
+  /** Milestones crossed, by slot (shows the milestone channel is live per slot). */
+  milestonesBySlot: Record<GearSlot, number>;
+  /** Highest `upgradeLevel` ever reached on an equipped item, by slot. */
+  maxUpgradeLevelBySlot: Record<GearSlot, number>;
   killGold: number;
   waitGold: number;
 }
@@ -198,6 +203,8 @@ function emptyAttribution(): Attribution {
     upgrades: 0,
     upgradesBySlot: { weapon: 0, ring1: 0, ring2: 0, necklace: 0 },
     milestones: 0,
+    milestonesBySlot: { weapon: 0, ring1: 0, ring2: 0, necklace: 0 },
+    maxUpgradeLevelBySlot: { weapon: 0, ring1: 0, ring2: 0, necklace: 0 },
     killGold: 0,
     waitGold: 0,
   };
@@ -349,8 +356,15 @@ function runEconomy(state: GameState, attr: Attribution): GameState {
       attr.goldGross += lnUpgrade + Math.max(0, bonusLog(next) - beforeBonus);
       attr.upgrades += 1;
       attr.upgradesBySlot[bestSlot] += 1;
+      const level = next.gear.equipped[bestSlot]?.upgradeLevel ?? 0;
+      if (level > attr.maxUpgradeLevelBySlot[bestSlot]) {
+        attr.maxUpgradeLevelBySlot[bestSlot] = level;
+      }
       for (const event of upgraded.events) {
-        if (event.type === 'milestoneReached') attr.milestones += 1;
+        if (event.type === 'milestoneReached') {
+          attr.milestones += 1;
+          attr.milestonesBySlot[event.slot] += 1;
+        }
       }
     }
 
@@ -499,6 +513,8 @@ interface AttributionSummary {
   upgrades: number;
   upgradesBySlot: Record<GearSlot, number>;
   milestones: number;
+  milestonesBySlot: Record<GearSlot, number>;
+  maxUpgradeLevelBySlot: Record<GearSlot, number>;
 }
 
 function summarizeAttribution(attr: Attribution): AttributionSummary {
@@ -530,6 +546,8 @@ function summarizeAttribution(attr: Attribution): AttributionSummary {
     upgrades: attr.upgrades,
     upgradesBySlot: attr.upgradesBySlot,
     milestones: attr.milestones,
+    milestonesBySlot: attr.milestonesBySlot,
+    maxUpgradeLevelBySlot: attr.maxUpgradeLevelBySlot,
   };
 }
 
@@ -613,7 +631,9 @@ function attributionLine(result: SimResult): string {
     ` ${marker} seed ${String(result.seed).padEnd(9)} equips=${String(a.equips).padStart(3)} ` +
     `upgrades=${String(a.upgrades).padStart(3)} ` +
     `(w${a.upgradesBySlot.weapon}/r${a.upgradesBySlot.ring1 + a.upgradesBySlot.ring2}/n${a.upgradesBySlot.necklace}) ` +
-    `milestones=${String(a.milestones).padStart(2)}  ` +
+    `milestones=${String(a.milestones).padStart(2)} ` +
+    `(w${a.milestonesBySlot.weapon}/r${a.milestonesBySlot.ring1 + a.milestonesBySlot.ring2}/n${a.milestonesBySlot.necklace}) ` +
+    `max-lvl (w${a.maxUpgradeLevelBySlot.weapon}/r${a.maxUpgradeLevelBySlot.ring1 + a.maxUpgradeLevelBySlot.ring2}/n${a.maxUpgradeLevelBySlot.necklace})  ` +
     `drop-gross ${formatLog(a.dropGross)}  bonus-gross ${formatLog(a.bonusGross)}  ` +
     `gold-gross ${formatLog(a.goldGross)}  ` +
     `reset-loss ${a.resetLoss.toFixed(3)}  gold-net ${formatLog(a.goldNet)}  ` +

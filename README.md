@@ -292,21 +292,31 @@ Current observed result (5 sweep seeds, `npm run sim` → exit 0). Every seed is
 window and the canonical seed is inside its stricter comfortable range:
 
 ```
-seed     12345: soft 6.18 min st30  hard 49.54 min st50  dNet 98.8%  dGross 87.4%  [DROPS-PRIMARY]
-seed         1: soft 6.14 min st30  hard 43.90 min st50  dNet 98.8%  dGross 84.7%  [DROPS-PRIMARY]
-seed       999: soft 6.10 min st30  hard 45.88 min st50  dNet 99.6%  dGross 86.2%  [DROPS-PRIMARY]
-seed    424242: soft 5.97 min st30  hard 45.45 min st50  dNet 99.6%  dGross 87.4%  [DROPS-PRIMARY]
-seed  20250925: soft 5.72 min st30  hard 45.46 min st50  dNet 98.3%  dGross 86.7%  [DROPS-PRIMARY]
-soft 6.00 min target ±20% → actual 6.18 min (delta +2.9%)  [PASS]
-hard 54.00 min target ±20% → actual 49.54 min (delta -8.3%)  [PASS]
+seed     12345: soft 6.21 min st30  hard 50.25 min st50  dNet 97.4%  dGross 91.3%  [DROPS-PRIMARY]
+seed         1: soft 6.21 min st30  hard 45.27 min st50  dNet 98.6%  dGross 91.2%  [DROPS-PRIMARY]
+seed       999: soft 6.18 min st30  hard 46.80 min st50  dNet 98.6%  dGross 91.2%  [DROPS-PRIMARY]
+seed    424242: soft 6.02 min st30  hard 45.01 min st50  dNet 98.3%  dGross 91.4%  [DROPS-PRIMARY]
+seed  20250925: soft 5.76 min st30  hard 45.81 min st50  dNet 97.5%  dGross 91.0%  [DROPS-PRIMARY]
+soft 6.00 min target ±20% → actual 6.21 min (delta +3.5%)  [PASS]
+hard 54.00 min target ±20% → actual 50.25 min (delta -6.9%)  [PASS]
 PACING OK
 ```
 
 Raw milestone snapshot (canonical seed):
 
 ```
-soft check   t=6.18min  stage=30  autoDps=1701    clickDamage=6801
-hard wall    t=49.54min stage=50  autoDps=290984  clickDamage=1163933
+soft check   t=6.21min  stage=30  autoDps=1709    clickDamage=6834
+hard wall    t=50.25min stage=50  autoDps=291265  clickDamage=1165054
+```
+
+Upgrade milestones now genuinely fire (5 sweep seeds, after the Option A retune):
+
+```
+seed     12345: upgrades 95 (w86/r9/n0)   milestones 21 (w18/r3/n0)   max item level (w8/r9/n0)
+seed         1: upgrades 114 (w101/r6/n7) milestones 23 (w19/r2/n2)   max item level (w9/r6/n7)
+seed       999: upgrades 96 (w96/r0/n0)   milestones 17 (w17/r0/n0)   max item level (w9/r0/n0)
+seed    424242: upgrades 94 (w94/r0/n0)   milestones 19 (w19/r0/n0)   max item level (w9/r0/n0)
+seed  20250925: upgrades 100 (w87/r13/n0) milestones 20 (w16/r4/n0)   max item level (w8/r12/n0)
 ```
 
 **Drops are the primary power lever.** Gear stats are **exponential in item level**
@@ -323,17 +333,19 @@ state getters, so an exponential item remains an exponential *item* without lett
 multiplicative bonus explode. Equipping each new drop is the power jump. Enemy HP grows faster
 (`hpGrowth = 1.42` vs player power ≈1.28×/stage)
 before the bounded crit/necklace multipliers, so the fall-behind — and therefore the walls — is
-designed in. Gold is a **minor smoothing lever**: `upgradeStatMultiplier = 1.05` with steep costs
-(`upgradeCostGrowth = 6`) and flat gold (`goldGrowth = 1.0`) means only ≈0.7 upgrade levels are
-affordable per equip, and equipping a new drop resets `upgradeLevel` to 0 (cheap next to the
-≈28% item-level jump). Free-path choices grant a fixed number of upgrade levels rather than
+designed in. Gold is a **minor smoothing lever** on a **flat, legible curve**:
+`upgradeCostBase = 3`, `upgradeCostGrowth = 1.25` (so a run affords a steady stream of levels instead
+of two unaffordable ones), and `upgradeStatMultiplier = 1.01` — a ~1% nudge per level that stays far
+below the ×1.283 item-level drop, so a newer drop still beats any affordable upgrade stack and the
+weapon keeps tracking the stage. `goldGrowth = 1.0` stays flat; equipping a new drop resets
+`upgradeLevel` to 0. Free-path choices grant a fixed number of upgrade levels rather than
 stage-scaled gold. **Upgrade milestones** add a visible step every `UPGRADE_MILESTONE_INTERVAL`
 (**3**) levels in one item: a small boost to that slot's *capped* stat (weapon → power,
 rings → crit, necklace → gold). They are **derived from `upgradeLevel` on read** — no new save
 field, so the schema stays at version 4 — and they feed the *same* clamped aggregations as ordinary
-gear, so they can never exceed a cap. The interval is 3 rather than 5 because costs grow ×6 against
-flat gold: measured per-run peaks of an item's `upgradeLevel` are 2–7 across the sweep seeds, so an
-interval of 5 would be unreachable content. See `engine-core/src/balance.ts`.
+gear, so they can never exceed a cap. The flat curve is what makes the every-3-levels step
+reachable: measured per-item peaks are now **8–12** levels (was 2–7), so ~17–23 milestone events
+fire per run across the sweep seeds. See `engine-core/src/balance.ts`.
 
 The **power-attribution ledger** in `sim/src/sim.ts` proves the split exactly. The equipped
 stat's log is `ln(factor) + (itemLevel − 1)·ln(gearGrowth) + upgradeLevel·ln(upgradeStatMultiplier)`,
@@ -345,12 +357,13 @@ upgrades that earned it. Ring/necklace equips are
 is counted with the weapon's drop gain; only gold-funded upgrade power counts as gold. Each
 equip resets the gold-funded `upgradeLevel` to 0, so the upgrade power bought with gold is
 destroyed by the swap. Charging that reset loss to the lever it came from
-(`goldNet = goldGross − resetLoss`) keeps gold's **net** contribution near zero while drops carry
-**≈98–100% of net log-power growth**. The ledger reports both conventions unambiguously: **drops
-98.3–99.6% of NET** log-power growth and **≈84.7–87.4% of GROSS** (drops against raw gold purchased).
-On the sweep seeds `goldNet` is a small positive `+0.049…+0.202` (a couple of milestones and a few
-ring upgrades are not wiped by an equip), and the free `wait` grant is ≈4.5–13.5% — a transient
-smoothing contribution, not a net power source.
+(`goldNet = goldGross − resetLoss`) keeps gold's **net** contribution small while drops carry
+**≈97–99% of net log-power growth**. The ledger reports both conventions unambiguously: **drops
+97.4–98.6% of NET** log-power growth and **≈91.0–91.4% of GROSS** (drops against raw gold purchased).
+On the sweep seeds `goldNet` is a small positive `+0.169…+0.318` (a steady stream of cheap,
+mostly-reset upgrades plus a few persistent ring/necklace levels), and the free `wait` grant is
+≈0.4% — a transient smoothing contribution, not a net power source (the grant is denominated in
+upgrade *levels*, so a flatter curve makes the same two free levels worth less gold, not less power).
 
 ---
 
@@ -383,9 +396,9 @@ This is a prototype, and the honest edges matter:
   not (it scores every slot by its real power gain and skips zero-gain upgrades).
   **Gates: `typecheck` 0, `test` 126/126, `sim` PACING OK (exit 0), `build` 0, `smoke` 13/13.**
 - **A single low-item-level weapon upgrade may not move the HUD DPS readout.** Integer
-  flooring plus a ×1.05 upgrade means a level-1 weapon's first several upgrades leave
-  `autoDps` unchanged; the observable power jump now comes from equipping a newer drop.
-  No engine change — flooring is intended.
+  flooring plus a ×1.01 upgrade means a level-1 weapon's first several upgrades leave
+  `autoDps` unchanged; the observable power jump now comes from equipping a newer drop
+  (and the every-3-levels milestone). No engine change — flooring is intended.
 - **`resolveChoice('iap')` advances one stage in the current engine semantics.** It
   sets the current enemy's HP to 0 and runs normal kill resolution, which awards gold,
   rolls a drop, and spawns the next stage (whose stage-entry checks may raise a fresh
@@ -419,9 +432,11 @@ This is a prototype, and the honest edges matter:
   measured to leapfrog the equipped weapon and push the wall from stage 50 to 59, so the drop kind
   is ring-only on purpose. Cadence is **151 s** (which lifts the canonical hard baseline to
   ~51.9 min, leaving the ~2.4–3.9 min of slack the feature consumes). Final sim: **PACING OK** —
-  canonical soft **6.18** / hard **49.54** min (both inside the comfortable ranges), all-seed hard
-  **43.90–45.90**, uptime 0.9–2.2 %, drops-primary net **98.3–99.6 %**, eq/stage 0.82–0.96. No
-  threshold, tolerance, canonical range, or assertion was changed or weakened.
+  canonical soft **6.21** / hard **50.25** min (both inside the comfortable ranges), all-seed hard
+  **45.01–46.80**, uptime 0.6–2.0 %, drops-primary net **97.4–98.6 %**, eq/stage 0.80–0.96. No
+  threshold, tolerance, canonical range, or assertion was changed or weakened. (The 2026-09-27
+  Option A gold retune later shifted the economy slightly; the Shiny knobs themselves are
+  unchanged.)
   **Gates: `typecheck` 0, `test` 126/126, `sim` PACING OK (exit 0), `build` 0, `smoke` 13/13.**
 - **Rings/necklaces are real but bounded, secondary levers.** The sim now equips them (its
   policy ranks every slot by the engine's own effective stats / global bonuses), the pacing

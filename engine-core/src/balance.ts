@@ -7,8 +7,11 @@
 // (`floor(factor * gearGrowth^(itemLevel - 1))`), so frequent gear drops are the
 // primary driver of power growth and track the exponential enemy-HP curve.
 // Gold-funded upgrades are a minor smoothing lever: a small multiplicative bump
-// (`upgradeStatMultiplier`) with steep cost growth, whose few affordable levels
-// are reset when a stronger drop is equipped.
+// (`upgradeStatMultiplier`, ~1% per level) on a FLAT-ish cost curve
+// (`upgradeCostBase` 3, `upgradeCostGrowth` 1.25), so a run affords a steady
+// stream of levels — enough for the every-3-levels milestones to fire — while
+// the total power they add stays small next to the drop stream (which replaces
+// the weapon long before an upgrade stack can rival a single extra item level).
 
 import type { GearDefinition, GearSlot, ShinyKind } from './types';
 
@@ -58,11 +61,11 @@ export const GOLD_MULTIPLIER_CAP = 0.25;
 // ---------------------------------------------------------------------------
 // Upgrade milestones — the visible "spike" between walls.
 //
-// Gold-funded upgrades are deliberately tiny (`upgradeStatMultiplier` = 1.05)
-// and their costs grow steeply (×6 per level), so a plain upgrade is a smooth,
-// almost invisible nudge. Every `UPGRADE_MILESTONE_INTERVAL` levels in a single
-// equipped item, that slot instead takes a VISIBLE step: a small extra boost to
-// the capped secondary stats (crit chance / crit damage / gold / power).
+// Gold-funded upgrades are deliberately tiny (`upgradeStatMultiplier` = 1.01)
+// on a flat cost curve, so a run buys a steady stream of levels; every
+// `UPGRADE_MILESTONE_INTERVAL` levels in a single equipped item, that slot
+// instead takes a VISIBLE step: a small extra boost to the capped secondary
+// stats (crit chance / crit damage / gold / power).
 //
 // DERIVED, NEVER PERSISTED: the bonus is a pure function of an item's
 // `upgradeLevel`, computed on read in the state getters. There is no new save
@@ -81,11 +84,12 @@ export const GOLD_MULTIPLIER_CAP = 0.25;
 // necklace's power already saturating `POWER_MULTIPLIER_CAP`) simply contributes
 // nothing to the clamped total, which is the intended ceiling.
 //
-// INTERVAL: 3, not the sketched 5. Upgrade costs grow ×6 per level against flat
-// gold income, so with the shipped economy the current item's `upgradeLevel`
-// rarely passes 2–7 (measured: per-run max 2–7 across the five sim seeds).
-// An interval of 5 is unreachable content; 3 is the smallest value that still
-// reads as "every few upgrades" and actually fires in play.
+// INTERVAL: 3, not the sketched 5. The flat Option A cost curve (base 3, growth
+// 1.25) now affords ~8–11 upgrade levels on a long-lived item, so 3 fires
+// repeatedly (~2–3 milestones per weapon life) instead of being unreachable
+// content; 5 would still leave most items with only one step. Measured after the
+// retune: 14–25 milestone events per run across the five sim seeds, per-slot
+// peak level 8–9.
 //
 // DETERMINISM: no RNG, no clock. `upgradeMilestoneCount` is a pure floor.
 // ---------------------------------------------------------------------------
@@ -303,7 +307,10 @@ export function shinySpawnRoll(roll: number): { spawns: boolean; kind: ShinyKind
 // and almost every kill drops, player power grows ≈1.28×/stage and the
 // designed fall-behind ratio (≈1.11) makes the stage-30 boss the soft check and
 // the stage-50 boss the hard wall. Gold upgrades add a small multiplicative
-// smoothing on top (1.05× per level, steep costs) and are reset by each equip.
+// smoothing on top (1.01× per level, flat-ish costs) and are reset by each equip;
+// because `gearGrowth` (1.283) still dwarfs `upgradeStatMultiplier` (1.01), a
+// newer drop beats any affordable upgrade stack, so the weapon keeps tracking
+// the stage and gold stays a minor (non-compounding) lever.
 export const BALANCE = {
   baseHp: 30,
   hpGrowth: 1.42,
@@ -321,9 +328,31 @@ export const BALANCE = {
     dpsFactor: 2,
     clickFactor: 8,
     gearGrowth: 1.283,
-    upgradeCostBase: 10,
-    upgradeCostGrowth: 6,
-    upgradeStatMultiplier: 1.05,
+    // OPTION A RETUNE (2026-09-27): a LEGIBLE, flat-ish curve.
+    //
+    // Before: base 10 / growth 6 / stat 1.05. A whole 50-stage run earns ~305
+    // kill gold + a little choice gold, so the cumulative cost (10, 70, 430 …)
+    // bought ~2 levels per run and item `upgradeLevel` peaked at 2–7 — the
+    // every-3-levels milestone channel was effectively dead content (0–2
+    // milestone events per run, measured).
+    //
+    // After: base 3 / growth 1.25 / stat 1.01. Against the same flat income this
+    // affords ~8–11 levels on an item that lives long enough, so milestones at
+    // 3 / 6 / 9 genuinely fire and repeat (measured ~14–25 milestone events per
+    // run across the five sim seeds; per-item peak 8–9).
+    //
+    // WHY THE STAT MULTIPLIER DROPPED TOO (1.05 → 1.01): gold must stay a MINOR
+    // lever, not a second exponential. A cheap curve alone lets a weapon reach
+    // `gearGrowth > upgradeStatMultiplier^L` (L ≈ 6 at 1.05), so the equipped
+    // weapon stops being replaced by the next drop and gold power compounds —
+    // pushing the hard wall below its floor. Keeping each level a ~1% nudge
+    // means a +1 item-level drop (×1.283) still beats ANY affordable upgrade
+    // stack (it takes ~25 levels at 1.01 to match one item level), so the
+    // weapon keeps tracking the stage and gold stays the smoothing lever. The
+    // per-level effect is deliberately small; the VISIBLE step is the milestone.
+    upgradeCostBase: 3,
+    upgradeCostGrowth: 1.25,
+    upgradeStatMultiplier: 1.01,
     dropChance: 0.95,
   },
   // Non-weapon gear contributions (content, never persisted). Base values are

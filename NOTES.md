@@ -128,3 +128,13 @@
 - Bag sorting / bulk sell — would need an engine action first; out of scope.
 - Number abbreviation (1.2K / 3.4M) for very large gold values — the renderer
   currently prints full integers so tests stay exact.
+- **2026-09-27 Option A gold retune (drops stay primary; milestones now fire).** Supersedes the
+  economy numbers in the entry above: `upgradeCostBase` 10→**3**, `upgradeCostGrowth` 6→**1.25**,
+  `upgradeStatMultiplier` 1.05→**1.01** (`goldGrowth` stays 1.0). Flat income and the every-kill
+  weapon replacement (`gearGrowth 1.283` >> the per-level step) still bound gold, but item
+  `upgradeLevel` now peaks at 8–12, so the every-3-levels milestone fires **17–23 times/run**
+  (was 0–2). `npm run sim` PACING OK: canonical soft 6.21 / hard 50.25; all-seed hard 45.01–46.80;
+  drops-primary net 97.4–98.6 % (down from 98.3–99.6 %, still the large majority). The weapon still
+  absorbs most upgrades because it is the only unbounded lever; rings/necklaces saturate their caps
+  early (crit mult by item level ~4), so gold there is frequently zero-gain. Sim now prints per-slot
+  milestone counts and peak levels. Schema stays v4. See `decisions.md` (2026-09-27 Option A entry).
