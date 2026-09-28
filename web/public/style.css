@@ -1,10 +1,17 @@
 /*
  * style.css — visual system for the /web renderer (Phase 4b).
  *
- * Aesthetic: "late-shift grind rig". A restrained blue-black instrument
- * housing (#08090c) with one strong ember accent (#ff9d3c) and a blood red
- * reserved exclusively for enemy health. The arena is the single bold element;
- * everything else is quiet, flat, and legible at a glance.
+ * Aesthetic: "late-shift grind rig". The `:root` block below is the FALLBACK
+ * scheme (a restrained blue-black instrument housing with a strong ember accent
+ * and a blood red reserved exclusively for enemy health). The ACTIVE THEME
+ * overrides every colour token at boot (see web/src/palette.ts), so the same
+ * layout renders a light "sunlit lawn" scheme (the `lucky` theme) without a
+ * stylesheet change. The arena is the single bold element; everything else is
+ * quiet, flat, and legible at a glance.
+ *
+ * Colours are consumed ONLY through the theme's CSS custom properties (plus
+ * decorative alpha tints derived from them with `color-mix`); the fallback
+ * `:root` block is the one place hardcoded colour literals are allowed.
  *
  * Typography: two system-only families with distinct jobs.
  *   --font-ui    system sans for labels, prose, and button text.
@@ -261,13 +268,15 @@ p {
   padding: var(--sp-6) var(--sp-4) var(--sp-5);
   border: 2px solid var(--line);
   border-radius: var(--r-lg);
-  /* Scanline texture + vignette: the arena reads as a lit screen. */
+  /* Scanline texture + vignette: the arena reads as a lit screen. The vignette
+     is built from the theme's own surfaces (not fixed hexes), so a light theme
+     gets a light arena and keeps its dark text legible. */
   background-image: repeating-linear-gradient(
       0deg,
       rgba(255, 255, 255, 0.018) 0 1px,
       rgba(255, 255, 255, 0) 1px 3px
     ),
-    radial-gradient(120% 90% at 50% 0%, #1b2130 0%, #10131a 62%, #0b0e14 100%);
+    radial-gradient(120% 90% at 50% 0%, var(--ink-600) 0%, var(--ink-700) 62%, var(--ink-900) 100%);
   color: inherit;
   font: inherit;
   text-align: center;
@@ -333,20 +342,17 @@ p {
 }
 
 /* Boss state is derived from the renderer's own `hidden` toggle on the badge,
-   so no extra class or markup is needed. */
+   so no extra class or markup is needed. The boss keeps the SAME themed arena
+   surface as a normal enemy; only the red edge/glow and the red name distinguish
+   it, so a light theme stays legible. */
 .enemy:has(.enemy__badge:not([hidden])) {
-  border-color: #7a2833;
-  background-image: repeating-linear-gradient(
-      0deg,
-      rgba(255, 255, 255, 0.018) 0 1px,
-      rgba(255, 255, 255, 0) 1px 3px
-    ),
-    radial-gradient(120% 90% at 50% 0%, #2a1420 0%, #160d13 62%, #0b0e14 100%);
-  box-shadow: inset 0 0 0 1px rgba(255, 77, 94, 0.12), inset 0 0 48px rgba(120, 10, 30, 0.4);
+  border-color: var(--danger-dim);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger-dim) 20%, transparent),
+    inset 0 0 48px color-mix(in srgb, var(--danger-dim) 35%, transparent);
 }
 
 .enemy:has(.enemy__badge:not([hidden])) .enemy__name {
-  color: #ffd2d7;
+  color: var(--danger-dim);
 }
 
 /* ==========================================================================
@@ -834,10 +840,17 @@ p {
   align-items: baseline;
   gap: var(--sp-2);
   padding: 6px 14px;
-  border: 1px solid #ff6b3d;
+  border: 1px solid var(--ember);
   border-radius: var(--r-pill);
-  background: linear-gradient(180deg, rgba(255, 107, 61, 0.24), rgba(255, 107, 61, 0.08));
-  color: #ffd0b8;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--ember) 24%, transparent),
+    color-mix(in srgb, var(--ember) 8%, transparent)
+  );
+  /* Body text token, not accent ink: the pill's plate is a low-alpha accent
+     wash over the page, so it tracks the page's luminance (light text on a dark
+     theme, dark text on a light one). */
+  color: var(--text);
 }
 
 .boost__label {
@@ -956,7 +969,7 @@ p {
 .shiny-toast {
   bottom: calc(24px + env(safe-area-inset-bottom));
   border: 1px solid var(--line-strong);
-  background: rgba(18, 21, 28, 0.96);
+  background: color-mix(in srgb, var(--ink-800) 96%, transparent);
   color: var(--text-dim);
 }
 
@@ -1028,7 +1041,12 @@ p {
   border: 1px solid var(--ember-edge);
   border-left: 4px solid var(--ember);
   border-radius: var(--r-md);
-  background: linear-gradient(180deg, rgba(255, 157, 60, 0.16), rgba(255, 157, 60, 0.04)), var(--ink-700);
+  background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--ember) 16%, transparent),
+      color-mix(in srgb, var(--ember) 4%, transparent)
+    ),
+    var(--ink-700);
   box-shadow: var(--shadow-plate);
 }
 
@@ -1037,7 +1055,7 @@ p {
   font-weight: 800;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--ember-hi);
+  color: var(--ember);
 }
 
 .advisory__body {
@@ -1056,7 +1074,7 @@ p {
   font-size: var(--fs-xs);
   font-weight: 700;
   letter-spacing: 0.01em;
-  color: #ffd257;
+  color: var(--ember);
 }
 
 /* The corresponding tag on the better bag item itself. */
@@ -1069,7 +1087,7 @@ p {
   font-weight: 800;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #ffd257;
+  color: var(--ember);
   white-space: nowrap;
 }
 
@@ -1233,7 +1251,11 @@ p {
   text-align: center;
   overflow: hidden;
   pointer-events: none;
-  background: radial-gradient(120% 80% at 50% 50%, rgba(255, 157, 60, 0.2), rgba(3, 5, 8, 0) 62%);
+  background: radial-gradient(
+    120% 80% at 50% 50%,
+    color-mix(in srgb, var(--ember) 20%, transparent),
+    rgba(3, 5, 8, 0) 62%
+  );
 }
 
 .splash__burst {
@@ -1243,8 +1265,8 @@ p {
   border-radius: 50%;
   background: repeating-conic-gradient(
     from 0deg,
-    rgba(255, 157, 60, 0.32) 0deg 5deg,
-    rgba(255, 157, 60, 0) 5deg 16deg
+    color-mix(in srgb, var(--ember) 32%, transparent) 0deg 5deg,
+    transparent 5deg 16deg
   );
   -webkit-mask: radial-gradient(circle, transparent 42%, #000 47%, #000 66%, transparent 72%);
   mask: radial-gradient(circle, transparent 42%, #000 47%, #000 66%, transparent 72%);
@@ -1268,7 +1290,7 @@ p {
   line-height: 0.98;
   letter-spacing: -0.03em;
   color: var(--text);
-  text-shadow: 0 0 30px rgba(255, 157, 60, 0.55), 0 4px 0 rgba(0, 0, 0, 0.4);
+  text-shadow: 0 0 30px color-mix(in srgb, var(--ember) 55%, transparent), 0 4px 0 rgba(0, 0, 0, 0.4);
 }
 
 .splash__desc {

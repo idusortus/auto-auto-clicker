@@ -108,9 +108,10 @@ auto-auto-clicker/
 │   │   ├── achievements.ts      # static achievement catalog + pure evaluator (ids/predicates; copy from theme)
 │   │   ├── theme/                # ALL user-facing TEXT + COLOURS (display) — see Theming
 │   │   │   ├── types.ts          # `Theme` contract incl. `palette` (leaf: imports nothing)
-│   │   │   ├── fantasy.ts        # default "Standard Fantasy RPG" theme (wording + palette, verbatim)
+│   │   │   ├── fantasy.ts        # default "Standard Fantasy RPG" theme (wording + dark ember palette)
+│   │   │   ├── lucky.ts          # second theme: Lucky the dog (light sunlit palette, dog copy)
 │   │   │   ├── contract.ts       # limits/slots + `validateTheme` + pure `validateAssetMeasurements`
-│   │   │   └── index.ts          # `ACTIVE_THEME` — the ONE-LINE theme switch
+│   │   │   └── index.ts          # `ACTIVE_THEME` + `THEMES` — the ONE-LINE theme switch
 │   │   ├── gear-stats.ts        # leaf: derived gear reads + the shared powerScore metric
 │   │   ├── advisory.ts         # leaf: upgrade/stall guidance (surfaces facts; never equips)
 │   │   ├── state.ts             # createGame / cloneGameState / derived reads / saveGame / loadGame
@@ -121,6 +122,7 @@ auto-auto-clicker/
 │   │   └── rng.ts               # seeded mulberry32 (state lives in GameState.meta.rngState)
 │   ├── scripts/
 │   │   ├── check-theme.ts        # `npm run theme:check` — validate the active theme + its on-disk art
+│   │   ├── make-placeholder-assets.ts # `npm run theme:assets -- <name>` — regenerate the 32 placeholders
 │   │   └── png.ts                # dependency-free PNG dimension reader (signature + IHDR)
 │   ├── save/
 │   │   ├── index.ts             # ./save subpath export
@@ -132,7 +134,7 @@ auto-auto-clicker/
 │   ├── index.html
 │   ├── public/
 │   │   ├── style.css            # layout + `:root` colour fallback (overridden by the theme at boot)
-│   │   └── themes/fantasy/      # 32 placeholder PNGs + README (swap for real art)
+│   │   └── themes/{fantasy,lucky}/ # 32 placeholder PNGs each + README (swap for real art)
 │   ├── src/
 │   │   ├── main.ts              # owns the clock, fixed 100 ms loop, autosave, action dispatch
 │   │   ├── renderer.ts          # pure state → DOM projection; loads theme sprites; GameEvent[] seam
@@ -238,7 +240,9 @@ export const ACTIVE_THEME: Theme = fantasy;
   block in `style.css` is kept only as a **documented fallback** (identical to `fantasy`)
   for before-boot / no-JS; the injected theme rule is written as a `<style>` element so
   the `prefers-contrast: more` override (`:root:root`) still wins for high-contrast users.
-  The default theme reproduces the original rendered colours **byte-identically**.
+  The default theme's palette values are the original colour values (T4 proved the
+  application byte-identically); T5 then moved a few previously hard-coded surfaces onto
+  tokens so a *light* palette also works — see the surface-coverage note below.
 - **Assets are a declared contract, loaded and checked.** The theme's `assets` section maps
   each required asset slot to a file name; the canonical slot names, expected pixel
   dimensions, and file-name convention live in `contract.ts` `ASSET_SLOTS` (4 gear slots ×
@@ -248,11 +252,64 @@ export const ACTIVE_THEME: Theme = fantasy;
   compares them to `ASSET_SLOTS`, so `engine-core/src` stays free of `fs`. `npm run
   theme:check` reports every missing/mis-sized file at once. The renderer loads the art as
   `/themes/<theme-name>/<file>` (path derived from the theme, never hard-coded), drawn with
-  `image-rendering: pixelated`; the committed `fantasy` art is **placeholder** blocks to be
-  replaced (see `web/public/themes/fantasy/README.md`).
+  `image-rendering: pixelated`; the committed art for each theme is **placeholder** blocks
+  to be replaced (see `web/public/themes/<theme>/README.md`).
+- **The palette covers the whole surface, not just the panels.** A second, *light* palette
+  exposed a handful of stylesheet colours that had been hard-coded rather than derived from
+  a token (the arena vignette, the boss arena tint, the escape-toast plate, the frenzy pill,
+  and the small accent badges). Those now derive from the theme tokens (`color-mix` for the
+  alpha tints), so a light theme renders legibly and the default theme keeps its own values.
+  Residual limitation (see `decisions.md`): `color-scheme` is still a fixed `dark` in the
+  stylesheet, so a light theme leaves the UA scrollbar/form chrome dark.
 - **Animation is a later phase.** Sprites are **static**; the per-frame `GameEvent[]` seam
   (`handleEvents`) is plumbed and documented but deliberately a no-op. Only the existing CSS
   motion runs, and `prefers-reduced-motion` still neutralises it.
+- **Two themes ship, and the second one proves the seam.** `fantasy` (default) and `lucky`
+  (a golden retriever × husky: `Lucky` is the player, gear slots become the Jaw / two dog
+  tags / a bandana, the enemy is the mail carrier, and the Golden Event is a squirrel). The
+  test suite validates **every** entry in `THEMES` (not just the active one), asserts both
+  themes carry the **same** achievement-id and asset-slot sets, and asserts they genuinely
+  differ — so a newly added theme is self-checking in CI and the second theme can never
+  silently rot into a copy of the first. The browser smoke suite is **theme-agnostic**: it
+  derives every expected display string and sprite URL from the active theme, so a theme
+  swap needs no test edit.
+
+### Adding a theme
+
+A theme is one `Theme` object plus one folder of art. The whole recipe:
+
+1. **Write the theme file.** Copy `engine-core/src/theme/fantasy.ts` (or the second
+   reference implementer, `engine-core/src/theme/lucky.ts`) to
+   `engine-core/src/theme/<name>.ts`, then rewrite every display string and the 19-token
+   `palette`. Keep **identity out of it**: the same achievement ids, gear
+   `definitionId`s / `GearSlot` values, enemy ids, `ShinyKind` values, asset slot names, and
+   file names. Achievement copy is keyed by the fixed ids — rewrite the **wording** only;
+   the id and the trigger the predicate implements (`engine-core/src/achievements.ts`) never
+   move, or the joke becomes a lie.
+2. **Register it.** In `engine-core/src/theme/index.ts`, import it and add it to the
+   `THEMES` array. The unit suite then validates it automatically.
+3. **Add its art folder.** The directory name MUST equal `theme.name`
+   (`web/public/themes/<name>/`). Generate the 32 contract-sized placeholders in one command
+   (dependency-free `node:zlib` encoder, per-theme hue so themes look different):
+   ```sh
+   npm run theme:assets -- <name>
+   ```
+   Replace them with real RGBA PNGs at the exact declared dimensions when you have them
+   (the folder `README.md` says how).
+4. **Flip the one line** in `engine-core/src/theme/index.ts`:
+   ```ts
+   export const ACTIVE_THEME: Theme = <name>;   // default is: fantasy
+   ```
+5. **Validate it** from the repo root:
+   ```sh
+   npm run theme:check   # text limits + id set + colour shapes + 32 files at exact size
+   npm run test          # validates ALL of THEMES, not just the active theme
+   npm run typecheck && npm run build
+   npm run smoke         # theme-agnostic: drives whichever theme is ACTIVE_THEME
+   ```
+   `theme:check` is the checklist: it reports **every** problem at once (an over-long
+   string, a renamed identity key, a bad colour, a missing or mis-sized PNG) with the exact
+   path and actual-vs-allowed value.
 
 ---
 

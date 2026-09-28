@@ -3,9 +3,38 @@
 > Cross-session memory for all agents. Update on exit; read on entry.
 
 ## Status
-**Soft-lock fix: the game SURFACES a better bag item and escalates guidance, but the PLAYER is the
-only one who ever equips — `npm run sim` is GREEN with byte-identical canonical output and no
-threshold, tolerance, canonical range, or assertion touched.** A player who equips badly can stall
+**T5 — a SECOND theme (`lucky`, a golden retriever × husky) proves the theme seam and is green on
+every gate, with `ACTIVE_THEME` left at the default `fantasy`.** `engine-core/src/theme/lucky.ts` is a
+complete `Theme`: player = Lucky; `weapon` → the Jaw, `ring1/2` → dog tags, `necklace` → bandana;
+enemy → the mail carrier (boss = the Truck); Shiny → a squirrel; gold → kibble. Its palette is a
+deliberately **light "sunlit lawn"** scheme, which exposed real seam gaps now fixed: the **browser
+smoke suite was hard-wired to fantasy copy + `/themes/fantasy/`** (now derives every expected string
+and asset URL from `ACTIVE_THEME`), and several `style.css` colours were **literals, not tokens** (the
+arena vignette, boss arena, escape-toast plate, frenzy pill, `#ffd257` accent badges, advisory
+bg/kicker, splash glow — now token-derived via `color-mix`). New `THEMES = [fantasy, lucky]` registry
+means the unit suite validates EVERY theme, asserts both carry the same achievement-id + asset-slot
+sets, and asserts they genuinely differ. Added a committed dependency-free placeholder generator
+(`npm run theme:assets -- <name>`) and the 32 `web/public/themes/lucky/*.png`; README gained an
+"Adding a theme" guide. Known residual gap: `color-scheme` is not a palette token (fixed `dark`), so a
+light theme leaves UA scrollbar/form chrome dark.
+
+Gates (this session, green on BOTH themes — fantasy default and a temporary `lucky` switch):
+- `npm run typecheck` → clean for all three workspaces.
+- `npm run test` → **191 passed (14 files), exit 0** (+10 theme tests: every theme validates, same
+  id/slot sets, themes differ).
+- `npm run sim` → **PACING OK (exit 0)** (engine untouched; identity/balance unchanged).
+- `npm run build` → exit 0 (22 modules). `npm run smoke` → **19 passed, exit 0** (theme-agnostic).
+- `npm run theme:check` → `✓ theme contract OK` for both; `lucky` limits 18/85/35/89/142 and
+  `32/32 files present at the exact size`.
+- Browser-verified in real Chromium: `lucky` body bg `rgb(244,249,234)` + dog copy + `/themes/lucky/`
+  sprites; `fantasy` unchanged (`rgb(8,9,12)`, ember, fantasy sprites).
+
+The one-line switch is `export const ACTIVE_THEME: Theme = <name>;` in
+`engine-core/src/theme/index.ts` (committed value: `fantasy`).
+
+### Prior: Soft-lock fix — surface a better bag item, the player decides (kept)
+**The game SURFACES a better bag item and escalates guidance, but the PLAYER is the
+only one who ever equips.** A player who equips badly can stall
 forever (the projection stays finite-but-slow, so no wall fires); the fix is guidance only. New leaf
 engine module `advisory.ts` exposes `getSlotUpgradeAdvisory(state, slot)` and
 `getStallAdvisory(state, stageBeganAtMs?)` (severity `none → hint → nag`, requiring BOTH a stall

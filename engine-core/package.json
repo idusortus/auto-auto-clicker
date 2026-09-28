@@ -19,7 +19,8 @@
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "theme:check": "tsx scripts/check-theme.ts"
+    "theme:check": "tsx scripts/check-theme.ts",
+    "theme:assets": "tsx scripts/make-placeholder-assets.ts"
   },
   "devDependencies": {
     "@types/node": "^22.20.4",

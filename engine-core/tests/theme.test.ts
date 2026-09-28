@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { ACTIVE_THEME, fantasy } from '../src/theme';
+import { ACTIVE_THEME, fantasy, lucky, THEMES } from '../src/theme';
 import type { Theme } from '../src/theme';
+import { ACHIEVEMENTS } from '../src/achievements';
 import {
   ASSET_SLOTS,
   LIMITS,
@@ -73,6 +74,96 @@ describe('theme contract — the active theme ships clean', () => {
         entry.length,
         `${entry.path} measured ${entry.length}, limit ${LIMITS[entry.group].max}`,
       ).toBeLessThanOrEqual(LIMITS[entry.group].max);
+    }
+  });
+});
+
+// T5 — a second implementer is only worth anything if the CONTRACT runs against
+// it. These tests validate EVERY shipped theme (not just the active one), so a
+// newly added theme is self-checking in CI and an inactive theme cannot rot.
+describe('theme contract — every shipped theme ships clean', () => {
+  it('registers the fantasy and lucky themes with unique names', () => {
+    const names = THEMES.map((theme) => theme.name);
+    expect(names).toContain('fantasy');
+    expect(names).toContain('lucky');
+    // The asset folder convention keys off the theme name, so names must be unique.
+    expect(new Set(names).size).toBe(names.length);
+  });
+
+  for (const theme of THEMES) {
+    it(`validates the "${theme.name}" theme with no problems`, () => {
+      const result = validateTheme(theme);
+      expect(result.problems).toEqual([]);
+      expect(result.ok).toBe(true);
+    });
+
+    it(`keeps every "${theme.name}" slot inside its limit`, () => {
+      for (const entry of measureTheme(theme)) {
+        expect(
+          entry.length,
+          `${theme.name}:${entry.path} measured ${entry.length}, limit ${LIMITS[entry.group].max}`,
+        ).toBeLessThanOrEqual(LIMITS[entry.group].max);
+      }
+    });
+  }
+});
+
+describe('theme contract — structural parity across themes', () => {
+  it('every theme declares exactly the same achievement id set (the code-owned set)', () => {
+    const canonical = ACHIEVEMENTS.map((achievement) => achievement.id).sort();
+    const reference = Object.keys(fantasy.achievements.catalog).sort();
+    expect(reference).toEqual(canonical);
+    for (const theme of THEMES) {
+      expect(Object.keys(theme.achievements.catalog).sort(), theme.name).toEqual(reference);
+    }
+  });
+
+  it('every theme declares exactly the same asset slot set (the declared slots)', () => {
+    const canonical = ASSET_SLOTS.map((slot) => slot.name).sort();
+    const reference = Object.keys(fantasy.assets).sort();
+    expect(reference).toEqual(canonical);
+    for (const theme of THEMES) {
+      expect(Object.keys(theme.assets).sort(), theme.name).toEqual(reference);
+    }
+  });
+});
+
+// Guard against a "second theme" that is a copy-paste of the first: the whole
+// point is different words and different colours.
+describe('theme contract — the two themes are genuinely different', () => {
+  it('differs in every palette token value', () => {
+    const reference = fantasy.palette;
+    const compared = lucky.palette;
+    const keys = Object.keys(reference) as (keyof typeof reference)[];
+    const differing = keys.filter((key) => reference[key] !== compared[key]);
+    expect(differing.length).toBe(keys.length);
+  });
+
+  it('differs across the display surface', () => {
+    expect(lucky.name).not.toBe(fantasy.name);
+    expect(lucky.ui.tapHint).not.toBe(fantasy.ui.tapHint);
+    expect(lucky.slots.display.weapon).not.toBe(fantasy.slots.display.weapon);
+    expect(lucky.shiny.name).not.toBe(fantasy.shiny.name);
+    expect(lucky.enemy.label).not.toBe(fantasy.enemy.label);
+  });
+
+  it('differs in achievement copy for every id (title+description pair)', () => {
+    for (const id of Object.keys(fantasy.achievements.catalog)) {
+      const reference = fantasy.achievements.catalog[id];
+      const compared = lucky.achievements.catalog[id];
+      expect(reference, `fantasy is missing ${id}`).toBeDefined();
+      expect(compared, `lucky is missing ${id}`).toBeDefined();
+      if (reference === undefined || compared === undefined) continue;
+      const referenceDescription =
+        typeof reference.description === 'function' ? reference.description(0) : reference.description;
+      const comparedDescription =
+        typeof compared.description === 'function' ? compared.description(0) : compared.description;
+      // A couple of idiomatic titles are reused on purpose; the COPY PAIR
+      // (title + description) must never be a verbatim copy-paste.
+      expect(
+        [compared.title, comparedDescription],
+        `${id} copy is identical to fantasy`,
+      ).not.toEqual([reference.title, referenceDescription]);
     }
   });
 });

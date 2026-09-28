@@ -41,10 +41,11 @@ describe('achievements — unlock emission', () => {
     const start = makeState({ stage: 1, enemyHp: 1 });
     const { state, events } = applyAction(start, { type: 'click' });
 
+    const firstBlood = ACHIEVEMENTS.find((achievement) => achievement.id === 'first-blood');
     expect(events).toContainEqual({
       type: 'achievementUnlocked',
       id: 'first-blood',
-      title: 'First Blood',
+      title: firstBlood?.title,
     });
     expect(state.meta.achievements).toContain('first-blood');
   });

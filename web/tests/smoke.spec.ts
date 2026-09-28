@@ -1,5 +1,6 @@
 import { expect, test as base } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
+import { ACTIVE_THEME, getMilestoneInfo } from '@auto-auto-clicker/engine-core';
 
 // Phase 5 — mobile-viewport smoke test for the /web host.
 //
@@ -8,6 +9,11 @@ import type { Locator, Page } from '@playwright/test';
 // behaviour: DOM hooks, HP/upgrade/dps readouts, gold spending, and touch-target
 // geometry. Gameplay numbers are read from the DOM, never hard-coded, so a
 // balance change cannot make the smoke test brittle.
+//
+// They are also THEME-AGNOSTIC (T5): every expected display string and asset URL
+// is derived from the ACTIVE_THEME this build ships, so swapping the theme (one
+// line in engine-core/src/theme/index.ts) does not require editing this file.
+// Identity (testids, classes, definition ids) is still asserted literally.
 
 const MIN_TOUCH_TARGET_PX = 44;
 
@@ -98,7 +104,7 @@ test('earning gold enables a weapon upgrade that increments the counter and spen
   // is equipped. The first kill is guaranteed to drop one.
   await tapUntilVisible(enemy, equipBtn, 40);
   await equipBtn.first().click();
-  await expect(page.getByTestId('equipped')).toContainText('Weapon');
+  await expect(page.getByTestId('equipped')).toContainText(ACTIVE_THEME.slots.display.weapon);
 
   // Earn enough gold to afford the first upgrade, then bank the readouts.
   await tapUntilEnabled(enemy, upgradeBtn, 60);
@@ -164,9 +170,9 @@ test('offers one upgrade control per slot, disabled while its slot is empty', as
   for (const testId of ['upgrade-btn', 'upgrade-btn-ring1', 'upgrade-btn-ring2', 'upgrade-btn-necklace']) {
     await expect(page.getByTestId(testId)).toBeDisabled();
   }
-  await expect(page.getByTestId('upgrade-level')).toHaveText('—');
-  await expect(page.getByTestId('upgrade-level-ring1')).toHaveText('—');
-  await expect(page.getByTestId('upgrade-cost')).toHaveText('—');
+  await expect(page.getByTestId('upgrade-level')).toHaveText(ACTIVE_THEME.ui.placeholder);
+  await expect(page.getByTestId('upgrade-level-ring1')).toHaveText(ACTIVE_THEME.ui.placeholder);
+  await expect(page.getByTestId('upgrade-cost')).toHaveText(ACTIVE_THEME.ui.placeholder);
 
   expect(consoleErrors).toEqual([]);
 });
@@ -181,13 +187,17 @@ test('a non-weapon slot upgrades independently of the weapon', async ({ page, co
 
   const ringBtn = page.getByTestId('upgrade-btn-ring1');
   await expect(ringBtn).toBeEnabled();
-  await expect(page.getByTestId('upgrade-level-ring1')).toHaveText('Lv 0');
+  await expect(page.getByTestId('upgrade-level-ring1')).toHaveText(
+    ACTIVE_THEME.ui.upgradeRow.level('0'),
+  );
 
   await ringBtn.click();
 
   // Only the ring is upgraded; the weapon's level is untouched (per-slot choice).
-  await expect(page.getByTestId('upgrade-level-ring1')).toHaveText('Lv 1');
-  await expect(page.getByTestId('upgrade-level')).toHaveText('Lv 0');
+  await expect(page.getByTestId('upgrade-level-ring1')).toHaveText(
+    ACTIVE_THEME.ui.upgradeRow.level('1'),
+  );
+  await expect(page.getByTestId('upgrade-level')).toHaveText(ACTIVE_THEME.ui.upgradeRow.level('0'));
 
   expect(consoleErrors).toEqual([]);
 });
@@ -219,10 +229,24 @@ test('crossing an upgrade milestone shows a card badge and a non-blocking flouri
   }
 
   await expect(badge).toBeVisible();
-  await expect(badge).toContainText('★ ×1');
+  // The badge/flourish copy is theme-owned and the count/bonus are engine-owned,
+  // so build the expected strings from the SAME getters the renderer uses — no
+  // display copy is hard-coded here.
+  const weaponLevel = await readUpgradeLevel(page);
+  const milestone = getMilestoneInfo('weapon', weaponLevel);
+  const count = String(milestone.achievedCount);
+  await expect(badge).toHaveText(
+    ACTIVE_THEME.slots.milestone.badge(count, milestone.bonusDescription),
+  );
   // The step change is announced, not just the number.
   await expect(flourish).toBeVisible();
-  await expect(flourish).toContainText('milestone');
+  await expect(flourish).toContainText(
+    ACTIVE_THEME.slots.milestone.flourish(
+      ACTIVE_THEME.slots.display.weapon,
+      count,
+      milestone.bonusDescription,
+    ),
+  );
 
   expect(consoleErrors).toEqual([]);
 });
@@ -243,11 +267,13 @@ test('unlocking an achievement shows a splash and increments the count', async (
   await expect(count).toHaveText('0');
   expect(await page.getByTestId('achievement-item').count()).toBeGreaterThanOrEqual(18);
 
-  // The first tap deals click damage, which unlocks "Finger Guns".
+  // The first tap deals click damage, which unlocks the `first-click` achievement.
+  const firstClick = ACTIVE_THEME.achievements.catalog['first-click'];
+  expect(firstClick).toBeDefined();
   await enemy.click();
 
   await expect(splash).toBeVisible();
-  await expect(splashTitle).toHaveText('Finger Guns');
+  await expect(splashTitle).toHaveText(firstClick!.title);
   await expect(count).toHaveText('1');
 
   // The shelf marks exactly one entry unlocked.
@@ -280,7 +306,7 @@ test('locked achievements are hidden by default and revealed by the toggle', asy
   await expect(empty).toBeVisible();
   await expect(toggle).toBeVisible();
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
-  await expect(toggle).toContainText('Show hidden');
+  await expect(toggle).toContainText(ACTIVE_THEME.achievements.shelf.showDefault);
   await expect(visibleItems).toHaveCount(0);
 
   const total = await page.getByTestId('achievement-item').count();
@@ -289,10 +315,10 @@ test('locked achievements are hidden by default and revealed by the toggle', asy
   // Reveal: the locked entries become visible and tease as ??? / Locked.
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-  await expect(toggle).toContainText('Hide hidden');
+  await expect(toggle).toContainText(ACTIVE_THEME.achievements.shelf.hide);
   await expect(visibleItems).toHaveCount(total);
   await expect(empty).toBeHidden();
-  await expect(visibleItems.first()).toContainText('???');
+  await expect(visibleItems.first()).toContainText(ACTIVE_THEME.achievements.shelf.teaser);
 
   // Hide again — back to the collapsed default, empty state restored.
   await toggle.click();
@@ -481,7 +507,7 @@ test('tapping a drop Shiny banks a ring and shows the claim flourish', async ({
   const shiny = page.getByTestId('shiny');
   const bagCount = page.locator('[data-role="bag-count"]');
   await expect(shiny).toBeVisible();
-  await expect(shiny).toContainText('Ring goblin!');
+  await expect(shiny).toContainText(ACTIVE_THEME.shiny.kind.drop);
   await expect(bagCount).toHaveText('0');
 
   // Direct dispatch for the same reason as the cache test above.
@@ -492,7 +518,7 @@ test('tapping a drop Shiny banks a ring and shows the claim flourish', async ({
   await expect(bagCount).toHaveText('1');
   // ...and the claim flourish names the reward (not the generic message).
   await expect(page.getByTestId('shiny-flourish')).toBeVisible();
-  await expect(page.getByTestId('shiny-flourish')).toContainText('Ring grabbed');
+  await expect(page.getByTestId('shiny-flourish')).toContainText(ACTIVE_THEME.shiny.dropClaim);
   expect(consoleErrors).toEqual([]);
 });
 
@@ -511,7 +537,7 @@ test('tapping a frenzy Shiny shows the FRENZY boost pill', async ({ page, consol
   await shiny.dispatchEvent('click');
 
   await expect(boostPill).toBeVisible();
-  await expect(boostPill).toContainText('FRENZY');
+  await expect(boostPill).toContainText(ACTIVE_THEME.ui.boost.label);
   await expect(shiny).toBeHidden();
   expect(consoleErrors).toEqual([]);
 });
@@ -525,7 +551,7 @@ test('a missed Shiny leaves with a snarky, non-blocking toast', async ({ page, c
 
   // The Shiny is briefly present, then the engine expires it with no penalty.
   await expect(page.getByTestId('shiny-toast')).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByTestId('shiny-toast')).toContainText('got away');
+  await expect(page.getByTestId('shiny-toast')).toContainText(ACTIVE_THEME.shiny.escape);
   expect(consoleErrors).toEqual([]);
 });
 
@@ -583,11 +609,13 @@ test('a stalled player is told a better item is in the bag, and only a tap equip
   await page.clock.runFor(55_000);
 
   await expect(advisory).toBeVisible();
-  await expect(body).toContainText('Stage 39');
-  await expect(body).toContainText('no progress');
-  await expect(body).toContainText('Level 38 weapon');
-  await expect(body).toContainText('Level 34');
-  await expect(equipCallout).toContainText('Level 38');
+  // The facts are engine values (theme-independent); the sentence shape is
+  // theme-owned and validated by `npm run theme:check`.
+  await expect(body).toContainText('39'); // the stalled stage
+  await expect(body).toContainText('38'); // the better item's level
+  await expect(body).toContainText('34'); // the equipped item's level
+  await expect(body).toContainText(ACTIVE_THEME.slots.noun.weapon);
+  await expect(equipCallout).toContainText('38');
 
   // The player decides: the equipped weapon does not change until the tap.
   await expect(equipped).toContainText('level 34');
@@ -619,8 +647,8 @@ test('renders player and boss theme sprites with pixelated scaling', async ({
   await expect(player).toBeVisible();
   await expect(enemy).toBeVisible();
 
-  await expect(player).toHaveAttribute('src', /\/themes\/fantasy\/player-idle\.png$/);
-  await expect(enemy).toHaveAttribute('src', /\/themes\/fantasy\/boss-grunt-idle\.png$/);
+  await expect(player).toHaveAttribute('src', themeAssetUrl('player-idle'));
+  await expect(enemy).toHaveAttribute('src', themeAssetUrl('boss-grunt-idle'));
   await expect(player).toHaveCSS('image-rendering', 'pixelated');
   await expect(enemy).toHaveCSS('image-rendering', 'pixelated');
 
@@ -638,7 +666,7 @@ test('renders the Shiny sprite for the active kind', async ({ page, consoleError
   const shiny = page.getByTestId('shiny');
   const sprite = page.getByTestId('shiny-sprite');
   await expect(shiny).toBeVisible();
-  await expect(sprite).toHaveAttribute('src', /\/themes\/fantasy\/shiny-drop\.png$/);
+  await expect(sprite).toHaveAttribute('src', themeAssetUrl('shiny-drop'));
   await expect(sprite).toHaveCSS('image-rendering', 'pixelated');
 
   expect(consoleErrors).toEqual([]);
@@ -651,12 +679,19 @@ function parseLeadingInt(text: string | null): number {
   return Number(match[0]);
 }
 
-/** Read the equipped weapon's upgrade level from the "upgrades N" card line. */
+/**
+ * The expected `src` for a theme asset slot, derived from the ACTIVE_THEME —
+ * the directory is the theme's own name and the file name is its `assets` map,
+ * so the assertion follows a theme swap instead of pinning `fantasy`.
+ */
+function themeAssetUrl(slot: string): RegExp {
+  return new RegExp(`/themes/${ACTIVE_THEME.name}/${ACTIVE_THEME.assets[slot]}$`);
+}
+
+/** Read the equipped weapon's upgrade level from the per-slot level readout. */
 async function readUpgradeLevel(page: import('@playwright/test').Page): Promise<number> {
-  const text = await page.getByTestId('equipped').innerText();
-  const match = text.match(/upgrades (\d+)/);
-  if (match === null) throw new Error(`no upgrade level found in ${JSON.stringify(text)}`);
-  return Number(match[1]);
+  const text = await page.getByTestId('upgrade-level').textContent();
+  return parseLeadingInt(text);
 }
 
 /** Tap the enemy until `target` becomes visible (bounded, then a real assertion). */
