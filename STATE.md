@@ -3,7 +3,30 @@
 > Cross-session memory for all agents. Update on exit; read on entry.
 
 ## Status
-**Option A gold retune: gold is now a MINOR but LEGIBLE lever, and the every-3-levels milestone
+**Soft-lock fix: the game SURFACES a better bag item and escalates guidance, but the PLAYER is the
+only one who ever equips — `npm run sim` is GREEN with byte-identical canonical output and no
+threshold, tolerance, canonical range, or assertion touched.** A player who equips badly can stall
+forever (the projection stays finite-but-slow, so no wall fires); the fix is guidance only. New leaf
+engine module `advisory.ts` exposes `getSlotUpgradeAdvisory(state, slot)` and
+`getStallAdvisory(state, stageBeganAtMs?)` (severity `none → hint → nag`, requiring BOTH a stall
+window and a strictly better bag item). Both rank candidates with the ONE shared metric
+`powerScore`/`scoreWithEquip`, now moved into the leaf `gear-stats.ts` and consumed by the sim — so
+the advisory can never recommend a downgrade. Stall detection adds **no persisted state**: `main.ts`
+tracks the stage anchor in memory and passes it via `render(state, { stageBeganAtMs })`; **schema
+stays v4**, `DEFAULT_SAVE_KEY` unchanged. `/web` shows a quiet badge (any upgrade) and, at `nag`, a
+prominent inline "Bag check" callout whose single button dispatches the EXISTING `equip` action.
+Nothing is ever auto-equipped.
+
+Gates (this session):
+- `npm run typecheck` → clean for all three workspaces (`engine-core`, `web`, `sim`).
+- `npm run test` → **141 passed (12 files), exit 0** (new `advisory.test.ts`, 12 tests).
+- `npm run sim` → **PACING OK (exit 0).** Canonical sections **byte-identical** to pre-change
+  (`diff` clean): canonical soft 6.21 / hard 50.25; all-seed soft 5.76–6.21, hard 45.01–46.80;
+  drops-primary net 97.4–98.6%.
+- `npm run build` → exit 0. `npm run smoke` → **14 passed, exit 0** (new advisory test).
+
+### Prior: Option A gold retune (kept)
+**Gold is now a MINOR but LEGIBLE lever, and the every-3-levels milestone
 system genuinely fires — `npm run sim` is GREEN with no threshold, tolerance, canonical range,
 or assertion touched.** The cost curve flattened (`upgradeCostBase` 10→**3**, `upgradeCostGrowth`
 6→**1.25**) and each level became a smaller nudge (`upgradeStatMultiplier` 1.05→**1.01**), so a run
@@ -117,10 +140,12 @@ the canonical comfortable ranges / the drops-primary gate.
 - **No player HP / armor / dodge / enemy attacks** — explicitly deferred (see `NOTES.md`).
 
 ## Recent Decisions
-See `decisions.md`. Most recent: 2026-09-27 "Phase C — gold becomes an allocation decision:
-per-slot upgrade controls + derived milestone steps". Also authoritative: "Option 3: Shinies felt
-but WALL-NEUTRAL — tempo + gold + a guaranteed ring drop", "Fix a real wall-projection bug" (the
-leak fix, kept), the Phase 3 sim-policy/caps and /web splash entries, "Break the
+See `decisions.md`. Most recent: 2026-09-28 "Soft-lock fix: surface a better bag item, let the
+PLAYER decide (never auto-equip)". Also authoritative: 2026-09-28 "Audit corrections: sim
+policy-sensitivity diagnostic + documented unarmed projection degeneracy", 2026-09-27 "Phase C — gold
+becomes an allocation decision: per-slot upgrade controls + derived milestone steps", "Option 3:
+Shinies felt but WALL-NEUTRAL — tempo + gold + a guaranteed ring drop", "Fix a real wall-projection
+bug" (the leak fix, kept), the Phase 3 sim-policy/caps and /web splash entries, "Break the
 `state ↔ achievements` import cycle via a `gear-stats.ts` leaf", "Golden Events (Shinies):
 spawn/claim/boost engine slice, save v4", "Save schema v3", and the 2026-09-26 economy reversal.
 

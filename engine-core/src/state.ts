@@ -49,6 +49,8 @@ export {
   getGearStats,
   getGlobalBonuses,
   isUnarmed,
+  powerScore,
+  scoreWithEquip,
   sustainedActiveDps,
 } from './gear-stats';
 

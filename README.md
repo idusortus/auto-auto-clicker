@@ -57,7 +57,12 @@ announces itself with a brief, non-blocking **flourish** and a `★ ×N` badge o
 bonus is *derived* from the upgrade level (nothing new is saved). Progress unlocks ~2 dozen snarky
 **achievements** (persisted by id), each
 with a brief over-the-top **splash** (non-blocking — it never pauses the simulation; tap to
-dismiss early) and an **achievements shelf** showing unlocked vs `???` entries. Occasionally a
+dismiss early) and an **achievements shelf** showing unlocked vs `???` entries. If you leave a strictly better item for a
+slot sitting in your bag, the game **tells you** — a quiet `↑ Better … in your bag` badge on the
+equipped card (plus a `↑ Better` tag on the item itself) appears whenever one exists, and if you make
+**no stage progress for a while** it escalates to a prominent **Bag check** callout that states the
+facts (the stage, how long you've been stuck, the item's level, and roughly how much stronger it is).
+It **never equips anything for you**: you tap the callout's **Equip** button to decide. Occasionally a
 **Stray Goblin** (a "Golden Event") wanders across the arena carrying something shiny — tap it
 within its short window for one of **three** bonus rewards: a short/rare **FRENZY** damage
 multiplier (a visibly faster burst), a guaranteed **ring drop** at your current stage into your
@@ -89,7 +94,8 @@ auto-auto-clicker/
 │   │   ├── balance.ts           # every gameplay number + economy formula (the one tuner file)
 │   │   ├── content.ts           # GearDefinition / EnemyDefinition catalog (never persisted)
 │   │   ├── achievements.ts      # static achievement catalog + pure evaluator (never persisted)
-│   │   ├── gear-stats.ts        # leaf: getGearStats / getCritStats / getGlobalBonuses (derived gear reads)
+│   │   ├── gear-stats.ts        # leaf: derived gear reads + the shared powerScore metric
+│   │   ├── advisory.ts         # leaf: upgrade/stall guidance (surfaces facts; never equips)
 │   │   ├── state.ts             # createGame / cloneGameState / derived reads / saveGame / loadGame
 │   │   ├── advance.ts           # advance(state, deltaMs) — time-based simulation
 │   │   ├── actions.ts           # applyAction(state, action) — explicit player commands
@@ -421,6 +427,19 @@ This is a prototype, and the honest edges matter:
   the crit cap) still costs gold — the UI lets the player make that mistake; the sim's policy does
   not (it scores every slot by its real power gain and skips zero-gain upgrades).
   **Gates: `typecheck` 0, `test` 126/126, `sim` PACING OK (exit 0), `build` 0, `smoke` 13/13.**
+- **A soft-lock is surfaced, never auto-fixed.** If you equip a weak item while a strictly better one
+  sits in your bag, the projection can stay finite-but-slow and no wall fires — so the engine reports
+  the opportunity instead of acting on it. `getSlotUpgradeAdvisory(state, slot)` compares a slot
+  against its best bag item with the SAME `powerScore` metric the sim's economy policy uses (so it can
+  never recommend a downgrade), and `getStallAdvisory(state, stageBeganAtMs)` escalates `none → hint →
+  nag` only when BOTH a stall window has elapsed AND a better item exists. `/web` turns that into a
+  modest badge and, at `nag`, a prominent **Bag check** callout whose one button dispatches the
+  existing `equip` action — **the player is the only one who ever equips.** The stall anchor is
+  host-owned and in-memory (`main.ts` records `meta.totalPlayedMs` when `combat.stage` changes and
+  passes it via `render(state, { stageBeganAtMs })`), so **no field is persisted and the save schema
+  stays v4**; with no anchor the severity is `none`, and the window measures time on the *current*
+  stage (a player inching forward on one stage while holding a better bag item is still prompted —
+  by design, and only ever suggested).
 - **A single low-item-level weapon upgrade may not move the HUD DPS readout.** Integer
   flooring plus a ×1.01 upgrade means a level-1 weapon's first several upgrades leave
   `autoDps` unchanged; the observable power jump now comes from equipping a newer drop

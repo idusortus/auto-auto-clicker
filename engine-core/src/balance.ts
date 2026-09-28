@@ -159,6 +159,29 @@ export const ACTIVE_CLICKS_PER_SECOND = 2;
 /** Maximum number of unequipped gear instances kept in the bag. */
 export const BAG_CAP = 24;
 
+// ---------------------------------------------------------------------------
+// Upgrade/stall advisory windows (guidance only — no pacing effect).
+//
+// A player who equipped a weak item while a strictly better one sits in the bag
+// can stall indefinitely (the projection stays finite-but-slow, so no wall
+// fires). The engine SURFACES the facts and lets the PLAYER decide; it never
+// auto-equips. These two windows drive how loudly the facts are stated:
+//   - STALL_HINT_MS: after this much time with NO stage progress (measured from
+//     the host-supplied stage anchor) the advisory escalates to `hint`.
+//   - STALL_NAG_MS:  after this much time the advisory escalates to `nag`, which
+//     the renderer turns into a prominent callout the player can act on.
+// Both conditions (stalled AND a better item available) are always required, so
+// a legitimately-walled player is never nagged. These are presentation
+// thresholds, not economy numbers, and they never enter the pacing sim.
+// ---------------------------------------------------------------------------
+
+/** No stage progress for this long + a better item available → `hint`. */
+export const STALL_HINT_MS = 15_000;
+
+/** No stage progress for this long + a better item available → `nag`. */
+export const STALL_NAG_MS = 45_000;
+
+
 /**
  * Dropped gear spawns at `max(1, stage - DROP_LEVEL_OFFSET)`.
  *

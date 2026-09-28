@@ -275,6 +275,8 @@ const SAVE_KEY = 'auto-auto-clicker.save.v1';
 interface InjectedGear {
   itemLevel: number;
   upgradeLevel: number;
+  /** Bag items only: the gear definition id (defaults to 'weapon'). */
+  definitionId?: string;
 }
 
 interface InjectedState {
@@ -284,6 +286,9 @@ interface InjectedState {
   gold?: number;
   weapon?: InjectedGear | null;
   ring1?: InjectedGear | null;
+  stage?: number;
+  enemyHp?: number;
+  bag?: InjectedGear[];
 }
 
 /** A persisted gear instance (SOURCE fields only). */
@@ -311,7 +316,7 @@ function injectedSave(options: InjectedState): unknown {
         achievements: [],
       },
       player: { gold: options.gold ?? 0 },
-      combat: { stage: 1, enemyHp: 30, damageCarry: 0 },
+      combat: { stage: options.stage ?? 1, enemyHp: options.enemyHp ?? 30, damageCarry: 0 },
       gear: {
         equipped: {
           weapon: options.weapon ? injectedInstance('test-weapon', 'weapon', options.weapon) : null,
@@ -319,7 +324,9 @@ function injectedSave(options: InjectedState): unknown {
           ring2: null,
           necklace: null,
         },
-        bag: [],
+        bag: (options.bag ?? []).map((gear, index) =>
+          injectedInstance(`test-bag-${index}`, gear.definitionId ?? 'weapon', gear),
+        ),
         nextInstanceId: 1,
       },
       choices: { pending: null },
@@ -443,6 +450,62 @@ test('the Shiny meets the 44px touch-target minimum', async ({ page, consoleErro
   if (box === null) throw new Error('shiny has no bounding box');
   expect(box.width).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
   expect(box.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
+  expect(consoleErrors).toEqual([]);
+});
+
+/* ---------------------------------------------------------------------------
+ * Upgrade advisory (soft-lock guidance). The engine SURFACES the facts and the
+ * player decides; nothing is ever auto-equipped. Time is controlled with the
+ * Playwright clock so the stall window elapses deterministically.
+ * ------------------------------------------------------------------------- */
+
+test('a stalled player is told a better item is in the bag, and only a tap equips it', async ({
+  page,
+  consoleErrors,
+}) => {
+  test.setTimeout(120_000);
+
+  // Control time so the stall window elapses without a real wait.
+  await page.clock.install();
+  await injectSave(page, {
+    stage: 39,
+    // Effectively unkillable within the test window, so the stage never changes.
+    enemyHp: 1e15,
+    totalPlayedMs: 0,
+    weapon: { itemLevel: 34, upgradeLevel: 0 },
+    bag: [{ itemLevel: 38, upgradeLevel: 0, definitionId: 'weapon' }],
+  });
+  await page.goto('/');
+
+  const advisory = page.getByTestId('upgrade-advisory');
+  const body = page.getByTestId('upgrade-advisory-body');
+  const equipCallout = page.getByTestId('upgrade-advisory-equip');
+  const equipped = page.getByTestId('equipped');
+
+  // The modest `hint` badge shows immediately: a better weapon IS in the bag...
+  await expect(page.getByTestId('upgrade-advisory-badge')).toBeVisible();
+  await expect(page.getByTestId('bag-upgrade-tag')).toBeVisible();
+  // ...but the prominent callout waits for the stall window to elapse.
+  await expect(advisory).toBeHidden();
+
+  // Advance sim-time with no stage progress past the nag window.
+  await page.clock.runFor(55_000);
+
+  await expect(advisory).toBeVisible();
+  await expect(body).toContainText('Stage 39');
+  await expect(body).toContainText('no progress');
+  await expect(body).toContainText('Level 38 weapon');
+  await expect(body).toContainText('Level 34');
+  await expect(equipCallout).toContainText('Level 38');
+
+  // The player decides: the equipped weapon does not change until the tap.
+  await expect(equipped).toContainText('level 34');
+  await equipCallout.click();
+
+  // The player's tap dispatched the EXISTING equip action.
+  await expect(equipped).toContainText('level 38');
+  await expect(advisory).toBeHidden();
+
   expect(consoleErrors).toEqual([]);
 });
 

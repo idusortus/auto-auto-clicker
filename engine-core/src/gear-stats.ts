@@ -161,3 +161,40 @@ export function sustainedActiveDps(state: GameState): number {
 
   return (baseAutoDps + ACTIVE_CLICKS_PER_SECOND * baseClickDamage) * factor;
 }
+
+/**
+ * The single comparable "power score" of a state: sustained active DPS (auto
+ * damage plus assumed clicks, already including the weapon and the capped
+ * crit/power bonuses) scaled by the necklace's gold bonus. Built ONLY from the
+ * getters above, so it can never drift from them.
+ *
+ * This is the ONE power metric the engine exposes for ranking gear. The sim's
+ * greedy economy policy and the upgrade advisory (`advisory.ts`) both consume
+ * it, so the advisory can never recommend a DOWNGRADE relative to the policy's
+ * own ranking — there is no second, weaker definition to disagree with.
+ *
+ * It deliberately EXCLUDES any temporary Golden-Event frenzy boost. The boost
+ * multiplies both sides of every comparison by the same positive factor, so it
+ * cannot change any ranking; excluding it keeps guidance stable while a flashy
+ * buff is running. (Before this move the sim computed the same score WITH the
+ * boost folded in; because the boost is a uniform positive factor, every policy
+ * decision is identical — proven byte-identical by `npm run sim`.)
+ */
+export function powerScore(state: GameState): number {
+  const { goldMultiplier } = getGlobalBonuses(state);
+  return sustainedActiveDps(state) * (1 + goldMultiplier);
+}
+
+/**
+ * Power score of a hypothetical state with `item` equipped in `slot`. A shallow
+ * structural copy is enough: the engine getters are pure reads and never mutate
+ * their input. Callers apply the winning equip through `applyAction` so the real
+ * state machine (bag swap, events, achievements) still runs.
+ */
+export function scoreWithEquip(state: GameState, slot: GearSlot, item: GearInstance): number {
+  const candidate: GameState = {
+    ...state,
+    gear: { ...state.gear, equipped: { ...state.gear.equipped, [slot]: item } },
+  };
+  return powerScore(candidate);
+}

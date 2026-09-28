@@ -30,6 +30,8 @@ export {
   shinySpawnDelayMs,
   shinySpawnRoll,
   SLOT_DROP_WEIGHTS,
+  STALL_HINT_MS,
+  STALL_NAG_MS,
   UPGRADE_MILESTONE_BONUS,
   UPGRADE_MILESTONE_INTERVAL,
   upgradeMilestoneCount,
@@ -65,8 +67,15 @@ export {
   getUpgradeCost,
   isUnarmed,
   loadGame,
+  powerScore,
   saveGame,
+  scoreWithEquip,
 } from './state';
+
+export {
+  getSlotUpgradeAdvisory,
+  getStallAdvisory,
+} from './advisory';
 
 export { ACHIEVEMENTS, evaluateAchievements, grantAchievements } from './achievements';
 
@@ -74,6 +83,12 @@ export { advance } from './advance';
 export { applyAction } from './actions';
 
 export type { GearStats, MilestoneBonus } from './balance';
+
+export type {
+  AdvisorySeverity,
+  SlotUpgradeAdvisory,
+  StallAdvisory,
+} from './advisory';
 
 export type { MilestoneInfo } from './state';
 

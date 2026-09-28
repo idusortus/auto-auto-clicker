@@ -6,13 +6,12 @@
 //      raises the player's TOTAL effective power, and repeat;
 //   2. equip, for EVERY occupiable slot (weapon, ring1, ring2, necklace), the
 //      bag item that most raises the player's TOTAL effective power.
-// Both steps are scored with engine getters only (`getEffectiveStats` folds the
-// weapon stats, the expected-DPS crit multiplier, the necklace power bonus, and
-// any active frenzy; `getGlobalBonuses` adds the necklace gold bonus), so a
-// candidate is ranked by its real effect and no balance math is duplicated. The
-// upgrade POLICY duplicates no balance math; only the attribution ledger
-// re-derives the crit/power factor shape (`bonusLog`) because no engine getter
-// returns the combined factor.
+// Both steps are scored with the engine's single shared `powerScore` /
+// `scoreWithEquip` metric (engine-core `gear-stats.ts`), so a candidate is
+// ranked by its real effect, no balance math is duplicated, and the upgrade
+// advisory surface (which uses the same metric) can never disagree with this
+// policy. Only the attribution ledger re-derives the crit/power factor shape
+// (`bonusLog`) because no engine getter returns the combined factor.
 //
 // A slot whose upgrade would add nothing (e.g. a ring already at the crit cap)
 // scores a zero gain and is never picked, so the policy can never dump gold into
@@ -71,6 +70,8 @@ import {
   getUpgradeCost,
   isBoss,
   isUnarmed,
+  powerScore,
+  scoreWithEquip,
 } from '@auto-auto-clicker/engine-core';
 import type {
   GameEvent,
@@ -274,35 +275,13 @@ function processEvents(
   }
 }
 
-/**
- * Total effective power of a state, built ONLY from engine getters.
- * `getEffectiveStats` already folds the weapon stats, the expected-DPS crit
- * multiplier and the necklace power bonus; scaling by the necklace gold bonus
- * values the last lever the necklace supplies. One comparable number lets the
- * greedy policy rank a candidate for ANY slot by its real effect.
- */
-function powerScore(state: GameState): number {
-  const stats = getEffectiveStats(state);
-  const { goldMultiplier } = getGlobalBonuses(state);
-  return (stats.autoDps + ACTIVE_CLICKS_PER_SECOND * stats.clickDamage) * (1 + goldMultiplier);
-}
-
-/**
- * Power score of a hypothetical state with `item` equipped in `slot`. A shallow
- * structural copy is enough: the engine getters are pure reads. The caller
- * applies the winning equip through `applyAction` so the real state machine
- * (bag swap, events, achievements) still runs.
- */
-function scoreWithEquip(state: GameState, slot: GearSlot, item: GearInstance): number {
-  const candidate: GameState = {
-    ...state,
-    gear: {
-      ...state.gear,
-      equipped: { ...state.gear.equipped, [slot]: item },
-    },
-  };
-  return powerScore(candidate);
-}
+// Total effective power of a state. The definition lives in the ENGINE
+// (`powerScore` in engine-core's `gear-stats.ts`) so the upgrade advisory and
+// this policy share exactly ONE metric and can never disagree. It folds the
+// weapon stats, the expected-DPS crit multiplier, the necklace power bonus, and
+// the necklace gold bonus into one comparable number, so the greedy policy can
+// rank a candidate for ANY slot by its real effect — and `scoreWithEquip` (also
+// from the engine) scores a hypothetical equip with the same metric.
 
 /**
  * Power score of a hypothetical state with the `slot` item upgraded ONE level.

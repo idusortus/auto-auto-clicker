@@ -107,13 +107,28 @@ function startHost(root: HTMLElement, prepared: PreparedGame): void {
   let lastSaveAt = 0;
   let saveInFlight = false;
 
+  // Stage anchor for the stall advisory: the SIM-TIME (`meta.totalPlayedMs`) at
+  // which the host last observed a NEW stage. It is host-owned and in-memory
+  // only — never persisted, so the save schema stays v4. The engine cannot
+  // reconstruct it from state, which is why it is passed into render().
+  let stageBeganAtMs: number | null = null;
+  let renderedStage: number | null = null;
+
+  function anchoredRender(): void {
+    if (renderedStage !== state.combat.stage) {
+      renderedStage = state.combat.stage;
+      stageBeganAtMs = state.meta.totalPlayedMs;
+    }
+    renderer.render(state, { stageBeganAtMs });
+  }
+
   function dispatch(action: Action): void {
     const result = applyAction(state, action);
     // Invalid or unaffordable actions return the same state object; skip the
     // render because nothing changed.
     if (result.state === state) return;
     state = result.state;
-    renderer.render(state);
+    anchoredRender();
   }
 
   const renderer = mountRenderer(root, {
@@ -124,7 +139,7 @@ function startHost(root: HTMLElement, prepared: PreparedGame): void {
     onClaim: () => dispatch({ type: 'claimEvent' }),
   });
 
-  renderer.render(state);
+  anchoredRender();
   if (prepared.offline !== null) renderer.showOfflineSummary(prepared.offline);
 
   function frame(timestamp: number): void {
@@ -144,7 +159,7 @@ function startHost(root: HTMLElement, prepared: PreparedGame): void {
       // Drop any backlog beyond the catch-up cap so a backgrounded tab cannot
       // spiral through thousands of steps on resume.
       if (steps >= MAX_CATCHUP_STEPS) accumulator = 0;
-      if (steps > 0) renderer.render(state);
+      if (steps > 0) anchoredRender();
     } else {
       // The engine freezes the world while a choice is pending.
       accumulator = 0;

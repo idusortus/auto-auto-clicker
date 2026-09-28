@@ -26,6 +26,8 @@ import {
   getMilestoneInfo,
   getProjectedKillMs,
   getSlotMilestones,
+  getSlotUpgradeAdvisory,
+  getStallAdvisory,
   getUpgradeCost,
   isBoss,
 } from '@auto-auto-clicker/engine-core';
@@ -37,6 +39,8 @@ import type {
   MilestoneInfo,
   PendingChoice,
   ShinyKind,
+  SlotUpgradeAdvisory,
+  StallAdvisory,
 } from '@auto-auto-clicker/engine-core';
 
 type ChoiceOption = PendingChoice['options'][number];
@@ -65,9 +69,20 @@ export interface OfflineSummary {
   capped: boolean;
 }
 
+/**
+ * Host-supplied context for rendering guidance that the engine cannot derive
+ * from state alone. The host watches `combat.stage` across renders and records
+ * the SIM-TIME (`meta.totalPlayedMs`) at which the current stage began; it is
+ * never persisted (the save schema stays v4). Omitted/null means "unknown", and
+ * the stall advisory then stays `none`.
+ */
+export interface RenderContext {
+  stageBeganAtMs: number | null;
+}
+
 export interface Renderer {
   /** Project the given state onto the DOM. */
-  render(state: GameState): void;
+  render(state: GameState, context?: RenderContext): void;
   /** Show the "welcome back" summary for offline progress. */
   showOfflineSummary(summary: OfflineSummary): void;
 }
@@ -114,6 +129,10 @@ interface Refs {
   shinyToast: HTMLElement;
   shinyFlourish: HTMLElement;
   milestoneFlourish: HTMLElement;
+  advisory: HTMLElement;
+  advisoryKicker: HTMLElement;
+  advisoryBody: HTMLElement;
+  advisoryEquip: HTMLButtonElement;
   upgradeRows: Record<GearSlot, UpgradeRow>;
   upgradeHint: HTMLElement;
   equipped: HTMLElement;
@@ -157,6 +176,19 @@ const SKELETON = `
       <span class="boost__label" data-role="boost-label">FRENZY</span>
       <span class="boost__timer" data-role="boost-timer"></span>
     </div>
+
+    <section class="advisory" data-testid="upgrade-advisory" data-role="upgrade-advisory" hidden aria-live="polite">
+      <p class="advisory__kicker" data-role="advisory-kicker">Bag check</p>
+      <p class="advisory__body" data-testid="upgrade-advisory-body" data-role="advisory-body"></p>
+      <button
+        class="btn btn--primary btn--small"
+        data-testid="upgrade-advisory-equip"
+        data-role="advisory-equip"
+        type="button"
+      >
+        Equip it
+      </button>
+    </section>
 
     <main class="stage">
       <button class="enemy" data-testid="enemy" type="button" aria-label="Attack the enemy">
@@ -348,7 +380,7 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     handlers.onClaim();
   });
 
-  function render(state: GameState): void {
+  function render(state: GameState, context?: RenderContext): void {
     const stats = getEffectiveStats(state);
 
     refs.gold.textContent = formatInt(state.player.gold);
@@ -366,19 +398,38 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     renderBoost(state);
     renderShiny(state);
 
-    const equippedSignature = EQUIP_SLOTS.map((slot) => gearSignature(state.gear.equipped[slot]))
-      .join('|');
+    // Guidance surface. The per-slot advisory powers the "better item in your
+    // bag" badges; the stall advisory powers the escalating callout. Both are
+    // pure engine reads and NEVER change state — the only way the equipped item
+    // changes is the player's own tap on the callout's button.
+    const advisories = {} as Record<GearSlot, SlotUpgradeAdvisory>;
+    const bestBagIds = new Set<string>();
+    for (const slot of EQUIP_SLOTS) {
+      const advisory = getSlotUpgradeAdvisory(state, slot);
+      advisories[slot] = advisory;
+      if (advisory.hasUpgrade && advisory.bestInstanceId !== null) {
+        bestBagIds.add(advisory.bestInstanceId);
+      }
+    }
+    renderAdvisory(state, context);
+
+    const equippedSignature = EQUIP_SLOTS.map(
+      (slot) => `${gearSignature(state.gear.equipped[slot])}:${advisories[slot].hasUpgrade ? '1' : '0'}`,
+    ).join('|');
     if (equippedSignature !== lastEquippedSignature) {
       lastEquippedSignature = equippedSignature;
-      refs.equipped.replaceChildren(...equippedNodes(state));
+      refs.equipped.replaceChildren(...equippedNodes(state, advisories));
     }
 
     const bagSignature = state.gear.bag
-      .map((item) => `${item.id}:${item.itemLevel}:${item.upgradeLevel}`)
+      .map(
+        (item) =>
+          `${item.id}:${item.itemLevel}:${item.upgradeLevel}:${bestBagIds.has(item.id) ? '1' : '0'}`,
+      )
       .join('|');
     if (bagSignature !== lastBagSignature) {
       lastBagSignature = bagSignature;
-      refs.bagList.replaceChildren(...state.gear.bag.map(bagItemNode));
+      refs.bagList.replaceChildren(...state.gear.bag.map((item) => bagItemNode(item, bestBagIds.has(item.id))));
       refs.bagEmpty.hidden = state.gear.bag.length > 0;
     }
     refs.bagCount.textContent = formatInt(state.gear.bag.length);
@@ -391,6 +442,60 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
 
     renderAchievements(state);
     renderChoice(state);
+  }
+
+  /**
+   * The escalating guidance callout. It states the FACTS plainly — the stage,
+   * how long with no progress, and which bag item is stronger by roughly how
+   * much — and offers ONE action the player can take: tap to equip. Nothing is
+   * ever applied automatically. The callout is inline (never an overlay), so it
+   * cannot block the tick loop or collide with the achievement splash or the
+   * Shiny messages.
+   *
+   * `hint` (an early stall) shows only the per-card badges; `nag` (the stall
+   * persists) raises this prominent callout. Both come from the engine, so /web
+   * holds no thresholds or balance numbers.
+   */
+  function renderAdvisory(state: GameState, context: RenderContext | undefined): void {
+    // A pending choice freezes the world and shows its own overlay; keep the
+    // inline callout out of the way until it is resolved.
+    const stall: StallAdvisory =
+      state.choices.pending !== null
+        ? getStallAdvisory(state)
+        : getStallAdvisory(state, context?.stageBeganAtMs ?? undefined);
+
+    if (stall.severity !== 'nag' || stall.best === null) {
+      refs.advisory.hidden = true;
+      refs.advisory.dataset.severity = 'none';
+      refs.advisoryEquip.removeAttribute('data-instance-id');
+      return;
+    }
+
+    const best = stall.best;
+    const instanceId = best.bestInstanceId;
+    if (instanceId === null) {
+      refs.advisory.hidden = true;
+      refs.advisory.dataset.severity = 'none';
+      refs.advisoryEquip.removeAttribute('data-instance-id');
+      return;
+    }
+    const item = state.gear.bag.find((candidate) => candidate.id === instanceId) ?? null;
+    if (item === null) {
+      refs.advisory.hidden = true;
+      refs.advisory.dataset.severity = 'none';
+      refs.advisoryEquip.removeAttribute('data-instance-id');
+      return;
+    }
+    const current = state.gear.equipped[best.slot];
+    const bestLevel = formatInt(item.itemLevel);
+    const currentLevel = current ? formatInt(current.itemLevel) : null;
+
+    refs.advisoryKicker.textContent = 'Bag check';
+    refs.advisoryBody.textContent = advisoryBody(stall, best, bestLevel, currentLevel);
+    refs.advisoryEquip.textContent = `Equip the Level ${bestLevel} ${advisorySlotNoun(best.slot)}`;
+    refs.advisoryEquip.setAttribute('data-instance-id', instanceId);
+    refs.advisory.dataset.severity = stall.severity;
+    refs.advisory.hidden = false;
   }
 
   /**
@@ -624,6 +729,55 @@ function milestoneBadgeTestId(slot: GearSlot): string {
   return slot === 'weapon' ? 'milestone-badge' : `milestone-badge-${slot}`;
 }
 
+/** The "better item in your bag" badge testid for a slot. */
+function upgradeBadgeTestId(slot: GearSlot): string {
+  return slot === 'weapon' ? 'upgrade-advisory-badge' : `upgrade-advisory-badge-${slot}`;
+}
+
+/** Short slot noun used in advisory copy (both rings read as "ring"). */
+function advisorySlotNoun(slot: GearSlot): string {
+  if (slot === 'weapon') return 'weapon';
+  if (slot === 'necklace') return 'necklace';
+  return 'ring';
+}
+
+/**
+ * The nag callout's fact line, assembled from engine values only: the stage,
+ * the elapsed stall, the better item's level, and roughly how much stronger it
+ * is (the engine's ratio). Snarky in tone but the facts are unambiguous, and
+ * the actionable button sits right below it.
+ */
+function advisoryBody(
+  stall: StallAdvisory,
+  best: SlotUpgradeAdvisory,
+  bestLevel: string,
+  currentLevel: string | null,
+): string {
+  const stage = formatInt(stall.stage);
+  const duration = formatStallDuration(stall.stalledMs);
+  const noun = advisorySlotNoun(best.slot);
+  if (currentLevel === null) {
+    return (
+      `Stage ${stage} — ${duration} with no progress. Your ${noun} slot is empty and a ` +
+      `Level ${bestLevel} ${noun} is sitting in your bag. It won't equip itself.`
+    );
+  }
+  const ratio = Number.isFinite(best.ratio) && best.ratio >= 1.05 ? `~${best.ratio.toFixed(1)}× ` : '';
+  return (
+    `Stage ${stage} — ${duration} with no progress. The Level ${bestLevel} ${noun} in your bag ` +
+    `is ${ratio}the power of the Level ${currentLevel} you're running. It won't equip itself.`
+  );
+}
+
+/** Stall duration: seconds under a minute, otherwise the shared duration format. */
+function formatStallDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < MS_PER_MINUTE) {
+    const seconds = Math.max(0, Math.floor(ms / MS_PER_SECOND));
+    return `${seconds} s`;
+  }
+  return formatDuration(ms);
+}
+
 /** Short slot name used in upgrade/milestone copy. */
 function upgradeSlotLabel(slot: GearSlot): string {
   if (slot === 'weapon') return 'Weapon';
@@ -663,6 +817,10 @@ function collectRefs(root: HTMLElement): Refs {
     shinyToast: req(root, '[data-testid="shiny-toast"]'),
     shinyFlourish: req(root, '[data-testid="shiny-flourish"]'),
     milestoneFlourish: req(root, '[data-testid="milestone-flourish"]'),
+    advisory: req(root, '[data-role="upgrade-advisory"]'),
+    advisoryKicker: req(root, '[data-role="advisory-kicker"]'),
+    advisoryBody: req(root, '[data-role="advisory-body"]'),
+    advisoryEquip: req(root, '[data-testid="upgrade-advisory-equip"]'),
     upgradeRows: collectUpgradeRows(root),
     upgradeHint: req(root, '[data-role="upgrade-hint"]'),
     equipped: req(root, '[data-role="equipped"]'),
@@ -698,6 +856,13 @@ function wireHandlers(refs: Refs, handlers: RendererHandlers): void {
     refs.offline.hidden = true;
   });
 
+  // The advisory's ONE action: the player taps to equip the item the engine
+  // flagged. It dispatches the EXISTING `equip` action — nothing is automatic.
+  refs.advisoryEquip.addEventListener('click', () => {
+    const instanceId = refs.advisoryEquip.getAttribute('data-instance-id');
+    if (instanceId !== null) handlers.onEquip(instanceId);
+  });
+
   // Event delegation keeps equip buttons working across bag re-renders.
   refs.bagList.addEventListener('click', (event) => {
     const target = event.target;
@@ -719,17 +884,25 @@ function gearSignature(item: GearInstance | null): string {
  * Empty non-weapon slots are omitted to keep the panel compact; the weapon slot
  * always renders (as an empty placeholder before the first weapon).
  */
-function equippedNodes(state: GameState): Node[] {
-  const cards: Node[] = [gearCard(state, 'weapon', state.gear.equipped.weapon)];
+function equippedNodes(
+  state: GameState,
+  advisories: Record<GearSlot, SlotUpgradeAdvisory>,
+): Node[] {
+  const cards: Node[] = [gearCard(state, 'weapon', state.gear.equipped.weapon, advisories.weapon)];
   for (const slot of EQUIP_SLOTS) {
     if (slot === 'weapon') continue;
     const item = state.gear.equipped[slot];
-    if (item) cards.push(gearCard(state, slot, item));
+    if (item) cards.push(gearCard(state, slot, item, advisories[slot]));
   }
   return cards;
 }
 
-function gearCard(state: GameState, slot: GearSlot, item: GearInstance | null): Node {
+function gearCard(
+  state: GameState,
+  slot: GearSlot,
+  item: GearInstance | null,
+  advisory: SlotUpgradeAdvisory,
+): Node {
   const card = document.createElement('div');
   card.className = 'card';
 
@@ -741,8 +914,29 @@ function gearCard(state: GameState, slot: GearSlot, item: GearInstance | null): 
   stats.className = 'card__stats';
   stats.textContent = item ? gearStatLine(state, slot, item) : 'Equip a drop from your bag.';
 
-  card.append(title, stats, milestoneBadge(slot, item));
+  card.append(title, stats, milestoneBadge(slot, item), upgradeBadge(slot, advisory));
   return card;
+}
+
+/**
+ * The modest `hint` badge: a non-intrusive note that a strictly better item for
+ * this slot is waiting in the bag. The engine decides whether one exists and by
+ * how much (the shared power metric); /web only renders the fact. Shown for any
+ * available upgrade, independent of the stall window, so guidance is visible
+ * early rather than only after a nag.
+ */
+function upgradeBadge(slot: GearSlot, advisory: SlotUpgradeAdvisory): HTMLElement {
+  const badge = document.createElement('p');
+  badge.className = 'card__advisory';
+  badge.setAttribute('data-testid', upgradeBadgeTestId(slot));
+  badge.setAttribute('data-slot', slot);
+  if (advisory.hasUpgrade) {
+    badge.textContent = `↑ Better ${advisorySlotNoun(slot)} in your bag`;
+    badge.hidden = false;
+  } else {
+    badge.hidden = true;
+  }
+  return badge;
 }
 
 /**
@@ -800,15 +994,22 @@ function gearStatLine(state: GameState, slot: GearSlot, item: GearInstance): str
   );
 }
 
-function bagItemNode(item: GearInstance): Node {
+function bagItemNode(item: GearInstance, isUpgrade: boolean): Node {
   const li = document.createElement('li');
-  li.className = 'bag__item';
+  li.className = `bag__item${isUpgrade ? ' bag__item--upgrade' : ''}`;
   const slot = gearDefinitionFor(item.definitionId)?.slot ?? 'weapon';
   li.setAttribute('data-slot', slot);
+  if (isUpgrade) li.setAttribute('data-upgrade', 'true');
 
   const info = document.createElement('span');
   info.className = 'bag__info';
   info.textContent = bagItemSummary(slot, item);
+
+  const tag = document.createElement('span');
+  tag.className = 'bag__tag';
+  tag.setAttribute('data-testid', 'bag-upgrade-tag');
+  tag.textContent = '↑ Better';
+  tag.hidden = !isUpgrade;
 
   const equipButton = document.createElement('button');
   equipButton.className = 'btn btn--small';
@@ -818,7 +1019,7 @@ function bagItemNode(item: GearInstance): Node {
   equipButton.setAttribute('data-slot', slot);
   equipButton.setAttribute('data-instance-id', item.id);
 
-  li.append(info, equipButton);
+  li.append(info, tag, equipButton);
   return li;
 }
 
