@@ -9,6 +9,31 @@ import type { Theme } from './types';
 export const fantasy: Theme = {
   name: 'fantasy',
 
+  // The colour scheme, VERBATIM from the stylesheet's `:root` block. `applyPalette`
+  // in `/web` sets these as CSS custom properties at boot, so the default theme
+  // reproduces the original rendered colours exactly.
+  palette: {
+    bg: '#08090c', // --ink-900
+    surface: '#11141b', // --ink-800
+    panel: '#171b24', // --ink-700
+    surfaceRaised: '#1e2330', // --ink-600
+    control: '#262c3a', // --ink-500
+    line: '#262c39', // --line
+    lineStrong: '#394152', // --line-strong
+    text: '#eef1f7', // --text
+    textDim: '#aeb7c8', // --text-dim
+    textMuted: '#98a2b8', // --text-muted
+    textDisabled: '#6b7688', // --text-disabled
+    accent: '#ff9d3c', // --ember
+    accentHi: '#ffb257', // --ember-hi
+    accentLo: '#e07d15', // --ember-lo
+    accentEdge: '#b8640a', // --ember-edge
+    accentInk: '#1c1206', // --ember-ink
+    dangerMuted: '#ff8f99', // --danger-dim
+    hpHi: '#ff6f63', // --hp-hi
+    hpLo: '#cf2a41', // --hp-lo
+  },
+
   ui: {
     hud: {
       gold: 'Gold',

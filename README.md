@@ -38,12 +38,14 @@ npm run typecheck    # typecheck all three workspaces (engine-core + web + sim)
 - **`npm run build`** runs `engine-core`'s `tsc --noEmit` (typecheck-only — the engine is
   shipped as TypeScript *source* through workspace resolution) followed by `vite build`
   for `/web` (output in `web/dist/`).
-- **`npm run theme:check`** validates the active theme against the theme contract (see
-  [Theming](#theming)) and prints a readable report — the limits table with the observed
-  maximum per group. It exits non-zero with an actionable list if a theme is missing a
-  slot, has an over-long string or template return value, references an unknown
-  achievement id, tries to rename an identity key, or has a malformed asset section. It
-  runs in CI too, via the engine unit suite.
+- **`npm run theme:check`** validates the active theme against the theme contract **and its
+  art on disk** (see [Theming](#theming)), printing a readable report — the limits table
+  with the observed maximum per group, plus `N/N files present at the exact size`. It exits
+  non-zero with an actionable list if a theme is missing a slot, has an over-long string,
+  template return value, or colour, references an unknown achievement id, tries to rename
+  an identity key, has a malformed asset section, or points at a missing or mis-sized PNG
+  (e.g. `player-idle.png is 48x48, expected 64x64`). It runs in CI too, via the engine unit
+  suite.
 
 ### How to play
 
@@ -104,10 +106,10 @@ auto-auto-clicker/
 │   │   ├── balance.ts           # every gameplay number + economy formula (the one tuner file)
 │   │   ├── content.ts           # GearDefinition / EnemyDefinition catalog (never persisted)
 │   │   ├── achievements.ts      # static achievement catalog + pure evaluator (ids/predicates; copy from theme)
-│   │   ├── theme/                # ALL user-facing TEXT (display) — see Theming
-│   │   │   ├── types.ts          # `Theme` contract (leaf: imports nothing)
-│   │   │   ├── fantasy.ts        # default "Standard Fantasy RPG" theme (current wording, verbatim)
-│   │   │   ├── contract.ts       # the declared limits/slots + `validateTheme` (build-time contract)
+│   │   ├── theme/                # ALL user-facing TEXT + COLOURS (display) — see Theming
+│   │   │   ├── types.ts          # `Theme` contract incl. `palette` (leaf: imports nothing)
+│   │   │   ├── fantasy.ts        # default "Standard Fantasy RPG" theme (wording + palette, verbatim)
+│   │   │   ├── contract.ts       # limits/slots + `validateTheme` + pure `validateAssetMeasurements`
 │   │   │   └── index.ts          # `ACTIVE_THEME` — the ONE-LINE theme switch
 │   │   ├── gear-stats.ts        # leaf: derived gear reads + the shared powerScore metric
 │   │   ├── advisory.ts         # leaf: upgrade/stall guidance (surfaces facts; never equips)
@@ -118,7 +120,8 @@ auto-auto-clicker/
 │   │   ├── loot.ts              # frequent gear drops; item level tracks the killed stage
 │   │   └── rng.ts               # seeded mulberry32 (state lives in GameState.meta.rngState)
 │   ├── scripts/
-│   │   └── check-theme.ts        # `npm run theme:check` — validate the active theme (tsx, no deps)
+│   │   ├── check-theme.ts        # `npm run theme:check` — validate the active theme + its on-disk art
+│   │   └── png.ts                # dependency-free PNG dimension reader (signature + IHDR)
 │   ├── save/
 │   │   ├── index.ts             # ./save subpath export
 │   │   ├── repository.ts        # async SaveRepository interface
@@ -127,10 +130,13 @@ auto-auto-clicker/
 │
 ├── web/                         # ▶ DISPOSABLE browser host (Vite + vanilla DOM, no framework)
 │   ├── index.html
-│   ├── public/style.css
+│   ├── public/
+│   │   ├── style.css            # layout + `:root` colour fallback (overridden by the theme at boot)
+│   │   └── themes/fantasy/      # 32 placeholder PNGs + README (swap for real art)
 │   ├── src/
 │   │   ├── main.ts              # owns the clock, fixed 100 ms loop, autosave, action dispatch
-│   │   ├── renderer.ts          # pure state → DOM projection; consumes the per-frame GameEvent[] (seam), forwards input
+│   │   ├── renderer.ts          # pure state → DOM projection; loads theme sprites; GameEvent[] seam
+│   │   ├── palette.ts           # applies `theme.palette` as CSS custom properties
 │   │   └── storage.ts           # the only module touching SaveRepository / the save clock
 │   ├── tests/smoke.spec.ts      # Playwright mobile smoke test
 │   ├── playwright.config.ts     # 390x844 / touch / DPR 3, boots the real dev server on 5173
@@ -171,6 +177,9 @@ Three npm workspaces with a strict one-way dependency direction:
 
 - **No DOM, React, React Native, or network imports.** No `document`, `window`, `fetch`,
   `WebSocket`, etc.
+- **No filesystem in `src/`.** The theme's on-disk asset check is split: `scripts/` reads
+  the PNG bytes with `node:fs`, and `src/theme/contract.ts` only *compares* measured facts
+  (`validateAssetMeasurements`, pure). The boundary scan sees `src/` and `save/` only.
 - **No clock and no RNG reads inside `advance` / `applyAction`.** There is no `Date.now()`
   and no `Math.random()` anywhere in the engine. Randomness is a seeded mulberry32 whose
   state travels inside `GameState.meta.rngState`, so the same input always produces the
@@ -221,17 +230,29 @@ export const ACTIVE_THEME: Theme = fantasy;
   above the current theme's longest rendered strings (see each group's `rationale`), so
   text stays generous while genuinely broken copy ("someone pasted a paragraph", or a
   template whose returned value exploded) fails loudly.
-- **Assets are a declared contract, not yet loaded.** The theme's `assets` section maps
-  each required asset slot to a file name; the canonical slot names and expected pixel
-  dimensions live in `contract.ts` `ASSET_SLOTS` (4 gear slots × 4 tiers + 16
-  character/spawn slots = 32). `validateTheme` checks the section is well-formed (all
-  slots present, string file names, lower-kebab-case `.png`), but **does not** require
-  the files to exist or measure them — the on-disk existence check and pixel-size
-  verification land in **T4**, the asset seam, along with actual image loading. No PNG
-  is loaded or rendered in this phase.
-- **This phase extracts text and declares the contract; it adds no rendering.** Colors,
-  pixel art, and animation are later phases; the default theme reproduces the existing
-  wording verbatim, so the rendered output is byte-identical.
+- **Colours are theme tokens that reach CSS.** The theme's `palette` (19 semantic tokens —
+  `bg`, `panel`, `text`, `textMuted`, `accent`, `dangerMuted`, `hpHi`, …) is applied by
+  `web/src/palette.ts` as the stylesheet's CSS custom properties at boot, so a swapped
+  theme retints the whole UI without touching `style.css`. Values are validated as CSS
+  colours (`#rgb`/`#rrggbb`/`#rrggbbaa`/`rgb()`/`rgba()`/`hsl()`/`hsla()`). The `:root`
+  block in `style.css` is kept only as a **documented fallback** (identical to `fantasy`)
+  for before-boot / no-JS; the injected theme rule is written as a `<style>` element so
+  the `prefers-contrast: more` override (`:root:root`) still wins for high-contrast users.
+  The default theme reproduces the original rendered colours **byte-identically**.
+- **Assets are a declared contract, loaded and checked.** The theme's `assets` section maps
+  each required asset slot to a file name; the canonical slot names, expected pixel
+  dimensions, and file-name convention live in `contract.ts` `ASSET_SLOTS` (4 gear slots ×
+  4 tiers + 16 character/spawn slots = 32). `validateTheme` checks the section is
+  well-formed; the **filesystem** check is split for purity — the CLI reads each PNG's
+  signature + IHDR dimensions (`scripts/png.ts`) and the *pure* `validateAssetMeasurements`
+  compares them to `ASSET_SLOTS`, so `engine-core/src` stays free of `fs`. `npm run
+  theme:check` reports every missing/mis-sized file at once. The renderer loads the art as
+  `/themes/<theme-name>/<file>` (path derived from the theme, never hard-coded), drawn with
+  `image-rendering: pixelated`; the committed `fantasy` art is **placeholder** blocks to be
+  replaced (see `web/public/themes/fantasy/README.md`).
+- **Animation is a later phase.** Sprites are **static**; the per-frame `GameEvent[]` seam
+  (`handleEvents`) is plumbed and documented but deliberately a no-op. Only the existing CSS
+  motion runs, and `prefers-reduced-motion` still neutralises it.
 
 ---
 

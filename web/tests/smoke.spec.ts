@@ -600,6 +600,50 @@ test('a stalled player is told a better item is in the bag, and only a tap equip
   expect(consoleErrors).toEqual([]);
 });
 
+/* ---------------------------------------------------------------------------
+ * Theme sprites. The renderer loads art from the theme's `assets` map at
+ * `/themes/<theme>/<file>`, drawn with pixelated scaling. These tests assert the
+ * URLs are theme-derived and the correct frame is chosen for the boss and Shiny.
+ * ------------------------------------------------------------------------- */
+
+test('renders player and boss theme sprites with pixelated scaling', async ({
+  page,
+  consoleErrors,
+}) => {
+  // Stage 10 is a boss stage, so the boss frame must be selected.
+  await injectSave(page, { stage: 10, enemyHp: 1e15 });
+  await page.goto('/');
+
+  const player = page.getByTestId('player-sprite');
+  const enemy = page.getByTestId('enemy-sprite');
+  await expect(player).toBeVisible();
+  await expect(enemy).toBeVisible();
+
+  await expect(player).toHaveAttribute('src', /\/themes\/fantasy\/player-idle\.png$/);
+  await expect(enemy).toHaveAttribute('src', /\/themes\/fantasy\/boss-grunt-idle\.png$/);
+  await expect(player).toHaveCSS('image-rendering', 'pixelated');
+  await expect(enemy).toHaveCSS('image-rendering', 'pixelated');
+
+  // The boss frame is the larger declared size.
+  const box = await enemy.boundingBox();
+  expect(box?.width).toBe(96);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('renders the Shiny sprite for the active kind', async ({ page, consoleErrors }) => {
+  await injectSave(page, { active: { kind: 'drop', spawnedAtMs: 0, expiresAtMs: 600_000 } });
+  await page.goto('/');
+
+  const shiny = page.getByTestId('shiny');
+  const sprite = page.getByTestId('shiny-sprite');
+  await expect(shiny).toBeVisible();
+  await expect(sprite).toHaveAttribute('src', /\/themes\/fantasy\/shiny-drop\.png$/);
+  await expect(sprite).toHaveCSS('image-rendering', 'pixelated');
+
+  expect(consoleErrors).toEqual([]);
+});
+
 /** Read the first integer from a text node, e.g. "28 / 30" -> 28. */
 function parseLeadingInt(text: string | null): number {
   const match = text === null ? null : text.match(/\d+/);

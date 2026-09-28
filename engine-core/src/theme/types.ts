@@ -13,6 +13,58 @@
 // Interpolated copy stays a FUNCTION taking the same parameters the old inline
 // template took, so a swapped theme cannot change the rendered bytes.
 
+/**
+ * The themeable colour tokens the UI renders through. Each value is a CSS colour
+ * string (`#rgb` / `#rrggbb` / `#rrggbbaa` / `rgb()` / `rgba()` / `hsl()` /
+ * `hsla()`). The host applies these as CSS custom properties on the root at boot
+ * (see `/web`), so the stylesheet's own `:root` block is only a documented
+ * fallback for when no host has run yet.
+ *
+ * The key set is derived from what the stylesheet GENUINELY consumes (the colour
+ * custom properties referenced via `var(--…)`); unused tokens are deliberately
+ * not part of the theme.
+ */
+export interface ThemePalette {
+  /** Deepest housing surface — the page background. */
+  bg: string;
+  /** Recessed housing surface above `bg`. */
+  surface: string;
+  /** Panel plate. */
+  panel: string;
+  /** Raised surface (cards, bag rows, unlocked achievements). */
+  surfaceRaised: string;
+  /** Control (button) base fill. */
+  control: string;
+  /** Hairline separator. */
+  line: string;
+  /** Stronger edge for interactive surfaces. */
+  lineStrong: string;
+  /** Primary body text. */
+  text: string;
+  /** De-emphasised text. */
+  textDim: string;
+  /** Muted label text. */
+  textMuted: string;
+  /** Disabled text. */
+  textDisabled: string;
+  /** The single accent (ember). */
+  accent: string;
+  /** Accent, brighter (highlight). */
+  accentHi: string;
+  /** Accent, darker (gradient base). */
+  accentLo: string;
+  /** Accent edge/outline. */
+  accentEdge: string;
+  /** Ink used on top of the accent. */
+  accentInk: string;
+  /** Muted danger/badge text. */
+  dangerMuted: string;
+  /** Health-bar gradient top. */
+  hpHi: string;
+  /** Health-bar gradient bottom. */
+  hpLo: string;
+}
+
 /** Human copy for one achievement, keyed by the achievement's stable id. */
 export interface AchievementCopy {
   title: string;
@@ -31,6 +83,14 @@ export interface AchievementCopy {
 export interface Theme {
   /** Short identifier for the theme (for a future picker / diagnostics). */
   name: string;
+
+  /**
+   * The colour scheme the UI renders through. Applied to the root as CSS custom
+   * properties at boot, so swapping it retints the whole UI without editing the
+   * stylesheet. The values must be valid CSS colour strings (checked at runtime
+   * by `validateTheme`, which derives the required key set from the stylesheet).
+   */
+  palette: ThemePalette;
 
   /** Chrome: HUD, panel titles, buttons, hints, overlays, formatting. */
   ui: {

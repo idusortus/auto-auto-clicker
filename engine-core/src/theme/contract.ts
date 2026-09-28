@@ -21,13 +21,12 @@
 // `npm run theme:check` to print the measured maximum per group next to each
 // limit; `measureTheme()` is the same measurement the validator performs.
 //
-// ── What T4 will add (NOT in this phase) ─────────────────────────────────────
-// T3 declares the contract only. T4 (the asset seam) will:
-//   • check each `assets[...]` file actually exists on disk (a build-time
-//     manifest or a `node:fs` CLI check), and
-//   • verify the real pixel dimensions match `ASSET_SLOTS`.
-// Neither is a hard failure here: no PNGs exist yet and this module must stay
-// pure (no filesystem).
+// ── Filesystem checks stay OUT of this module ────────────────────────────────
+// `validateTheme` checks that the `assets` section is well-formed but never
+// touches disk. The real on-disk check (file exists + PNG pixel dimensions) is
+// split: `validateAssetMeasurements` below is the PURE comparison, and
+// `engine-core/scripts/check-theme.ts` does the `node:fs` reading and feeds
+// measured facts in. `npm run theme:check` runs both.
 
 import { GEAR_SLOTS } from '../balance';
 import { CONTENT } from '../content';
@@ -48,7 +47,8 @@ export type LimitGroup =
   | 'chrome'
   | 'achievement-title'
   | 'achievement-description'
-  | 'prose';
+  | 'prose'
+  | 'color';
 
 export interface LimitRule {
   /** Maximum rendered characters allowed for a slot in this group. */
@@ -100,6 +100,14 @@ export const LIMITS: Record<LimitGroup, LimitRule> = {
       'current rendered body is 139 chars (the better-slot advisory with sample args). ' +
       'Generous headroom per the requirement that text limits stay spacious.',
   },
+  color: {
+    max: 64,
+    rationale:
+      'A palette colour value. Longest current value is 7 chars (#rrggbb); the limit ' +
+      'allows the widest legal forms the validator accepts (8-digit hex, rgb()/rgba()/' +
+      'hsl()/hsla()) with room for embedded whitespace, while still catching a value ' +
+      'that is really a paragraph.',
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -141,6 +149,27 @@ const t = (
 /** Every plain-string and template slot, excluding the dynamic catalog. */
 export const THEME_FIELDS: readonly FieldSpec[] = [
   s('name', 'label'),
+
+  // palette — the themeable colour scheme, applied to CSS custom properties.
+  s('palette.bg', 'color'),
+  s('palette.surface', 'color'),
+  s('palette.panel', 'color'),
+  s('palette.surfaceRaised', 'color'),
+  s('palette.control', 'color'),
+  s('palette.line', 'color'),
+  s('palette.lineStrong', 'color'),
+  s('palette.text', 'color'),
+  s('palette.textDim', 'color'),
+  s('palette.textMuted', 'color'),
+  s('palette.textDisabled', 'color'),
+  s('palette.accent', 'color'),
+  s('palette.accentHi', 'color'),
+  s('palette.accentLo', 'color'),
+  s('palette.accentEdge', 'color'),
+  s('palette.accentInk', 'color'),
+  s('palette.dangerMuted', 'color'),
+  s('palette.hpHi', 'color'),
+  s('palette.hpLo', 'color'),
 
   // ui — HUD, panels, overlays, formatting.
   s('ui.hud.gold', 'label'),
@@ -252,6 +281,25 @@ export const THEME_FIELDS: readonly FieldSpec[] = [
   s('achievements.shelf.locked', 'label'),
   s('achievements.shelf.empty', 'prose'),
 ];
+
+/** The palette field specs (required colour tokens + their length limit group). */
+export const PALETTE_FIELDS: readonly FieldSpec[] = THEME_FIELDS.filter((spec) =>
+  spec.path.startsWith('palette.'),
+);
+
+/**
+ * Accepted palette colour shapes: 3/4/6/8-digit hex, or a functional form
+ * (`rgb`/`rgba`/`hsl`/`hsla`). Deliberately permissive about the insides of a
+ * functional form (the browser is the real authority) but strict about the shape
+ * so a non-colour string is caught.
+ */
+export const COLOR_VALUE_PATTERN =
+  /^(?:#[0-9a-f]{3,4}|#[0-9a-f]{6}|#[0-9a-f]{8}|(?:rgb|rgba|hsl|hsla)\(\s*[^)]*\))$/i;
+
+/** True when `value` has one of the colour shapes the palette accepts. */
+export function isColorValue(value: string): boolean {
+  return COLOR_VALUE_PATTERN.test(value.trim());
+}
 
 /** Rendered length of an achievement description's sample interpolation. */
 const DESCRIPTION_SAMPLE_VALUE = 0;
@@ -389,7 +437,8 @@ export type ThemeProblemKind =
   | 'identity-key'
   | 'missing-achievement'
   | 'extra-achievement'
-  | 'bad-filename';
+  | 'bad-filename'
+  | 'bad-color';
 
 export interface ThemeProblem {
   /** Dotted path, e.g. `ui.choice.note` or `achievements.catalog.hoarder`. */
@@ -408,6 +457,8 @@ export interface ThemeStats {
   achievementIds: number;
   /** Declared asset slots required. */
   assetSlots: number;
+  /** Required palette colour tokens. */
+  paletteKeys: number;
   /** Highest rendered length observed per group. */
   groupMax: Record<LimitGroup, number>;
   /** Slots measured per group. */
@@ -468,7 +519,17 @@ function buildAllowedChildren(): Map<string, Set<string>> {
       parent = parent === '' ? segment : `${parent}.${segment}`;
     }
   };
-  for (const key of ['name', 'ui', 'slots', 'enemy', 'shiny', 'advisory', 'achievements', 'assets']) {
+  for (const key of [
+    'name',
+    'palette',
+    'ui',
+    'slots',
+    'enemy',
+    'shiny',
+    'advisory',
+    'achievements',
+    'assets',
+  ]) {
     addPath(key);
   }
   for (const key of ['title', 'catalog', 'shelf']) add('achievements', key);
@@ -643,6 +704,20 @@ function collect(theme: Theme): Collected {
     else if (length !== undefined) measured.push({ path: spec.path, group: spec.group, length });
   }
 
+  // b2. Palette colour shape. Presence/type/length are already covered by the
+  // THEME_FIELDS pass above; this only rejects a present string that is not a
+  // recognisable CSS colour.
+  for (const spec of PALETTE_FIELDS) {
+    const value = readPath(root, spec.path);
+    if (typeof value === 'string' && !isColorValue(value)) {
+      problems.push({
+        path: spec.path,
+        kind: 'bad-color',
+        message: `expected a CSS colour (#rgb/#rrggbb/#rrggbbaa/rgb()/rgba()/hsl()/hsla()) at "${spec.path}", found ${JSON.stringify(value)}`,
+      });
+    }
+  }
+
   // c. Achievement catalog completeness (exact id set, both directions).
   const catalog = readPath(root, 'achievements.catalog');
   if (catalog === undefined) {
@@ -682,7 +757,8 @@ function collect(theme: Theme): Collected {
     }
   }
 
-  // e. Assets section well-formed (filesystem/dimension existence is T4).
+  // e. Assets section well-formed. On-disk existence + pixel dimensions are
+  // checked by the CLI via `validateAssetMeasurements` (this module stays pure).
   const assets = readPath(root, 'assets');
   if (assets === undefined) {
     problems.push({
@@ -744,7 +820,14 @@ export function measureTheme(theme: Theme): MeasuredString[] {
 }
 
 function emptyGroupRecord(): Record<LimitGroup, number> {
-  return { label: 0, chrome: 0, 'achievement-title': 0, 'achievement-description': 0, prose: 0 };
+  return {
+    label: 0,
+    chrome: 0,
+    'achievement-title': 0,
+    'achievement-description': 0,
+    prose: 0,
+    color: 0,
+  };
 }
 
 /**
@@ -799,9 +882,127 @@ export function validateTheme(theme: Theme): ThemeValidationResult {
     templateFields,
     achievementIds: ACHIEVEMENT_IDS.length,
     assetSlots: ASSET_SLOTS.length,
+    paletteKeys: PALETTE_FIELDS.length,
     groupMax,
     groupCount,
   };
 
   return { ok: problems.length === 0, problems, stats };
+}
+
+// ---------------------------------------------------------------------------
+// Asset measurement validation (pure): the CLI reads the filesystem, this
+// compares the MEASURED facts against the declared contract. Keeping the
+// comparison here (and the `node:fs` reading in scripts/) keeps engine-core's
+// `src/` free of filesystem access.
+// ---------------------------------------------------------------------------
+
+/**
+ * One slot's measured facts, produced by the CLI. `width`/`height` are null when
+ * the file is absent or could not be decoded; `error` carries the human reason
+ * for an unreadable file.
+ */
+export interface AssetMeasurement {
+  /** Canonical slot name (one of `ASSET_SLOTS`). */
+  slot: string;
+  /** Path the CLI read (used verbatim in problem messages). */
+  path: string;
+  /** Whether the file exists on disk. */
+  exists: boolean;
+  /** PNG width in pixels, or null when missing/unreadable. */
+  width: number | null;
+  /** PNG height in pixels, or null when missing/unreadable. */
+  height: number | null;
+  /** Human reason when the file exists but is not a readable PNG. */
+  error: string | null;
+}
+
+export type AssetProblemKind =
+  | 'unknown-slot'
+  | 'missing-file'
+  | 'unreadable-image'
+  | 'wrong-dimensions';
+
+export interface AssetProblem {
+  slot: string;
+  path: string;
+  kind: AssetProblemKind;
+  message: string;
+}
+
+export interface AssetCheckResult {
+  ok: boolean;
+  problems: AssetProblem[];
+  /** Declared slots whose file exists and matched the declared dimensions. */
+  correct: number;
+  /** Declared slots whose file was absent. */
+  missing: number;
+  /** Declared slots present but with a different size (or unreadable). */
+  mismatched: number;
+}
+
+/**
+ * Compare measured asset facts against `ASSET_SLOTS`. Pure: it reads only its
+ * arguments, never the filesystem, never throws, and reports EVERY problem at
+ * once (a new theme learns about every missing/mis-sized file in one run).
+ */
+export function validateAssetMeasurements(
+  theme: Theme,
+  measurements: readonly AssetMeasurement[],
+): AssetCheckResult {
+  const problems: AssetProblem[] = [];
+  const bySlot = new Map<string, AssetMeasurement>();
+  for (const measurement of measurements) {
+    if (!ASSET_SLOT_NAMES.has(measurement.slot)) {
+      problems.push({
+        slot: measurement.slot,
+        path: measurement.path,
+        kind: 'unknown-slot',
+        message: `measured unknown asset slot "${measurement.slot}" (not one of the ${ASSET_SLOTS.length} declared slots)`,
+      });
+      continue;
+    }
+    bySlot.set(measurement.slot, measurement);
+  }
+
+  let correct = 0;
+  let missing = 0;
+  let mismatched = 0;
+  for (const slot of ASSET_SLOTS) {
+    const file = theme.assets[slot.name] ?? slot.file;
+    const measurement = bySlot.get(slot.name);
+    if (measurement === undefined || !measurement.exists) {
+      missing += 1;
+      problems.push({
+        slot: slot.name,
+        path: measurement?.path ?? file,
+        kind: 'missing-file',
+        message: `missing ${file} (expected ${slot.width}x${slot.height})`,
+      });
+      continue;
+    }
+    if (measurement.error !== null || measurement.width === null || measurement.height === null) {
+      mismatched += 1;
+      problems.push({
+        slot: slot.name,
+        path: measurement.path,
+        kind: 'unreadable-image',
+        message: `could not read PNG dimensions from "${measurement.path}"${measurement.error ? `: ${measurement.error}` : ''}`,
+      });
+      continue;
+    }
+    if (measurement.width !== slot.width || measurement.height !== slot.height) {
+      mismatched += 1;
+      problems.push({
+        slot: slot.name,
+        path: measurement.path,
+        kind: 'wrong-dimensions',
+        message: `${file} is ${measurement.width}x${measurement.height}, expected ${slot.width}x${slot.height}`,
+      });
+      continue;
+    }
+    correct += 1;
+  }
+
+  return { ok: problems.length === 0, problems, correct, missing, mismatched };
 }

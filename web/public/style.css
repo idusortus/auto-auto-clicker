@@ -28,7 +28,14 @@
 :root {
   color-scheme: dark;
 
-  /* Housing: surfaces from deepest void to raised plate. */
+  /*
+   * FALLBACK colour scheme. The active theme applies these same tokens as CSS
+   * custom properties at boot (see web/src/palette.ts); this block keeps the
+   * page correct before the host runs (or if it never does). Values here mirror
+   * the `fantasy` theme's palette exactly.
+   *
+   * Housing: surfaces from deepest void to raised plate.
+   */
   --ink-900: #08090c;
   --ink-850: #0c0e13;
   --ink-800: #11141b;
@@ -340,6 +347,47 @@ p {
 
 .enemy:has(.enemy__badge:not([hidden])) .enemy__name {
   color: #ffd2d7;
+}
+
+/* ==========================================================================
+   5b. Theme sprites — pixel art, no smoothing
+   ========================================================================== */
+
+/*
+ * Sprites come from the active theme (see the renderer's asset URLs) and are
+ * always drawn with nearest-neighbour scaling so low-resolution art stays
+ * crisp. They are STATIC in this phase: the animation seam (`handleEvents` in
+ * the renderer) is deliberately not wired yet, and the reduced-motion rules
+ * below already neutralise the CSS motion that surrounds them.
+ */
+.stage__player,
+.enemy__sprite,
+.shiny__sprite {
+  display: block;
+  object-fit: contain;
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+}
+
+.stage__player {
+  width: 64px;
+  height: 64px;
+}
+
+.enemy__sprite {
+  width: 64px;
+  height: 64px;
+}
+
+/* Bosses are declared at a larger frame. */
+.enemy:has(.enemy__badge:not([hidden])) .enemy__sprite {
+  width: 96px;
+  height: 96px;
+}
+
+.shiny__sprite {
+  width: 48px;
+  height: 48px;
 }
 
 /* ==========================================================================
@@ -859,11 +907,6 @@ p {
   outline-offset: 2px;
 }
 
-.shiny__goblin {
-  font-size: 26px;
-  line-height: 1;
-}
-
 .shiny__name {
   font-family: var(--font-data);
   font-size: var(--fs-micro);
@@ -1109,7 +1152,10 @@ p {
    ========================================================================== */
 
 @media (prefers-contrast: more) {
-  :root {
+  /* `:root:root` out-specifies the theme's injected `:root` palette rule, so the
+     high-contrast overrides keep winning over a themed palette. Without the
+     extra specificity the later-injected theme rule would clobber them. */
+  :root:root {
     --line: #3a4356;
     --line-strong: #4d5870;
     --text-dim: #c3ccdd;

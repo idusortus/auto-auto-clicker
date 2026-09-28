@@ -7,6 +7,7 @@
 // applyAction().
 
 import {
+  ACTIVE_THEME,
   advance,
   applyAction,
   createGame,
@@ -15,6 +16,7 @@ import type { Action, GameEvent, GameState } from '@auto-auto-clicker/engine-cor
 
 import { mountRenderer } from './renderer';
 import type { OfflineSummary } from './renderer';
+import { applyPalette } from './palette';
 import {
   OFFLINE_STEP_MS,
   hydrate,
@@ -230,6 +232,8 @@ async function boot(): Promise<void> {
     console.error('[aac] #app root not found; renderer not mounted');
     return;
   }
+  // Retint the UI from the theme before anything paints.
+  applyPalette(ACTIVE_THEME);
   const prepared = await prepareGame();
   startHost(root, prepared);
 }

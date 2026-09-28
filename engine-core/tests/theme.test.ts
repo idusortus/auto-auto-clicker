@@ -4,10 +4,17 @@ import type { Theme } from '../src/theme';
 import {
   ASSET_SLOTS,
   LIMITS,
+  PALETTE_FIELDS,
+  isColorValue,
   measureTheme,
   validateTheme,
+  validateAssetMeasurements,
 } from '../src/theme/contract';
-import type { ThemeProblem, ThemeProblemKind } from '../src/theme/contract';
+import type {
+  AssetMeasurement,
+  ThemeProblem,
+  ThemeProblemKind,
+} from '../src/theme/contract';
 
 /**
  * Deep clone that PRESERVES functions (structuredClone throws on them). Theme
@@ -51,12 +58,13 @@ describe('theme contract — the active theme ships clean', () => {
     expect(result.ok).toBe(true);
   });
 
-  it('pins the measured surface: 117 string slots, 42 templates, 30 achievements, 32 assets', () => {
+  it('pins the measured surface: 136 string slots, 42 templates, 30 achievements, 32 assets, 19 colours', () => {
     const { stats } = validateTheme(fantasy);
-    expect(stats.stringFields).toBe(117);
+    expect(stats.stringFields).toBe(136);
     expect(stats.templateFields).toBe(42);
     expect(stats.achievementIds).toBe(30);
     expect(stats.assetSlots).toBe(32);
+    expect(stats.paletteKeys).toBe(19);
   });
 
   it('keeps every measured slot comfortably inside its limit', () => {
@@ -225,6 +233,121 @@ describe('theme contract — assets section is well-formed (files checked in T4)
     theme.assets['player-jump'] = 'player-jump.png';
     const { problems } = validateTheme(theme as Theme);
     expect(findProblem(problems, 'assets.player-jump', 'bad-key')).toBeDefined();
+  });
+});
+
+describe('theme contract — palette (colour tokens)', () => {
+  it('every fantasy palette value is a valid CSS colour', () => {
+    for (const spec of PALETTE_FIELDS) {
+      const key = spec.path.slice('palette.'.length) as keyof typeof fantasy.palette;
+      expect(isColorValue(fantasy.palette[key]), spec.path).toBe(true);
+    }
+    expect(PALETTE_FIELDS.length).toBe(19);
+  });
+
+  it('accepts functional colour forms (rgba/hsl)', () => {
+    const theme = broken();
+    theme.palette.accent = 'rgba(255, 157, 60, 0.8)';
+    theme.palette.accentHi = 'hsl(30 100% 60%)';
+    expect(validateTheme(theme as Theme).ok).toBe(true);
+  });
+
+  it('reports a missing palette key', () => {
+    const theme = broken();
+    delete theme.palette.accent;
+    const { problems } = validateTheme(theme as Theme);
+    expect(findProblem(problems, 'palette.accent', 'missing')).toBeDefined();
+  });
+
+  it('reports a non-colour palette value as bad-color', () => {
+    const theme = broken();
+    theme.palette.accent = 'plaid';
+    const { problems } = validateTheme(theme as Theme);
+    const problem = findProblem(problems, 'palette.accent', 'bad-color');
+    expect(problem).toBeDefined();
+    expect(problem?.message).toContain('plaid');
+  });
+
+  it('reports an unknown palette key', () => {
+    const theme = broken();
+    theme.palette.ultraviolet = '#8800ff';
+    const { problems } = validateTheme(theme as Theme);
+    expect(findProblem(problems, 'palette.ultraviolet', 'bad-key')).toBeDefined();
+  });
+});
+
+describe('theme contract — asset measurement validation (pure)', () => {
+  function goodMeasurements(): AssetMeasurement[] {
+    return ASSET_SLOTS.map((slot) => ({
+      slot: slot.name,
+      path: `fantasy/${slot.file}`,
+      exists: true,
+      width: slot.width,
+      height: slot.height,
+      error: null,
+    }));
+  }
+
+  it('accepts a complete set of correctly-sized files', () => {
+    const result = validateAssetMeasurements(fantasy, goodMeasurements());
+    expect(result.ok).toBe(true);
+    expect(result.correct).toBe(ASSET_SLOTS.length);
+    expect(result.problems).toEqual([]);
+  });
+
+  it('reports a file whose actual size differs, with actual vs expected', () => {
+    const measurements = goodMeasurements().map((m) =>
+      m.slot === 'player-idle' ? { ...m, width: 48, height: 48 } : m,
+    );
+    const { ok, problems } = validateAssetMeasurements(fantasy, measurements);
+    expect(ok).toBe(false);
+    const problem = problems.find((p) => p.slot === 'player-idle');
+    expect(problem?.kind).toBe('wrong-dimensions');
+    expect(problem?.message).toContain('player-idle.png is 48x48, expected 64x64');
+  });
+
+  it('reports a missing file', () => {
+    const measurements = goodMeasurements().map((m) =>
+      m.slot === 'shiny-idle' ? { ...m, exists: false, width: null, height: null } : m,
+    );
+    const { problems } = validateAssetMeasurements(fantasy, measurements);
+    const problem = problems.find((p) => p.slot === 'shiny-idle');
+    expect(problem?.kind).toBe('missing-file');
+    expect(problem?.message).toContain('shiny-idle.png');
+  });
+
+  it('reports an unreadable file separately from a missing one', () => {
+    const measurements = goodMeasurements().map((m) =>
+      m.slot === 'boss-grunt-idle'
+        ? { ...m, width: null, height: null, error: 'not a PNG' }
+        : m,
+    );
+    const { problems } = validateAssetMeasurements(fantasy, measurements);
+    expect(problems.find((p) => p.slot === 'boss-grunt-idle')?.kind).toBe('unreadable-image');
+  });
+
+  it('reports an unknown slot measurement', () => {
+    const measurements: AssetMeasurement[] = [
+      ...goodMeasurements(),
+      { slot: 'player-jump', path: 'fantasy/player-jump.png', exists: true, width: 64, height: 64, error: null },
+    ];
+    const { problems } = validateAssetMeasurements(fantasy, measurements);
+    expect(problems.find((p) => p.slot === 'player-jump')?.kind).toBe('unknown-slot');
+  });
+
+  it('aggregates every problem in one pass (never throws, never stops early)', () => {
+    const measurements = goodMeasurements().map((m) => {
+      if (m.slot === 'player-idle') return { ...m, width: 1, height: 1 };
+      if (m.slot === 'shiny-idle') return { ...m, exists: false, width: null, height: null };
+      if (m.slot === 'boss-grunt-idle') return { ...m, width: null, height: null, error: 'bad' };
+      return m;
+    });
+    const result = validateAssetMeasurements(fantasy, measurements);
+    expect(result.ok).toBe(false);
+    expect(result.missing).toBe(1);
+    expect(result.mismatched).toBe(2);
+    expect(result.correct).toBe(ASSET_SLOTS.length - 3);
+    expect(result.problems).toHaveLength(3);
   });
 });
 

@@ -63,6 +63,16 @@ type ChoiceOption = PendingChoice['options'][number];
  */
 const theme = ACTIVE_THEME;
 
+/**
+ * Resolve a theme asset slot to the public URL the browser loads. The
+ * `/themes/<theme-name>/` directory is derived from the theme's own `name`, and
+ * the file name comes from its `assets` map — so `/web` duplicates neither the
+ * directory convention nor any asset file name.
+ */
+function assetUrl(slot: string): string {
+  return `/themes/${theme.name}/${theme.assets[slot]}`;
+}
+
 export interface RendererHandlers {
   /** The player tapped the enemy. */
   onClick(): void;
@@ -145,6 +155,7 @@ interface Refs {
   dps: HTMLElement;
   enemy: HTMLButtonElement;
   enemyName: HTMLElement;
+  enemySprite: HTMLImageElement;
   bossBadge: HTMLElement;
   enemyHp: HTMLElement;
   hpFill: HTMLElement;
@@ -153,6 +164,7 @@ interface Refs {
   boostTimer: HTMLElement;
   shiny: HTMLButtonElement;
   shinyName: HTMLElement;
+  shinySprite: HTMLImageElement;
   shinyToast: HTMLElement;
   shinyFlourish: HTMLElement;
   milestoneFlourish: HTMLElement;
@@ -221,8 +233,24 @@ const SKELETON = `
     </section>
 
     <main class="stage">
+      <img
+        class="stage__player"
+        data-testid="player-sprite"
+        alt=""
+        aria-hidden="true"
+        draggable="false"
+        src="${assetUrl('player-idle')}"
+      />
       <button class="enemy" data-testid="enemy" type="button" aria-label="${theme.enemy.attackAria}">
         <span class="enemy__badge" data-role="boss-badge" hidden>${theme.enemy.boss}</span>
+        <img
+          class="enemy__sprite"
+          data-testid="enemy-sprite"
+          alt=""
+          aria-hidden="true"
+          draggable="false"
+          src="${assetUrl('enemy-grunt-idle')}"
+        />
         <span class="enemy__name" data-role="enemy-name">${theme.enemy.label}</span>
         <span class="enemy__hp">
           <span class="hp-bar"><span class="hp-bar__fill" data-role="hp-fill"></span></span>
@@ -237,7 +265,14 @@ const SKELETON = `
         aria-label="${theme.shiny.catchAria}"
         hidden
       >
-        <span class="shiny__goblin" aria-hidden="true">&#128520;</span>
+        <img
+          class="shiny__sprite"
+          data-testid="shiny-sprite"
+          alt=""
+          aria-hidden="true"
+          draggable="false"
+          src="${assetUrl('shiny-idle')}"
+        />
         <span class="shiny__name" data-role="shiny-name">${theme.shiny.name}</span>
       </button>
       <p class="hint">${theme.ui.tapHint}</p>
@@ -455,6 +490,8 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     const boss = isBoss(state.combat.stage);
     refs.enemyName.textContent = boss ? theme.enemy.boss : theme.enemy.label;
     refs.bossBadge.hidden = !boss;
+    // The boss uses the larger declared frame. Static idle art only this phase.
+    setSprite(refs.enemySprite, boss ? 'boss-grunt-idle' : 'enemy-grunt-idle');
 
     const maxHp = getEnemyMaxHp(state);
     refs.enemyHp.textContent = theme.enemy.hp(
@@ -773,6 +810,8 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
         lastShinyKind = active.kind;
         refs.shiny.dataset.kind = active.kind;
         refs.shinyName.textContent = shinyName(active.kind);
+        // Each Shiny kind has its own declared sprite (static this phase).
+        setSprite(refs.shinySprite, shinySpriteSlot(active.kind));
         // Restart the drift each time a NEW Shiny appears so it always wanders
         // across a fresh screen. Reduced-motion users get a static target.
         refs.shiny.classList.remove('shiny--drift');
@@ -840,6 +879,19 @@ function shinyName(kind: ShinyKind): string {
   if (kind === 'frenzy') return theme.shiny.kind.frenzy;
   if (kind === 'drop') return theme.shiny.kind.drop;
   return theme.shiny.kind.cache;
+}
+
+/** The theme asset slot for a Shiny kind (each kind has its own sprite). */
+function shinySpriteSlot(kind: ShinyKind): string {
+  if (kind === 'frenzy') return 'shiny-frenzy';
+  if (kind === 'drop') return 'shiny-drop';
+  return 'shiny-cache';
+}
+
+/** Point an `<img>` at a theme asset slot, only when the source actually changes. */
+function setSprite(image: HTMLImageElement, slot: string): void {
+  const src = assetUrl(slot);
+  if (image.getAttribute('src') !== src) image.setAttribute('src', src);
 }
 
 /** Every occupiable gear slot, in display order. */
@@ -933,6 +985,7 @@ function collectRefs(root: HTMLElement): Refs {
     dps: req(root, '[data-testid="dps"]'),
     enemy: req(root, '[data-testid="enemy"]'),
     enemyName: req(root, '[data-role="enemy-name"]'),
+    enemySprite: req(root, '[data-testid="enemy-sprite"]'),
     bossBadge: req(root, '[data-role="boss-badge"]'),
     enemyHp: req(root, '[data-testid="enemy-hp"]'),
     hpFill: req(root, '[data-role="hp-fill"]'),
@@ -941,6 +994,7 @@ function collectRefs(root: HTMLElement): Refs {
     boostTimer: req(root, '[data-role="boost-timer"]'),
     shiny: req(root, '[data-testid="shiny"]'),
     shinyName: req(root, '[data-role="shiny-name"]'),
+    shinySprite: req(root, '[data-testid="shiny-sprite"]'),
     shinyToast: req(root, '[data-testid="shiny-toast"]'),
     shinyFlourish: req(root, '[data-testid="shiny-flourish"]'),
     milestoneFlourish: req(root, '[data-testid="milestone-flourish"]'),

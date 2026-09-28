@@ -1,21 +1,34 @@
 // scripts/check-theme.ts — `npm run theme:check`
 //
-// Validates the ACTIVE theme against the theme contract and prints a readable
-// report, exiting non-zero on any problem. This is the authoring checklist: a
-// new theme runs this and gets the exact list of anything wrong or missing.
+// Validates the ACTIVE theme against the theme contract AND verifies its declared
+// art actually exists on disk at the right pixel size, printing a readable
+// report and exiting non-zero on any problem. This is the authoring checklist: a
+// new theme runs this and gets the exact list of anything wrong or missing —
+// text problems, colour problems, missing files, and mis-sized PNGs.
 //
-// Dependency-free: plain `tsx`, no new packages. Not part of the engine's
-// runtime surface (it lives outside `src/`, so the boundary scan does not see
-// it and no host imports it).
+// Dependency-free: plain `tsx`, no new packages. The `node:fs` reading happens
+// HERE (the script layer); the pure comparison lives in `src/theme/contract.ts`,
+// so engine-core's runtime stays filesystem-free.
+//
+// The asset directory convention is `web/public/themes/<theme-name>/`. Set
+// `AAC_THEME_DIR` to point the check at another directory (used by tests and for
+// previewing a theme before it is committed).
+
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { ACTIVE_THEME } from '../src/theme';
 import {
   ASSET_SLOTS,
   LIMITS,
+  PALETTE_FIELDS,
   THEME_FIELDS,
+  validateAssetMeasurements,
   validateTheme,
 } from '../src/theme/contract';
-import type { LimitGroup } from '../src/theme/contract';
+import type { AssetMeasurement, LimitGroup } from '../src/theme/contract';
+import { readPngDimensions } from './png';
 
 const ORDER = Object.keys(LIMITS) as LimitGroup[];
 
@@ -27,8 +40,58 @@ function padStart(value: string, width: number): string {
   return value.length >= width ? value : ' '.repeat(width - value.length) + value;
 }
 
+/** Repo root, resolved from this script's URL (`engine-core/scripts/` → repo). */
+const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
+
+/** Directory the active theme's art is expected in. */
+function themeAssetDir(themeName: string): string {
+  return process.env['AAC_THEME_DIR'] ?? join(repoRoot, 'web', 'public', 'themes', themeName);
+}
+
+/**
+ * Read every declared slot's file from disk and measure its PNG size. A missing
+ * file, an unreadable file, and a file with no dimensions are all represented
+ * (never thrown) so the pure validator can report them together.
+ */
+function measureAssets(theme: typeof ACTIVE_THEME, dir: string): AssetMeasurement[] {
+  return ASSET_SLOTS.map((slot) => {
+    const file = theme.assets[slot.name] ?? slot.file;
+    const path = join(dir, file);
+    if (!existsSync(path)) {
+      return { slot: slot.name, path, exists: false, width: null, height: null, error: null };
+    }
+    try {
+      const size = readPngDimensions(readFileSync(path));
+      if (size === null) {
+        return {
+          slot: slot.name,
+          path,
+          exists: true,
+          width: null,
+          height: null,
+          error: 'not a PNG (bad signature or missing IHDR)',
+        };
+      }
+      return { slot: slot.name, path, exists: true, width: size.width, height: size.height, error: null };
+    } catch (error) {
+      return {
+        slot: slot.name,
+        path,
+        exists: true,
+        width: null,
+        height: null,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  });
+}
+
 const themeName = String(ACTIVE_THEME.name ?? '(unnamed)');
 const result = validateTheme(ACTIVE_THEME);
+
+const assetDir = themeAssetDir(themeName);
+const measurements = measureAssets(ACTIVE_THEME, assetDir);
+const assets = validateAssetMeasurements(ACTIVE_THEME, measurements);
 
 console.log(`Theme contract check — ACTIVE_THEME "${themeName}"`);
 console.log(
@@ -39,7 +102,12 @@ console.log(
   `  achievements: ${result.stats.achievementIds}/${result.stats.achievementIds} ids required`,
 );
 console.log(
-  `  assets:       ${ASSET_SLOTS.length} declared slots (file existence + pixel size are checked in T4)`,
+  `  palette:      ${PALETTE_FIELDS.length} colour tokens (applied to CSS custom properties by the host)`,
+);
+console.log(`  assets:       ${ASSET_SLOTS.length} declared slots · dir ${assetDir}`);
+console.log(
+  `                ${assets.correct}/${ASSET_SLOTS.length} files present at the exact size ` +
+    `(${assets.missing} missing, ${assets.mismatched} mis-sized/unreadable)`,
 );
 console.log('');
 console.log('  limits (group · observed max / limit · slots)');
@@ -52,12 +120,17 @@ for (const group of ORDER) {
 }
 console.log('');
 
-if (result.ok) {
+const problems = [
+  ...result.problems.map((problem) => `${pad(problem.path, 52)} [${problem.kind}] ${problem.message}`),
+  ...assets.problems.map((problem) => `${pad(problem.path, 52)} [${problem.kind}] ${problem.message}`),
+];
+
+if (result.ok && assets.ok) {
   console.log('✓ theme contract OK — no problems found.');
 } else {
-  console.error(`✗ theme contract FAILED — ${result.problems.length} problem(s):`);
-  for (const problem of result.problems) {
-    console.error(`    ${pad(problem.path, 44)} [${problem.kind}] ${problem.message}`);
-  }
+  console.error(
+    `✗ theme check FAILED — ${result.problems.length} contract problem(s), ${assets.problems.length} asset problem(s):`,
+  );
+  for (const line of problems) console.error(`    ${line}`);
   process.exitCode = 1;
 }
