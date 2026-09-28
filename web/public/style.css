@@ -362,13 +362,15 @@ p {
 /*
  * Sprites come from the active theme (see the renderer's asset URLs) and are
  * always drawn with nearest-neighbour scaling so low-resolution art stays
- * crisp. They are STATIC in this phase: the animation seam (`handleEvents` in
- * the renderer) is deliberately not wired yet, and the reduced-motion rules
- * below already neutralise the CSS motion that surrounds them.
+ * crisp. Most of the time they are STATIC idle frames: the animation seam
+ * (`handleEvents` in the renderer) swaps in a theme-declared transient frame
+ * for the duration of a cue, and the reduced-motion rules below neutralise the
+ * CSS motion that surrounds them (and the renderer enqueues no frame at all).
  */
 .stage__player,
 .enemy__sprite,
-.shiny__sprite {
+.shiny__sprite,
+.spawn-popup__sprite {
   display: block;
   object-fit: contain;
   image-rendering: crisp-edges;
@@ -1019,6 +1021,48 @@ p {
   to {
     opacity: 1;
     transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+
+/* ==========================================================================
+   11b-2. Global spawn popup — transient, unmistakably non-blocking
+   ========================================================================== */
+
+/*
+ * The GLOBAL transient popup (the `stageEntered` cue: a new enemy spawned).
+ * It lives INSIDE the stage (the arena's positioning context) in the top-right
+ * corner: clear of the Shiny, which anchors top-left, and clear of the enemy
+ * button, which fills the lower centre. Purely cosmetic — pointer-events:none
+ * so it can never intercept a tap, and hidden unless the renderer holds a live
+ * `global` effect. The entrance pop below is neutralised by the global
+ * animation-duration override in the reduced-motion block (section 13).
+ */
+.spawn-popup {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
+  pointer-events: none;
+}
+
+/* The 96x32 declared slot; explicit size so a cue never reflows the stage. */
+.spawn-popup__sprite {
+  width: 96px;
+  height: 32px;
+}
+
+.spawn-popup--in {
+  animation: spawn-popup-pop 220ms var(--ease) both;
+}
+
+@keyframes spawn-popup-pop {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 

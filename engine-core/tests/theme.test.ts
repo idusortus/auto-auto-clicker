@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ACTIVE_THEME, fantasy, lucky, THEMES } from '../src/theme';
-import type { Theme } from '../src/theme';
+import type { AnimationCueKey, Theme } from '../src/theme';
 import { ACHIEVEMENTS } from '../src/achievements';
 import {
   ASSET_SLOTS,
@@ -126,6 +126,52 @@ describe('theme contract — structural parity across themes', () => {
       expect(Object.keys(theme.assets).sort(), theme.name).toEqual(reference);
     }
   });
+});
+
+// Animation is theme-owned DISPLAY data: semantic event family → declared asset
+// slot + display-only duration. The validator registers the section but does NOT
+// check its contents, so these tests are its enforcement (the same role the
+// id/slot parity tests play for achievements and assets).
+describe('theme contract — animation cues', () => {
+  const CUE_KEYS: readonly AnimationCueKey[] = [
+    'playerAttack',
+    'enemyHit',
+    'enemyDeath',
+    'bossHit',
+    'bossDeath',
+    'stageEntered',
+    'shinySpawn',
+    'shinyClaim',
+  ];
+
+  it('every theme declares exactly the same animation cue key set', () => {
+    const reference = Object.keys(fantasy.animation.cues).sort();
+    for (const theme of THEMES) {
+      expect(Object.keys(theme.animation.cues).sort(), theme.name).toEqual(reference);
+    }
+  });
+
+  const declaredSlots = new Set(ASSET_SLOTS.map((slot) => slot.name));
+
+  for (const theme of THEMES) {
+    it(`maps every "${theme.name}" animation cue to a declared asset slot`, () => {
+      for (const [cue, entry] of Object.entries(theme.animation.cues)) {
+        expect(
+          declaredSlots.has(entry.slot),
+          `${theme.name}.${cue} points at "${entry.slot}", not a declared asset slot`,
+        ).toBe(true);
+      }
+    });
+
+    it(`declares all 8 "${theme.name}" cues with a finite, non-negative duration`, () => {
+      for (const cue of CUE_KEYS) {
+        const entry = theme.animation.cues[cue];
+        expect(entry, `${theme.name} is missing cue "${cue}"`).toBeDefined();
+        expect(Number.isFinite(entry.durationMs), `${theme.name}.${cue}`).toBe(true);
+        expect(entry.durationMs, `${theme.name}.${cue}`).toBeGreaterThanOrEqual(0);
+      }
+    });
+  }
 });
 
 // Guard against a "second theme" that is a copy-paste of the first: the whole

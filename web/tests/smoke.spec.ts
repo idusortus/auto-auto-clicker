@@ -1,6 +1,7 @@
 import { expect, test as base } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
-import { ACTIVE_THEME, getMilestoneInfo } from '@auto-auto-clicker/engine-core';
+import { ACTIVE_THEME, getMilestoneInfo, isBoss } from '@auto-auto-clicker/engine-core';
+import type { AnimationCueKey } from '@auto-auto-clicker/engine-core';
 
 // Phase 5 — mobile-viewport smoke test for the /web host.
 //
@@ -672,6 +673,152 @@ test('renders the Shiny sprite for the active kind', async ({ page, consoleError
   expect(consoleErrors).toEqual([]);
 });
 
+/* ---------------------------------------------------------------------------
+ * Transient animation frames (Phase 2). The renderer turns one engine event
+ * batch into at most one frame PER ACTOR, then the queue's own drain returns
+ * each sprite to idle. Timing is driven with the Playwright clock: the frames
+ * carry display-only durations, and the clock makes their expiry deterministic.
+ * Every expected URL comes from the ACTIVE_THEME; only testids/classes are
+ * literal.
+ * ------------------------------------------------------------------------- */
+
+test('a tap drives player-attack and enemy-hurt frames, then returns to idle', async ({
+  page,
+  consoleErrors,
+}) => {
+  // Frozen time: no idle auto-damage can tick between boot and the tap, and the
+  // clock lets us expire the frames without a real sleep.
+  await page.clock.install();
+  await page.goto('/');
+
+  const enemy = page.getByTestId('enemy-sprite');
+  const player = page.getByTestId('player-sprite');
+  const stage = await readStage(page);
+
+  // A fresh boot rests on the idle frame.
+  await expect(player).toHaveAttribute('src', themeAssetUrl('player-idle'));
+  await expect(enemy).toHaveAttribute('src', themeAssetUrl(enemyIdleSlot(stage)));
+
+  // One tap enqueues BOTH actor frames; the renderer projects them
+  // synchronously within the dispatch, so no sleep is needed to observe them.
+  await page.getByTestId('enemy').click();
+  await expect(player).toHaveAttribute('src', themeCueUrl('playerAttack'));
+  await expect(enemy).toHaveAttribute('src', themeCueUrl('enemyHit'));
+
+  // Past the longest cue the drain has cleared every frame. (The extra margin
+  // leaves idle auto-damage, which re-touches the enemy every ~500 ms, out of
+  // the observation window.)
+  await page.clock.runFor(maxCueDurationMs() * 1.5);
+  await expect(player).toHaveAttribute('src', themeAssetUrl('player-idle'));
+  await expect(enemy).toHaveAttribute('src', themeAssetUrl(enemyIdleSlot(stage)));
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('a kill shows the enemy death frame', async ({ page, consoleErrors }) => {
+  await page.clock.install();
+  // One tap's damage finishes the enemy, so the kill batch carries the death
+  // cue (and the following stageEntered, which must not crowd it out).
+  await injectSave(page, { enemyHp: 1 });
+  await page.goto('/');
+
+  const enemy = page.getByTestId('enemy-sprite');
+  await expect(enemy).toHaveAttribute('src', themeAssetUrl(enemyIdleSlot(1)));
+
+  await page.getByTestId('enemy').click();
+
+  // Asserted PROMPTLY — no clock advance — because the death frame is transient.
+  await expect(enemy).toHaveAttribute('src', themeCueUrl('enemyDeath'));
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('a stage change shows the spawn popup', async ({ page, consoleErrors }) => {
+  await page.clock.install();
+  await injectSave(page, { enemyHp: 1 });
+  await page.goto('/');
+
+  const popup = page.getByTestId('spawn-popup');
+  const sprite = popup.locator('img');
+  await expect(popup).toBeHidden();
+
+  // The kill emits stageEntered, which drives the GLOBAL popup actor.
+  await page.getByTestId('enemy').click();
+  await expect(popup).toBeVisible();
+  await expect(sprite).toHaveAttribute('src', themeCueUrl('stageEntered'));
+
+  // The popup is transient: past the longest cue it hides again.
+  await page.clock.runFor(maxCueDurationMs() * 1.5);
+  await expect(popup).toBeHidden();
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('prefers-reduced-motion suppresses animation frames', async ({ page, consoleErrors }) => {
+  await page.clock.install();
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  // A one-tap kill would normally drive the attack/hurt/death frames AND the
+  // global spawn popup; under reduced motion none of them may leave idle.
+  await injectSave(page, { enemyHp: 1 });
+  await page.goto('/');
+
+  const enemy = page.getByTestId('enemy-sprite');
+  const player = page.getByTestId('player-sprite');
+  const popup = page.getByTestId('spawn-popup');
+
+  await expect(player).toHaveAttribute('src', themeAssetUrl('player-idle'));
+  await expect(enemy).toHaveAttribute('src', themeAssetUrl(enemyIdleSlot(1)));
+  await expect(popup).toBeHidden();
+
+  await page.getByTestId('enemy').click();
+
+  // Gameplay is untouched: the tap still killed the enemy and advanced the stage.
+  await expect(page.getByTestId('stage')).toHaveText('2');
+  // ...but no actor frame is swapped and the global popup never appears.
+  await expect(player).toHaveAttribute('src', themeAssetUrl('player-idle'));
+  await expect(enemy).toHaveAttribute('src', themeAssetUrl(enemyIdleSlot(2)));
+  await expect(popup).toBeHidden();
+
+  // The stylesheet's reduced-motion block also neutralises CSS motion: the
+  // enemy's declared transitions collapse to (effectively) zero.
+  const transitionSeconds = await page
+    .getByTestId('enemy')
+    .evaluate((element) => parseFloat(getComputedStyle(element).transitionDuration));
+  expect(transitionSeconds).toBeLessThan(0.01);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('claiming a Shiny paints the claim frame', async ({ page, consoleErrors }) => {
+  // Frozen time, so the claim frame's display duration is deterministic and its
+  // drain only runs when the clock is advanced.
+  await page.clock.install();
+  await injectSave(page, {
+    active: { kind: 'cache', spawnedAtMs: 0, expiresAtMs: 600_000 },
+  });
+  await page.goto('/');
+
+  const shiny = page.getByTestId('shiny');
+  const sprite = page.getByTestId('shiny-sprite');
+  await expect(shiny).toBeVisible();
+  await expect(sprite).toHaveAttribute('src', themeAssetUrl('shiny-cache'));
+
+  // Claim it. The renderer repurposes the element to paint the DECLARED claim
+  // frame for the cue's duration — without the drift and without becoming
+  // claimable again (the Shiny is already gone).
+  await shiny.dispatchEvent('click');
+  await expect(shiny).toBeVisible();
+  await expect(sprite).toHaveAttribute('src', themeCueUrl('shinyClaim'));
+  await expect(shiny).toHaveCSS('pointer-events', 'none');
+
+  // Past the claim cue the drain hides the element and restores the idle frame.
+  await page.clock.runFor(claimCueDurationMs() * 1.5);
+  await expect(shiny).toBeHidden();
+  await expect(sprite).toHaveAttribute('src', themeAssetUrl('shiny-cache'));
+
+  expect(consoleErrors).toEqual([]);
+});
+
 /** Read the first integer from a text node, e.g. "28 / 30" -> 28. */
 function parseLeadingInt(text: string | null): number {
   const match = text === null ? null : text.match(/\d+/);
@@ -686,6 +833,39 @@ function parseLeadingInt(text: string | null): number {
  */
 function themeAssetUrl(slot: string): RegExp {
   return new RegExp(`/themes/${ACTIVE_THEME.name}/${ACTIVE_THEME.assets[slot]}$`);
+}
+
+/**
+ * The expected `src` for a theme animation cue, derived from the ACTIVE_THEME.
+ * Mirrors `themeAssetUrl`, but reads the cue's DECLARED asset slot — so a cue
+ * that re-points at another frame (e.g. the Shiny spawn cue reusing an idle
+ * frame) still asserts against the theme values, never a hard-coded file.
+ */
+function themeCueUrl(cue: AnimationCueKey): RegExp {
+  return themeAssetUrl(ACTIVE_THEME.animation.cues[cue].slot);
+}
+
+/** The longest cue duration, so one clock advance expires EVERY live frame. */
+function maxCueDurationMs(): number {
+  return Math.max(...Object.values(ACTIVE_THEME.animation.cues).map((cue) => cue.durationMs));
+}
+
+/** The claim cue's display duration, so the claim frame's expiry is deterministic. */
+function claimCueDurationMs(): number {
+  return ACTIVE_THEME.animation.cues.shinyClaim.durationMs;
+}
+
+/**
+ * The enemy's idle frame for `stage`: bosses declare a distinct idle asset slot.
+ * Slot NAMES are identity (like the testids), so they stay literal here.
+ */
+function enemyIdleSlot(stage: number): string {
+  return isBoss(stage) ? 'boss-grunt-idle' : 'enemy-grunt-idle';
+}
+
+/** Read the current combat stage from the HUD readout. */
+async function readStage(page: Page): Promise<number> {
+  return parseLeadingInt(await page.getByTestId('stage').textContent());
 }
 
 /** Read the equipped weapon's upgrade level from the per-slot level readout. */

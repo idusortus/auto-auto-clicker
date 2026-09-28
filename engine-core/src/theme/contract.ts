@@ -529,6 +529,10 @@ function buildAllowedChildren(): Map<string, Set<string>> {
     'advisory',
     'achievements',
     'assets',
+    // Theme-owned animation cues. Registered here so the generic unknown-key
+    // walk accepts the section; it is deliberately NOT validated at runtime
+    // (the theme test suite enforces cue keys, declared slots, and durations).
+    'animation',
   ]) {
     addPath(key);
   }

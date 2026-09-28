@@ -357,4 +357,20 @@ export const fantasy: Theme = {
     'gear-necklace-t3': 'gear-necklace-t3.png',
     'gear-necklace-t4': 'gear-necklace-t4.png',
   },
+
+  // Animation cues (display-only). Each cue names a DECLARED asset slot above
+  // and a millisecond duration the frame stays up; durations never reach the
+  // engine or the sim.
+  animation: {
+    cues: {
+      playerAttack: { slot: 'player-attack', durationMs: 180 },
+      enemyHit: { slot: 'enemy-grunt-hurt', durationMs: 150 },
+      enemyDeath: { slot: 'enemy-grunt-death', durationMs: 400 },
+      bossHit: { slot: 'boss-grunt-hurt', durationMs: 180 },
+      bossDeath: { slot: 'boss-grunt-death', durationMs: 500 },
+      stageEntered: { slot: 'spawn-popup', durationMs: 350 },
+      shinySpawn: { slot: 'shiny-idle', durationMs: 300 },
+      shinyClaim: { slot: 'shiny-frenzy', durationMs: 250 },
+    },
+  },
 };

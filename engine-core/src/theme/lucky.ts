@@ -398,4 +398,21 @@ export const lucky: Theme = {
     'gear-necklace-t3': 'gear-necklace-t3.png',
     'gear-necklace-t4': 'gear-necklace-t4.png',
   },
+
+  // The same 8 semantic cues as every theme, with deliberately DIFFERENT
+  // display timings so the animation seam is genuinely exercised. Slot names are
+  // shared (only the per-theme art folder differs); the squirrel's spawn/claim
+  // reuse the shared `spawn-popup` slot.
+  animation: {
+    cues: {
+      playerAttack: { slot: 'player-attack', durationMs: 200 },
+      enemyHit: { slot: 'enemy-grunt-hurt', durationMs: 160 },
+      enemyDeath: { slot: 'enemy-grunt-death', durationMs: 420 },
+      bossHit: { slot: 'boss-grunt-hurt', durationMs: 200 },
+      bossDeath: { slot: 'boss-grunt-death', durationMs: 520 },
+      stageEntered: { slot: 'spawn-popup', durationMs: 360 },
+      shinySpawn: { slot: 'spawn-popup', durationMs: 320 },
+      shinyClaim: { slot: 'spawn-popup', durationMs: 260 },
+    },
+  },
 };

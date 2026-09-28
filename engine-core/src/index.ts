@@ -80,7 +80,13 @@ export {
 export { ACHIEVEMENTS, evaluateAchievements, grantAchievements } from './achievements';
 
 export { ACTIVE_THEME, fantasy } from './theme';
-export type { AchievementCopy, Theme } from './theme';
+export type {
+  AchievementCopy,
+  AnimationCueKey,
+  Theme,
+  ThemeAnimation,
+  ThemeAnimationCue,
+} from './theme';
 
 export { advance } from './advance';
 export { applyAction } from './actions';

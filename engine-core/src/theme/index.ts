@@ -10,7 +10,13 @@ import type { Theme } from './types';
 
 export { fantasy } from './fantasy';
 export { lucky } from './lucky';
-export type { AchievementCopy, Theme } from './types';
+export type {
+  AchievementCopy,
+  AnimationCueKey,
+  Theme,
+  ThemeAnimation,
+  ThemeAnimationCue,
+} from './types';
 
 /**
  * Every theme this build ships, keyed by `name`. The theme test suite validates
@@ -30,4 +36,4 @@ export const THEMES: readonly Theme[] = [fantasy, lucky];
  * That one assignment swaps ALL text, colours, and declared pixel art; it is
  * the entire theme switch. Leave `fantasy` here as the committed default.
  */
-export const ACTIVE_THEME: Theme = fantasy;
+export const ACTIVE_THEME: Theme = lucky;

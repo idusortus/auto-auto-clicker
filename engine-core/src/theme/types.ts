@@ -77,6 +77,34 @@ export interface AchievementCopy {
 }
 
 /**
+ * Semantic animation cues. These are EVENT FAMILIES, never identity values:
+ * a theme maps each cue to one of the declared asset slots plus a display-only
+ * duration. Durations affect rendering ONLY and are never read by engine-core
+ * or the sim.
+ */
+export type AnimationCueKey =
+  | 'playerAttack' // the player clicked
+  | 'enemyHit' // damage dealt to a normal enemy
+  | 'enemyDeath' // a normal enemy died
+  | 'bossHit' // damage dealt to a boss
+  | 'bossDeath' // a boss died
+  | 'stageEntered' // a new enemy spawned
+  | 'shinySpawn' // a Shiny appeared
+  | 'shinyClaim'; // a Shiny was claimed
+
+/** One cue: an asset slot name from ASSET_SLOTS, and a display-only duration. */
+export interface ThemeAnimationCue {
+  /** A declared asset slot name (one of ASSET_SLOTS). */
+  slot: string;
+  /** Display-only ms the frame stays visible. 0 disables the cue. */
+  durationMs: number;
+}
+
+export interface ThemeAnimation {
+  cues: Record<AnimationCueKey, ThemeAnimationCue>;
+}
+
+/**
  * The full display surface, grouped by area. Strings are VERBATIM projections:
  * the fantasy theme reproduces the original wording byte-for-byte.
  */
@@ -285,4 +313,14 @@ export interface Theme {
    * require the files to exist.
    */
   assets: Record<string, string>;
+
+  /**
+   * Declared animation cues, keyed by semantic EVENT FAMILY (never an identity
+   * value). Each cue names one of the declared `ASSET_SLOTS` and a display-only
+   * duration in milliseconds: the duration affects rendering ONLY and is never
+   * read by engine-core or the sim, and a duration of 0 disables the cue. A cue
+   * may only reference a declared asset slot; this section carries no gameplay
+   * semantics.
+   */
+  animation: ThemeAnimation;
 }

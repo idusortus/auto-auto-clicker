@@ -7,9 +7,12 @@
 // mountRenderer; the renderer never dispatches actions itself.
 //
 // `render(state, context?, events?)` also receives the ordered `GameEvent[]`
-// the engine produced since the previous frame; `handleEvents` is the documented
-// seam a future theme's animation code consumes. In this phase `handleEvents` is
-// deliberately a no-op, so the projection stays byte-identical.
+// the engine produced since the previous frame. `handleEvents` turns that batch
+// into transient sprite frames (theme cue → declared asset slot → display
+// duration) and keeps at most ONE live frame per actor plus ONE drain timer; it
+// never blocks the tick loop and never mutates engine state. Reduced-motion
+// users get no frame at all — with reduced motion a sprite `src` never leaves
+// idle.
 //
 // The existing flourishes are NOT driven by that event list yet: achievement
 // splashes are driven by diffing the unlocked-id list across renders, and the
@@ -41,6 +44,7 @@ import {
 } from '@auto-auto-clicker/engine-core';
 import type {
   AchievementDefinition,
+  AnimationCueKey,
   GameEvent,
   GameState,
   GearInstance,
@@ -51,6 +55,7 @@ import type {
   SlotUpgradeAdvisory,
   StallAdvisory,
   Theme,
+  ThemeAnimationCue,
 } from '@auto-auto-clicker/engine-core';
 
 type ChoiceOption = PendingChoice['options'][number];
@@ -62,6 +67,16 @@ type ChoiceOption = PendingChoice['options'][number];
  * gear `definitionId`s, `GearSlot`s, `ShinyKind`s — never come from the theme.
  */
 const theme = ACTIVE_THEME;
+
+/**
+ * The reduced-motion preference, read once at module load and kept LIVE (the
+ * player can flip it mid-session). The observable invariant it enforces is:
+ * with reduced motion, a sprite's `src` never changes to an animation frame —
+ * `handleEvents` enqueues nothing, live effects are cleared, and the drain timer
+ * is cancelled (see the `change` listener registered in `mountRenderer`).
+ */
+const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+let reducedMotion = motionQuery.matches;
 
 /**
  * Resolve a theme asset slot to the public URL the browser loads. The
@@ -115,9 +130,11 @@ export interface Renderer {
    * `events` is the ordered batch of engine `GameEvent`s produced since the
    * previous render — the live host coalesces every fixed step of one frame into
    * a single batch, so ordering is preserved and each event is delivered once.
-   * The parameter is ADDITIVE: omitting it (or passing an empty array) leaves the
-   * projection byte-identical. Events are handled and discarded within the call;
-   * the renderer keeps no event history.
+   * The parameter is ADDITIVE: omitting it (or passing an empty array) enqueues
+   * nothing new. A transient frame enqueued by an earlier batch still wins at
+   * the sprite sites while it is live; the drain's own re-render drops it.
+   * Events are handled and discarded within the call; the renderer keeps no
+   * event history.
    */
   render(state: GameState, context?: RenderContext, events?: readonly GameEvent[]): void;
   /** Show the "welcome back" summary for offline progress. */
@@ -136,6 +153,40 @@ const SHINY_MESSAGE_MS = 2200;
 /** How long the milestone step-change flourish stays up. */
 const MILESTONE_MESSAGE_MS = 2400;
 const MS_PER_SECOND = 1000;
+/** Upper bound on simultaneously live transient frames (one per actor + slack). */
+const MAX_ACTIVE_EFFECTS = 8;
+
+/** The actor a transient frame belongs to. At most one frame per target is live. */
+type AnimationTarget = 'player' | 'enemy' | 'shiny' | 'global';
+
+interface ActiveEffect {
+  target: AnimationTarget;
+  slot: string;
+  /** Monotonic deadline (`performance.now()`-based) — never a wall-clock time. */
+  expiresAtMs: number;
+}
+
+/**
+ * Per-target cue priority. When ONE batch contains several cues for the same
+ * actor, only the highest-priority cue is kept (ties: the LAST occurrence).
+ * Death outranks `stageEntered` on purpose: a kill batch is normally
+ * `enemyKilled` immediately followed by `stageEntered`, and the death frame must
+ * not be lost behind the (longer) spawn popup. The two live on different actor
+ * targets, so the popup is additive, never a replacement.
+ */
+const CUE_PRIORITY: Record<AnimationCueKey, number> = {
+  enemyDeath: 6,
+  bossDeath: 6,
+  stageEntered: 5,
+  playerAttack: 4,
+  enemyHit: 3,
+  bossHit: 3,
+  shinySpawn: 2,
+  shinyClaim: 1,
+};
+
+/** Stable order for draining the per-batch winner map (no key iteration logic). */
+const ANIMATION_TARGETS: readonly AnimationTarget[] = ['player', 'enemy', 'shiny', 'global'];
 
 /** Achievement catalog keyed by id, for splash lookup. */
 const ACHIEVEMENT_BY_ID = new Map<string, AchievementDefinition>(
@@ -153,6 +204,7 @@ interface Refs {
   gold: HTMLElement;
   stage: HTMLElement;
   dps: HTMLElement;
+  playerSprite: HTMLImageElement;
   enemy: HTMLButtonElement;
   enemyName: HTMLElement;
   enemySprite: HTMLImageElement;
@@ -168,6 +220,8 @@ interface Refs {
   shinyToast: HTMLElement;
   shinyFlourish: HTMLElement;
   milestoneFlourish: HTMLElement;
+  spawnPopup: HTMLElement;
+  spawnPopupSprite: HTMLImageElement;
   advisory: HTMLElement;
   advisoryKicker: HTMLElement;
   advisoryBody: HTMLElement;
@@ -276,6 +330,22 @@ const SKELETON = `
         <span class="shiny__name" data-role="shiny-name">${theme.shiny.name}</span>
       </button>
       <p class="hint">${theme.ui.tapHint}</p>
+      <div
+        class="spawn-popup"
+        data-testid="spawn-popup"
+        data-role="spawn-popup"
+        hidden
+        aria-hidden="true"
+      >
+        <img
+          class="spawn-popup__sprite"
+          data-role="spawn-popup-sprite"
+          alt=""
+          aria-hidden="true"
+          draggable="false"
+          src="${assetUrl('spawn-popup')}"
+        />
+      </div>
     </main>
 
     <div class="shiny-toast" data-testid="shiny-toast" data-role="shiny-toast" hidden aria-live="polite"></div>
@@ -397,12 +467,27 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
   let latestState: GameState | null = null;
   let latestContext: RenderContext | undefined;
 
+  // Transient animation frames (PRESENTATION-only). The theme declares each
+  // cue's asset slot and display duration; /web owns the entire lifecycle.
+  // Deadlines use `performance.now()` (monotonic), so a wall-clock jump can
+  // never strand a frame. `render`/`handleEvents` signatures are unchanged.
+  const activeEffects: ActiveEffect[] = [];
+  let drainTimer: number | null = null;
+  // Identifies the global frame currently on screen, so its entrance animation
+  // restarts ONCE per cue rather than on every render while it is live.
+  let lastGlobalCueKey: string | null = null;
+
   // Golden Event (Shiny) presentation state. Position/drift is /web-only and
   // NEVER reaches engine state: the engine only knows the window's clock.
   // `lastShinyId` identifies the Shiny currently on screen; when it disappears,
   // a pending claim means the player grabbed it, otherwise it escaped.
   let lastShinyId: string | null = null;
   let lastShinyKind: ShinyKind | null = null;
+  // The idle sprite slot of the last Shiny seen. Once a claim cue expires the
+  // element returns to this frame, ready for the next spawn — the claim cue's
+  // own frame is NOT an idle frame and the kind is no longer active to read it
+  // from by then.
+  let lastShinySpriteSlot = 'shiny-idle';
   let pendingClaim = false;
   let shinyMessageTimer: number | null = null;
 
@@ -466,6 +551,10 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
   // this local flag rather than reacting to the event list, so the Shiny cue's
   // existing diff-based behaviour is unchanged in this phase.
   refs.shiny.addEventListener('click', () => {
+    // Only a live (unclaimed) Shiny may be claimed. After a grab the element is
+    // briefly repurposed to paint the declared claim frame; a tap on that frame
+    // must NOT dispatch a second claim, because the Shiny is already gone.
+    if (latestState === null || getActiveEvent(latestState) === null) return;
     pendingClaim = true;
     handlers.onClaim();
   });
@@ -476,6 +565,15 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
   refs.achievementsToggle.addEventListener('click', () => {
     revealLockedAchievements = !revealLockedAchievements;
     if (latestState !== null) render(latestState, latestContext);
+  });
+
+  // Reduced motion is a LIVE preference, so the listener is registered where the
+  // effect queue lives. Turning it ON drops every frame and cancels the drain
+  // (then re-projects, so a sprite mid-frame returns to idle immediately);
+  // turning it OFF simply lets the next event batch enqueue frames again.
+  motionQuery.addEventListener('change', (event) => {
+    reducedMotion = event.matches;
+    if (reducedMotion) clearEffects();
   });
 
   function render(state: GameState, context?: RenderContext, events?: readonly GameEvent[]): void {
@@ -490,8 +588,14 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     const boss = isBoss(state.combat.stage);
     refs.enemyName.textContent = boss ? theme.enemy.boss : theme.enemy.label;
     refs.bossBadge.hidden = !boss;
-    // The boss uses the larger declared frame. Static idle art only this phase.
-    setSprite(refs.enemySprite, boss ? 'boss-grunt-idle' : 'enemy-grunt-idle');
+    // Idle art wins by default. A live cue frame (attack / hit / death) wins
+    // while it is live; the drain's re-render returns each sprite to idle
+    // automatically when the frame expires.
+    setSprite(refs.playerSprite, currentEffectSlot('player', 'player-idle'));
+    setSprite(
+      refs.enemySprite,
+      currentEffectSlot('enemy', boss ? 'boss-grunt-idle' : 'enemy-grunt-idle'),
+    );
 
     const maxHp = getEnemyMaxHp(state);
     refs.enemyHp.textContent = theme.enemy.hp(
@@ -502,6 +606,7 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
 
     renderBoost(state);
     renderShiny(state);
+    renderSpawnPopup();
 
     // Guidance surface. The per-slot advisory powers the "better item in your
     // bag" badges; the stall advisory powers the escalating callout. Both are
@@ -553,38 +658,178 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     renderAchievements(state);
     renderChoice(state);
 
-    // Events are delivered LAST, after the state has been projected, so a future
+    // Events are delivered LAST, after the state has been projected, so the
     // animation trigger reads the freshly-rendered DOM and the current state.
     if (events !== undefined && events.length > 0) handleEvents(events);
   }
 
   /**
-   * ANIMATION SEAM — themeable animation triggers bind here.
+   * ANIMATION SEAM — theme-driven transient frames bind here.
    *
    * Every engine `GameEvent` produced since the previous frame arrives here
    * exactly once, in order, as ONE batch per rendered frame (the host coalesces
-   * all of a frame's fixed steps into a single batch). This is the seam a future
-   * theme's animation code consumes, so effects can react to *what just
-   * happened* — a hit, a kill, a stage change — instead of inferring it from a
-   * state diff.
-   *
-   * This phase is deliberately a NO-OP: events are plumbed but nothing is
-   * animated, so the projection stays byte-identical. The batch is processed and
-   * DISCARDED, so memory is bounded by a single frame no matter how long the
-   * session runs — the renderer keeps NO event history.
-   *
-   * TODO(animation): map event types to triggers, e.g. `damageDealt` → enemy hit
-   * flash, `enemyKilled` → death burst, `stageEntered` → stage transition,
-   * `gearEquipped`/`gearUpgraded`/`milestoneReached` → gear flourishes,
-   * `eventSpawned`/`eventClaimed`/`eventExpired` and
-   * `boostActivated`/`boostExpired` → Shiny/frenzy cues, and
-   * `achievementUnlocked`/`bossCheckFailed`/`progressionWall`/`choiceResolved`/
-   * `goldChanged` → their existing non-blocking callouts. Animation code must
-   * never mutate engine state or block the tick loop.
+   * all of a frame's fixed steps into a single batch). Cues are grouped by ACTOR
+   * TARGET and only ONE winner per target is enqueued, so a burst of events (a
+   * 10-hit frame, a multi-stage tick) can never stack frames. The batch is then
+   * DISCARDED: the renderer keeps NO event history, so memory stays bounded by
+   * a single frame no matter how long the session runs. Nothing here can mutate
+   * engine state or block the tick loop.
    */
   function handleEvents(events: readonly GameEvent[]): void {
-    // Intentionally a no-op in this phase (the only goal is delivery).
-    void events;
+    // Reduced motion: no sprite may ever leave its idle frame, so the whole
+    // batch is dropped. Clearing is defensive — the media-query listener below
+    // normally clears the moment the preference flips.
+    if (reducedMotion) {
+      clearEffects();
+      return;
+    }
+
+    const state = latestState;
+    if (state === null) return;
+
+    // Event → cue mapping, scanned LEFT-TO-RIGHT. `currentStage` starts from the
+    // freshly-rendered state and is updated by `stageEntered`, so a stage change
+    // inside the batch is reflected by later events (one tick's damage budget
+    // can clear several enemies).
+    const cues: { target: AnimationTarget; cue: AnimationCueKey }[] = [];
+    let currentStage = state.combat.stage;
+    for (const event of events) {
+      switch (event.type) {
+        case 'damageDealt':
+          // A click also animates the player; every damage source animates the
+          // enemy it landed on (boss frame on a boss stage).
+          if (event.source === 'click') cues.push({ target: 'player', cue: 'playerAttack' });
+          cues.push({ target: 'enemy', cue: isBoss(currentStage) ? 'bossHit' : 'enemyHit' });
+          break;
+        case 'enemyKilled':
+          cues.push({ target: 'enemy', cue: isBoss(event.stage) ? 'bossDeath' : 'enemyDeath' });
+          break;
+        case 'stageEntered':
+          currentStage = event.stage;
+          cues.push({ target: 'global', cue: 'stageEntered' });
+          break;
+        case 'eventSpawned':
+          cues.push({ target: 'shiny', cue: 'shinySpawn' });
+          break;
+        case 'eventClaimed':
+          cues.push({ target: 'shiny', cue: 'shinyClaim' });
+          break;
+        default:
+          // Every other event type drives NO sprite cue in this phase.
+          break;
+      }
+    }
+
+    // Per-actor winner: highest priority of the batch; ties go to the LAST
+    // occurrence (`>=`), so a late `enemyKilled` beats an earlier hit.
+    const winners: Partial<Record<AnimationTarget, AnimationCueKey>> = {};
+    for (const { target, cue } of cues) {
+      const current = winners[target];
+      if (current === undefined || CUE_PRIORITY[cue] >= CUE_PRIORITY[current]) {
+        winners[target] = cue;
+      }
+    }
+
+    let enqueued = false;
+    for (const target of ANIMATION_TARGETS) {
+      const cue = winners[target];
+      if (cue === undefined) continue;
+      enqueued = enqueueEffect(target, theme.animation.cues[cue]) || enqueued;
+    }
+
+    // Project the new frames NOW. This render already wrote the idle sprites, so
+    // without this the frame would not show until the host's next render — most
+    // of a ~150 ms hit frame's life. The re-render carries NO events, so it is
+    // bounded and cannot recurse.
+    if (enqueued && latestState !== null) render(latestState, latestContext);
+  }
+
+  /**
+   * The live frame for an actor target, or null. Enqueue REPLACES same-target
+   * frames, so there is at most one per target by construction.
+   */
+  function activeEffectFor(target: AnimationTarget): ActiveEffect | null {
+    for (const effect of activeEffects) {
+      if (effect.target === target) return effect;
+    }
+    return null;
+  }
+
+  /**
+   * The slot an actor's sprite should show: its live cue frame when one exists,
+   * otherwise the idle slot the caller would have used. `reducedMotion` is
+   * checked here too, so even a stale effect can never swap in a frame.
+   */
+  function currentEffectSlot(target: AnimationTarget, idleSlot: string): string {
+    if (reducedMotion) return idleSlot;
+    const effect = activeEffectFor(target);
+    return effect === null ? idleSlot : effect.slot;
+  }
+
+  /** Drop every live frame, stop the drain, and re-project so sprites return to idle. */
+  function clearEffects(): void {
+    if (drainTimer !== null) {
+      window.clearTimeout(drainTimer);
+      drainTimer = null;
+    }
+    const hadEffects = activeEffects.length > 0;
+    activeEffects.length = 0;
+    if (hadEffects && latestState !== null) render(latestState, latestContext);
+  }
+
+  /**
+   * ONE timer for the whole queue: it wakes at the EARLIEST deadline, removes
+   * whatever expired, re-renders (sprites return to idle, the popup hides), and
+   * re-arms for the earliest survivor. Any pending timer is cleared first, so at
+   * most one drain can ever exist and timers never accumulate.
+   */
+  function scheduleDrain(): void {
+    if (drainTimer !== null) {
+      window.clearTimeout(drainTimer);
+      drainTimer = null;
+    }
+    if (reducedMotion || activeEffects.length === 0) return;
+    let earliest = Infinity;
+    for (const effect of activeEffects) {
+      if (effect.expiresAtMs < earliest) earliest = effect.expiresAtMs;
+    }
+    drainTimer = window.setTimeout(drainEffects, Math.max(0, earliest - performance.now()));
+  }
+
+  function drainEffects(): void {
+    drainTimer = null;
+    const now = performance.now();
+    let changed = false;
+    for (let index = activeEffects.length - 1; index >= 0; index -= 1) {
+      const effect = activeEffects[index];
+      if (effect === undefined || effect.expiresAtMs > now) continue;
+      activeEffects.splice(index, 1);
+      changed = true;
+    }
+    // Only re-project when a frame actually ended; an early wake just re-arms.
+    if (changed && latestState !== null) render(latestState, latestContext);
+    scheduleDrain();
+  }
+
+  /**
+   * Queue one transient frame. A newer cue REPLACES that actor's older frame
+   * (only the newest reaction is worth showing), a non-positive duration
+   * disables the cue entirely (the theme's off switch), and the queue is capped
+   * so presentation memory stays O(1). Durations are display-only: they never
+   * reach the engine and never block the tick loop.
+   */
+  function enqueueEffect(target: AnimationTarget, cue: ThemeAnimationCue): boolean {
+    if (cue.durationMs <= 0) return false;
+    const existing = activeEffects.findIndex((effect) => effect.target === target);
+    if (existing !== -1) activeEffects.splice(existing, 1);
+    activeEffects.push({
+      target,
+      slot: cue.slot,
+      expiresAtMs: performance.now() + cue.durationMs,
+    });
+    while (activeEffects.length > MAX_ACTIVE_EFFECTS) activeEffects.shift();
+    scheduleDrain();
+    return true;
   }
 
   /**
@@ -810,22 +1055,31 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
         lastShinyKind = active.kind;
         refs.shiny.dataset.kind = active.kind;
         refs.shinyName.textContent = shinyName(active.kind);
-        // Each Shiny kind has its own declared sprite (static this phase).
-        setSprite(refs.shinySprite, shinySpriteSlot(active.kind));
         // Restart the drift each time a NEW Shiny appears so it always wanders
-        // across a fresh screen. Reduced-motion users get a static target.
-        refs.shiny.classList.remove('shiny--drift');
-        void refs.shiny.offsetWidth;
-        refs.shiny.classList.add('shiny--drift');
+        // across a fresh screen. Reduced-motion users get a static target, so
+        // the class is never (re)started for them.
+        if (!reducedMotion) {
+          refs.shiny.classList.remove('shiny--drift');
+          void refs.shiny.offsetWidth;
+          refs.shiny.classList.add('shiny--drift');
+        }
       }
+      // The transient spawn/claim frame wins over the kind's idle sprite while
+      // it is live; the drain's re-render falls back to idle on expiry. This is
+      // written on every render (setSprite only writes on a real change), so a
+      // cue enqueued after the id changed still reaches the image.
+      lastShinySpriteSlot = shinySpriteSlot(active.kind);
+      setSprite(refs.shinySprite, currentEffectSlot('shiny', lastShinySpriteSlot));
       // Same Shiny still on screen: the claim (if any) did not take.
       pendingClaim = false;
+      refs.shiny.style.pointerEvents = '';
       refs.shiny.hidden = false;
       return;
     }
 
     // The previously-shown Shiny is gone: a pending claim means the player
-    // grabbed it, otherwise it escaped — and missing it costs nothing.
+    // grabbed it, otherwise it escaped — and missing it costs nothing. The
+    // escape toast / claim flourish still fires on THIS (state) render.
     if (lastShinyId !== null) {
       if (pendingClaim && lastShinyKind !== null) showShinyFlourish(lastShinyKind, state);
       else showShinyToast();
@@ -833,8 +1087,54 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     lastShinyId = null;
     lastShinyKind = null;
     pendingClaim = false;
-    refs.shiny.hidden = true;
+
+    // Paint the DECLARED claim frame while its cue is live. `handleEvents`
+    // enqueues that cue for `eventClaimed` AFTER this projection, and its
+    // re-render lands here: there is no active Shiny left to read the frame
+    // from, so without this branch the queued frame would never touch the
+    // image. The element is repurposed as a NON-interactive display of the
+    // burst — it is already claimed, so it must not be claimable again — and
+    // the drain's re-render hides it and restores the idle frame on expiry.
+    const claimEffect = reducedMotion ? null : activeEffectFor('shiny');
+    if (claimEffect !== null) {
+      setSprite(refs.shinySprite, currentEffectSlot('shiny', lastShinySpriteSlot));
+      refs.shiny.classList.remove('shiny--drift');
+      refs.shiny.style.pointerEvents = 'none';
+      refs.shiny.hidden = false;
+      return;
+    }
+
+    // No live frame: hide the element and return its sprite to the last kind's
+    // idle frame, ready for the next spawn.
+    setSprite(refs.shinySprite, lastShinySpriteSlot);
     refs.shiny.classList.remove('shiny--drift');
+    refs.shiny.style.pointerEvents = '';
+    refs.shiny.hidden = true;
+  }
+
+  /**
+   * The GLOBAL transient popup (the `stageEntered` cue, i.e. a new enemy
+   * spawned). Shown while a `global` effect is live and hidden by the drain. It
+   * is a pure announcement: `pointer-events:none` and `aria-hidden` in the
+   * skeleton, positioned in the stage's top corner, so it never covers the
+   * enemy button or the Shiny and never becomes a touch target.
+   */
+  function renderSpawnPopup(): void {
+    const effect = reducedMotion ? null : activeEffectFor('global');
+    const key = effect === null ? null : `${effect.slot}:${effect.expiresAtMs}`;
+    if (effect !== null) setSprite(refs.spawnPopupSprite, effect.slot);
+    refs.spawnPopup.hidden = effect === null;
+    if (key === null) {
+      refs.spawnPopup.classList.remove('spawn-popup--in');
+    } else if (key !== lastGlobalCueKey) {
+      // Restart the entrance pop ONCE per cue, not on every render while it is
+      // live. Reduced motion is covered by the global `animation-duration`
+      // override in the media block, and `effect` is already null for it.
+      refs.spawnPopup.classList.remove('spawn-popup--in');
+      void refs.spawnPopup.offsetWidth;
+      refs.spawnPopup.classList.add('spawn-popup--in');
+    }
+    lastGlobalCueKey = key;
   }
 
   function showShinyToast(): void {
@@ -983,6 +1283,7 @@ function collectRefs(root: HTMLElement): Refs {
     gold: req(root, '[data-testid="gold"]'),
     stage: req(root, '[data-testid="stage"]'),
     dps: req(root, '[data-testid="dps"]'),
+    playerSprite: req(root, '[data-testid="player-sprite"]'),
     enemy: req(root, '[data-testid="enemy"]'),
     enemyName: req(root, '[data-role="enemy-name"]'),
     enemySprite: req(root, '[data-testid="enemy-sprite"]'),
@@ -998,6 +1299,8 @@ function collectRefs(root: HTMLElement): Refs {
     shinyToast: req(root, '[data-testid="shiny-toast"]'),
     shinyFlourish: req(root, '[data-testid="shiny-flourish"]'),
     milestoneFlourish: req(root, '[data-testid="milestone-flourish"]'),
+    spawnPopup: req(root, '[data-testid="spawn-popup"]'),
+    spawnPopupSprite: req(root, '[data-role="spawn-popup-sprite"]'),
     advisory: req(root, '[data-role="upgrade-advisory"]'),
     advisoryKicker: req(root, '[data-role="advisory-kicker"]'),
     advisoryBody: req(root, '[data-role="advisory-body"]'),
