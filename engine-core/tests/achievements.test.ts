@@ -6,7 +6,7 @@ import {
   evaluateAchievements,
   getCritStats,
 } from '../src/index';
-import { BALANCE, BAG_CAP, CRIT_CHANCE_CAP } from '../src/balance';
+import { BALANCE, BAG_CAP, CRIT_CHANCE_CAP, UPGRADE_MILESTONE_INTERVAL } from '../src/balance';
 import { makeGear, makeNecklace, makeRing, makeState } from './helpers';
 
 /** Unlocked ids emitted in an event list. */
@@ -17,9 +17,9 @@ function unlockedIds(events: { type: string; id?: string }[]): string[] {
 }
 
 describe('achievements — catalog', () => {
-  it('is a static catalog of 18-30 uniquely-identified achievements', () => {
+  it('is a static catalog of 18-33 uniquely-identified achievements', () => {
     expect(ACHIEVEMENTS.length).toBeGreaterThanOrEqual(18);
-    expect(ACHIEVEMENTS.length).toBeLessThanOrEqual(30);
+    expect(ACHIEVEMENTS.length).toBeLessThanOrEqual(33);
     const ids = ACHIEVEMENTS.map((achievement) => achievement.id);
     expect(new Set(ids).size).toBe(ids.length);
     for (const achievement of ACHIEVEMENTS) {
@@ -207,6 +207,47 @@ describe('achievements — expanded catalog triggers', () => {
     const { events } = applyAction(start, { type: 'click' });
     expect(unlockedIds(events)).toContain('hoarder');
     expect(unlockedIds(events)).not.toContain('bag-lady');
+  });
+});
+
+describe('achievements — upgrade milestones', () => {
+  it('emits milestone-first when an upgrade crosses a milestone', () => {
+    const start = makeState({
+      gold: 100_000,
+      equippedWeapon: makeGear(20, UPGRADE_MILESTONE_INTERVAL - 1),
+    });
+    const { state, events } = applyAction(start, { type: 'upgradeEquipped', slot: 'weapon' });
+
+    expect(state.gear.equipped.weapon?.upgradeLevel).toBe(UPGRADE_MILESTONE_INTERVAL);
+    expect(unlockedIds(events)).toContain('milestone-first');
+  });
+
+  it('does not emit milestone-first for a non-crossing upgrade', () => {
+    const start = makeState({ gold: 100_000, equippedWeapon: makeGear(20, 0) });
+    const { events } = applyAction(start, { type: 'upgradeEquipped', slot: 'weapon' });
+    expect(unlockedIds(events)).not.toContain('milestone-first');
+  });
+
+  it('emits upgrade-diversified and upgrade-veteran as slots fill and levels stack', () => {
+    const slots = ['weapon', 'ring1', 'ring2', 'necklace'] as const;
+    let state = makeState({
+      gold: 1_000_000,
+      equippedWeapon: makeGear(20, 0, 'w'),
+      equippedRing1: makeRing(20, 'ring1'),
+      equippedRing2: makeRing(20, 'ring2'),
+      equippedNecklace: makeNecklace(20),
+    });
+
+    for (let round = 0; round < 3; round += 1) {
+      for (const slot of slots) {
+        state = applyAction(state, { type: 'upgradeEquipped', slot }).state;
+      }
+    }
+
+    // Three rounds put every slot at level 3 (12 total upgrade levels).
+    for (const slot of slots) expect(state.gear.equipped[slot]?.upgradeLevel).toBe(3);
+    expect(state.meta.achievements).toContain('upgrade-diversified');
+    expect(state.meta.achievements).toContain('upgrade-veteran');
   });
 });
 

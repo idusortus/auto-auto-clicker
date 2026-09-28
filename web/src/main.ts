@@ -118,7 +118,7 @@ function startHost(root: HTMLElement, prepared: PreparedGame): void {
 
   const renderer = mountRenderer(root, {
     onClick: () => dispatch({ type: 'click' }),
-    onUpgrade: () => dispatch({ type: 'upgradeEquipped', slot: 'weapon' }),
+    onUpgrade: (slot) => dispatch({ type: 'upgradeEquipped', slot }),
     onEquip: (instanceId) => dispatch({ type: 'equip', instanceId }),
     onChoice: (choice) => dispatch({ type: 'resolveChoice', choice }),
     onClaim: () => dispatch({ type: 'claimEvent' }),

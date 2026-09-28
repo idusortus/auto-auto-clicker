@@ -16,6 +16,13 @@ import type { GearDefinition, GearSlot, ShinyKind } from './types';
 export const CURRENT_SAVE_VERSION = 4;
 
 /**
+ * Every gear slot, in one canonical order. This is the single ordered list the
+ * engine aggregates over (gear stats, milestones, save parsing), so adding a
+ * slot is one entry here rather than several independent arrays.
+ */
+export const GEAR_SLOTS: readonly GearSlot[] = ['weapon', 'ring1', 'ring2', 'necklace'];
+
+/**
  * Hard ceiling on total critical chance from all slots. Critical strikes are
  * modelled as an EXPECTED-DPS multiplier (not a per-hit roll) so the engine
  * stays deterministic and `getProjectedKillMs` stays exact; without a cap the
@@ -47,6 +54,72 @@ export const POWER_MULTIPLIER_CAP = 0.02;
  * 25% moves the readout while gold stays the deliberately minor lever.
  */
 export const GOLD_MULTIPLIER_CAP = 0.25;
+
+// ---------------------------------------------------------------------------
+// Upgrade milestones — the visible "spike" between walls.
+//
+// Gold-funded upgrades are deliberately tiny (`upgradeStatMultiplier` = 1.05)
+// and their costs grow steeply (×6 per level), so a plain upgrade is a smooth,
+// almost invisible nudge. Every `UPGRADE_MILESTONE_INTERVAL` levels in a single
+// equipped item, that slot instead takes a VISIBLE step: a small extra boost to
+// the capped secondary stats (crit chance / crit damage / gold / power).
+//
+// DERIVED, NEVER PERSISTED: the bonus is a pure function of an item's
+// `upgradeLevel`, computed on read in the state getters. There is no new save
+// field and no schema bump (stays v4) — a milestone cannot drift from the level
+// that earned it, and it is regained automatically if a save is reloaded.
+//
+// CAPPED BY CONSTRUCTION: milestones feed the SAME clamped aggregations as
+// ordinary gear (`getCritStats` / `getGlobalBonuses`), so they can never exceed
+// CRIT_CHANCE_CAP / CRIT_MULTIPLIER_CAP / POWER_MULTIPLIER_CAP /
+// GOLD_MULTIPLIER_CAP. Gold stays the minor lever: a single milestone is ~0.5–1%
+// of a capped stat, and the whole milestone channel is bounded by those caps.
+//
+// SLOT → STAT: each slot boosts the stat it already owns — rings boost crit,
+// the necklace boosts gold/power, and the weapon (which has no secondary stat of
+// its own) boosts overall power. A slot that would grant nothing (e.g. the
+// necklace's power already saturating `POWER_MULTIPLIER_CAP`) simply contributes
+// nothing to the clamped total, which is the intended ceiling.
+//
+// INTERVAL: 3, not the sketched 5. Upgrade costs grow ×6 per level against flat
+// gold income, so with the shipped economy the current item's `upgradeLevel`
+// rarely passes 2–7 (measured: per-run max 2–7 across the five sim seeds).
+// An interval of 5 is unreachable content; 3 is the smallest value that still
+// reads as "every few upgrades" and actually fires in play.
+//
+// DETERMINISM: no RNG, no clock. `upgradeMilestoneCount` is a pure floor.
+// ---------------------------------------------------------------------------
+
+/** Upgrade levels in one item per milestone step. */
+export const UPGRADE_MILESTONE_INTERVAL = 3;
+
+/** The four capped secondary stats a milestone can boost. */
+export interface MilestoneBonus {
+  critChance: number;
+  critMultiplier: number;
+  goldMultiplier: number;
+  powerMultiplier: number;
+}
+
+/** Per-milestone bonus, by slot. All values feed the existing capped stats. */
+export const UPGRADE_MILESTONE_BONUS: Record<GearSlot, MilestoneBonus> = {
+  weapon: { critChance: 0, critMultiplier: 0, goldMultiplier: 0, powerMultiplier: 0.01 },
+  ring1: { critChance: 0.015, critMultiplier: 0.015, goldMultiplier: 0, powerMultiplier: 0 },
+  ring2: { critChance: 0.015, critMultiplier: 0.015, goldMultiplier: 0, powerMultiplier: 0 },
+  // Gold only: a necklace's power base (0.05) already exceeds
+  // POWER_MULTIPLIER_CAP (0.02), so a power milestone there would be dead on
+  // arrival (see the necklace note on BALANCE below).
+  necklace: { critChance: 0, critMultiplier: 0, goldMultiplier: 0.01, powerMultiplier: 0 },
+};
+
+/**
+ * Milestones achieved at `upgradeLevel` (whole steps only). Floors, so 0–2
+ * levels is always 0 at interval 3. Non-finite/negative input is 0.
+ */
+export function upgradeMilestoneCount(upgradeLevel: number): number {
+  if (!Number.isFinite(upgradeLevel) || upgradeLevel <= 0) return 0;
+  return Math.floor(upgradeLevel / UPGRADE_MILESTONE_INTERVAL);
+}
 
 /**
  * Per-slot drop sampling weights. `rollGearDrop` first rolls the global

@@ -17,11 +17,15 @@ import {
   choiceGoldGrant,
   CURRENT_SAVE_VERSION,
   enemyMaxHp,
+  GEAR_SLOTS,
   goldReward,
   projectedKillMs,
   SHINY_CACHE_GOLD_MULTIPLE,
   shinySpawnDelayMs,
+  UPGRADE_MILESTONE_BONUS,
+  UPGRADE_MILESTONE_INTERVAL,
   upgradeCost,
+  upgradeMilestoneCount,
 } from './balance';
 import { gearDefinitionFor } from './content';
 import { ACHIEVEMENTS } from './achievements';
@@ -244,6 +248,70 @@ export function getUpgradeCost(state: GameState, slot: GearSlot): number | null 
   return upgradeCost(item.upgradeLevel);
 }
 
+/**
+ * Milestone status of one slot at a given upgrade level. Derived purely from
+ * `upgradeLevel` and the balance knobs — nothing here is persisted (see the
+ * milestone block in balance.ts), so no save-schema change is needed.
+ */
+export interface MilestoneInfo {
+  slot: GearSlot;
+  /** Upgrade levels per milestone step. */
+  interval: number;
+  /** Whole milestones reached at this level. */
+  achievedCount: number;
+  /** Upgrade level that reaches the next milestone. */
+  nextAtLevel: number;
+  /** Human-readable per-milestone bonus, worded from the balance numbers. */
+  bonusDescription: string;
+}
+
+/** Format a fractional bonus as a percentage (e.g. 0.015 -> "1.5%"). */
+function formatBonusPercent(value: number): string {
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+/**
+ * Wording for one milestone's bonus, built from `UPGRADE_MILESTONE_BONUS` so a
+ * renderer never holds a balance number. Only the non-zero parts are listed.
+ */
+function describeMilestoneBonus(slot: GearSlot): string {
+  const bonus = UPGRADE_MILESTONE_BONUS[slot];
+  const parts: string[] = [];
+  if (bonus.critChance > 0) parts.push(`+${formatBonusPercent(bonus.critChance)} crit`);
+  if (bonus.critMultiplier > 0) parts.push(`+${formatBonusPercent(bonus.critMultiplier)} crit dmg`);
+  if (bonus.goldMultiplier > 0) parts.push(`+${formatBonusPercent(bonus.goldMultiplier)} gold`);
+  if (bonus.powerMultiplier > 0) parts.push(`+${formatBonusPercent(bonus.powerMultiplier)} power`);
+  return parts.join(' · ');
+}
+
+/**
+ * Milestone info for `slot` at `upgradeLevel`. Pure: a function of the level and
+ * the balance knobs only, so a host can query a hypothetical level.
+ */
+export function getMilestoneInfo(slot: GearSlot, upgradeLevel: number): MilestoneInfo {
+  const achievedCount = upgradeMilestoneCount(upgradeLevel);
+  return {
+    slot,
+    interval: UPGRADE_MILESTONE_INTERVAL,
+    achievedCount,
+    nextAtLevel: (achievedCount + 1) * UPGRADE_MILESTONE_INTERVAL,
+    bonusDescription: describeMilestoneBonus(slot),
+  };
+}
+
+/**
+ * Milestone info for every equipped slot, keyed by slot; empty slots are null.
+ * Derived on read, so a reloaded save reconstructs its badges automatically.
+ */
+export function getSlotMilestones(state: GameState): Record<GearSlot, MilestoneInfo | null> {
+  const milestones = {} as Record<GearSlot, MilestoneInfo | null>;
+  for (const slot of GEAR_SLOTS) {
+    const item = state.gear.equipped[slot];
+    milestones[slot] = item ? getMilestoneInfo(slot, item.upgradeLevel) : null;
+  }
+  return milestones;
+}
+
 /** Wrap a state in the versioned save blob. `savedAt` defaults to 0 for determinism. */
 export function saveGame(state: GameState, savedAt = 0): SaveGame {
   return {
@@ -291,9 +359,7 @@ function parseGearInstance(raw: unknown, what: string): GearInstance {
   };
 }
 
-/** Every gear slot the save schema understands. Unknown keys are rejected. */
-const GEAR_SLOTS: readonly GearSlot[] = ['weapon', 'ring1', 'ring2', 'necklace'];
-
+/** Gear slots are the canonical `GEAR_SLOTS` order; unknown keys are rejected. */
 function parseEquipped(raw: unknown, context: string): Record<GearSlot, GearInstance | null> {
   const record = requireRecord(raw, `${context}.gear.equipped`);
   for (const key of Object.keys(record)) {

@@ -23,7 +23,9 @@ import {
   getEnemyMaxHp,
   getGearStats,
   getGlobalBonuses,
+  getMilestoneInfo,
   getProjectedKillMs,
+  getSlotMilestones,
   getUpgradeCost,
   isBoss,
 } from '@auto-auto-clicker/engine-core';
@@ -32,6 +34,7 @@ import type {
   GameState,
   GearInstance,
   GearSlot,
+  MilestoneInfo,
   PendingChoice,
   ShinyKind,
 } from '@auto-auto-clicker/engine-core';
@@ -41,8 +44,8 @@ type ChoiceOption = PendingChoice['options'][number];
 export interface RendererHandlers {
   /** The player tapped the enemy. */
   onClick(): void;
-  /** The player asked to upgrade the equipped weapon. */
-  onUpgrade(): void;
+  /** The player asked to upgrade the equipped item in `slot`. */
+  onUpgrade(slot: GearSlot): void;
   /** The player asked to equip a bag item. */
   onEquip(instanceId: string): void;
   /** The player picked a resolution for a pending choice. */
@@ -78,12 +81,21 @@ const MINUTES_PER_HOUR = 60;
 const SPLASH_DURATION_MS = 2600;
 /** How long the Shiny escape toast / claim flourish stays up. */
 const SHINY_MESSAGE_MS = 2200;
+/** How long the milestone step-change flourish stays up. */
+const MILESTONE_MESSAGE_MS = 2400;
 const MS_PER_SECOND = 1000;
 
 /** Achievement catalog keyed by id, for splash lookup. */
 const ACHIEVEMENT_BY_ID = new Map<string, AchievementDefinition>(
   ACHIEVEMENTS.map((achievement) => [achievement.id, achievement]),
 );
+
+/** One per-slot upgrade control: its button plus level/cost readouts. */
+interface UpgradeRow {
+  button: HTMLButtonElement;
+  level: HTMLElement;
+  cost: HTMLElement;
+}
 
 interface Refs {
   gold: HTMLElement;
@@ -101,8 +113,8 @@ interface Refs {
   shinyName: HTMLElement;
   shinyToast: HTMLElement;
   shinyFlourish: HTMLElement;
-  upgradeBtn: HTMLButtonElement;
-  upgradeCost: HTMLElement;
+  milestoneFlourish: HTMLElement;
+  upgradeRows: Record<GearSlot, UpgradeRow>;
   upgradeHint: HTMLElement;
   equipped: HTMLElement;
   bagList: HTMLElement;
@@ -171,14 +183,39 @@ const SKELETON = `
 
     <div class="shiny-toast" data-testid="shiny-toast" data-role="shiny-toast" hidden aria-live="polite"></div>
     <div class="shiny-flourish" data-testid="shiny-flourish" data-role="shiny-flourish" hidden aria-live="polite"></div>
+    <div class="milestone-flourish" data-testid="milestone-flourish" data-role="milestone-flourish" hidden aria-live="polite"></div>
 
     <section class="panel" aria-labelledby="equipped-title">
       <div class="panel__header">
         <h2 class="panel__title" id="equipped-title">Equipped</h2>
-        <span class="panel__meta" data-role="upgrade-cost">—</span>
       </div>
       <div class="equipped" data-testid="equipped" data-role="equipped"></div>
-      <button class="btn btn--primary btn--wide" data-testid="upgrade-btn" data-role="upgrade-btn" type="button">Upgrade weapon</button>
+      <ul class="upgrades" data-role="upgrades">
+        <li class="upgrade" data-slot="weapon">
+          <span class="upgrade__name">Weapon</span>
+          <span class="upgrade__level" data-testid="upgrade-level" data-role="upgrade-level">—</span>
+          <span class="upgrade__cost" data-testid="upgrade-cost" data-role="upgrade-cost">—</span>
+          <button class="btn btn--primary btn--small" data-testid="upgrade-btn" data-role="upgrade-btn" data-slot="weapon" type="button" disabled>Upgrade</button>
+        </li>
+        <li class="upgrade" data-slot="ring1">
+          <span class="upgrade__name">Left ring</span>
+          <span class="upgrade__level" data-testid="upgrade-level-ring1">—</span>
+          <span class="upgrade__cost" data-testid="upgrade-cost-ring1">—</span>
+          <button class="btn btn--primary btn--small" data-testid="upgrade-btn-ring1" data-role="upgrade-btn-ring1" data-slot="ring1" type="button" disabled>Upgrade</button>
+        </li>
+        <li class="upgrade" data-slot="ring2">
+          <span class="upgrade__name">Right ring</span>
+          <span class="upgrade__level" data-testid="upgrade-level-ring2">—</span>
+          <span class="upgrade__cost" data-testid="upgrade-cost-ring2">—</span>
+          <button class="btn btn--primary btn--small" data-testid="upgrade-btn-ring2" data-role="upgrade-btn-ring2" data-slot="ring2" type="button" disabled>Upgrade</button>
+        </li>
+        <li class="upgrade" data-slot="necklace">
+          <span class="upgrade__name">Necklace</span>
+          <span class="upgrade__level" data-testid="upgrade-level-necklace">—</span>
+          <span class="upgrade__cost" data-testid="upgrade-cost-necklace">—</span>
+          <button class="btn btn--primary btn--small" data-testid="upgrade-btn-necklace" data-role="upgrade-btn-necklace" data-slot="necklace" type="button" disabled>Upgrade</button>
+        </li>
+      </ul>
       <p class="hint" data-role="upgrade-hint"></p>
     </section>
 
@@ -247,6 +284,12 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
   let lastShinyKind: ShinyKind | null = null;
   let pendingClaim = false;
   let shinyMessageTimer: number | null = null;
+
+  // Milestone step-change presentation: the achieved-milestone count per slot as
+  // of the last render (null until the first render seeds it, so a save restored
+  // mid-milestone never replays a flourish at boot), plus the flourish timer.
+  let seenMilestones: Record<GearSlot, number> | null = null;
+  let milestoneMessageTimer: number | null = null;
 
   // Achievement splash state: a queue so a burst of unlocks is never lost, and
   // a timer that auto-dismisses the current one.
@@ -341,13 +384,74 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     refs.bagCount.textContent = formatInt(state.gear.bag.length);
 
     const equippedWeapon = state.gear.equipped.weapon;
-    const cost = getUpgradeCost(state, 'weapon');
-    refs.upgradeCost.textContent = cost === null ? '—' : `Cost ${formatInt(cost)}`;
-    refs.upgradeBtn.disabled = cost === null || state.player.gold < cost;
-    refs.upgradeHint.textContent = equippedWeapon === null ? 'Equip a weapon from your bag to upgrade it.' : '';
+    renderUpgradeControls(state);
+    renderMilestones(state);
+    refs.upgradeHint.textContent =
+      equippedWeapon === null ? 'Equip a weapon from your bag to upgrade it.' : '';
 
     renderAchievements(state);
     renderChoice(state);
+  }
+
+  /**
+   * One upgrade control per slot: its own cost (engine getter), its own current
+   * upgrade level, and an independent disabled state. Gold is an allocation
+   * choice across four slots, not a single mandatory tap.
+   */
+  function renderUpgradeControls(state: GameState): void {
+    for (const slot of EQUIP_SLOTS) {
+      const row = refs.upgradeRows[slot];
+      const item = state.gear.equipped[slot];
+      const cost = getUpgradeCost(state, slot);
+      row.level.textContent = item ? `Lv ${formatInt(item.upgradeLevel)}` : '—';
+      row.cost.textContent = cost === null ? '—' : `Cost ${formatInt(cost)}`;
+      row.button.disabled = cost === null || state.player.gold < cost;
+    }
+  }
+
+  /**
+   * The visible step change. When an upgrade crosses a milestone, the host gets
+   * no event list, so the renderer diffs each slot's achieved-milestone count
+   * across renders (the same technique the achievement splash uses). The first
+   * render only seeds the counts.
+   */
+  function renderMilestones(state: GameState): void {
+    const milestones = getSlotMilestones(state);
+    const counts = {} as Record<GearSlot, number>;
+    for (const slot of EQUIP_SLOTS) counts[slot] = milestones[slot]?.achievedCount ?? 0;
+
+    const previous = seenMilestones;
+    seenMilestones = counts;
+    if (previous === null) return;
+
+    let reached: { slot: GearSlot; info: MilestoneInfo } | null = null;
+    for (const slot of EQUIP_SLOTS) {
+      if (counts[slot] <= previous[slot]) continue;
+      const info = milestones[slot];
+      if (info) reached = { slot, info };
+    }
+    if (reached) showMilestoneFlourish(reached.slot, reached.info);
+  }
+
+  /**
+   * A brief, non-blocking flourish for a crossed milestone: it reuses the
+   * transient-message vocabulary but sits ABOVE the Shiny toast/flourish so it
+   * never collides with them or the centered achievement splash. It is
+   * pointer-events:none and never touches engine state or the tick loop.
+   */
+  function showMilestoneFlourish(slot: GearSlot, info: MilestoneInfo): void {
+    refs.milestoneFlourish.textContent =
+      `★ ${upgradeSlotLabel(slot)} milestone ×${formatInt(info.achievedCount)} — ${info.bonusDescription}`;
+    refs.milestoneFlourish.hidden = false;
+    refs.milestoneFlourish.classList.remove('shiny-message--in');
+    void refs.milestoneFlourish.offsetWidth;
+    refs.milestoneFlourish.classList.add('shiny-message--in');
+    if (milestoneMessageTimer !== null) window.clearTimeout(milestoneMessageTimer);
+    milestoneMessageTimer = window.setTimeout(() => {
+      refs.milestoneFlourish.hidden = true;
+      refs.milestoneFlourish.classList.remove('shiny-message--in');
+      milestoneMessageTimer = null;
+    }, MILESTONE_MESSAGE_MS);
   }
 
   function renderAchievements(state: GameState): void {
@@ -503,6 +607,44 @@ function shinyName(kind: ShinyKind): string {
 /** Every occupiable gear slot, in display order. */
 const EQUIP_SLOTS: readonly GearSlot[] = ['weapon', 'ring1', 'ring2', 'necklace'];
 
+/** The upgrade-button testid for a slot (the weapon keeps the original testid). */
+function upgradeButtonTestId(slot: GearSlot): string {
+  return slot === 'weapon' ? 'upgrade-btn' : `upgrade-btn-${slot}`;
+}
+
+function upgradeCostTestId(slot: GearSlot): string {
+  return slot === 'weapon' ? 'upgrade-cost' : `upgrade-cost-${slot}`;
+}
+
+function upgradeLevelTestId(slot: GearSlot): string {
+  return slot === 'weapon' ? 'upgrade-level' : `upgrade-level-${slot}`;
+}
+
+function milestoneBadgeTestId(slot: GearSlot): string {
+  return slot === 'weapon' ? 'milestone-badge' : `milestone-badge-${slot}`;
+}
+
+/** Short slot name used in upgrade/milestone copy. */
+function upgradeSlotLabel(slot: GearSlot): string {
+  if (slot === 'weapon') return 'Weapon';
+  if (slot === 'ring1') return 'Left ring';
+  if (slot === 'ring2') return 'Right ring';
+  return 'Necklace';
+}
+
+/** Resolve the four per-slot upgrade controls from the mounted DOM. */
+function collectUpgradeRows(root: ParentNode): Record<GearSlot, UpgradeRow> {
+  const rows = {} as Record<GearSlot, UpgradeRow>;
+  for (const slot of EQUIP_SLOTS) {
+    rows[slot] = {
+      button: req(root, `[data-testid="${upgradeButtonTestId(slot)}"]`),
+      cost: req(root, `[data-testid="${upgradeCostTestId(slot)}"]`),
+      level: req(root, `[data-testid="${upgradeLevelTestId(slot)}"]`),
+    };
+  }
+  return rows;
+}
+
 function collectRefs(root: HTMLElement): Refs {
   return {
     gold: req(root, '[data-testid="gold"]'),
@@ -520,8 +662,8 @@ function collectRefs(root: HTMLElement): Refs {
     shinyName: req(root, '[data-role="shiny-name"]'),
     shinyToast: req(root, '[data-testid="shiny-toast"]'),
     shinyFlourish: req(root, '[data-testid="shiny-flourish"]'),
-    upgradeBtn: req(root, '[data-testid="upgrade-btn"]'),
-    upgradeCost: req(root, '[data-role="upgrade-cost"]'),
+    milestoneFlourish: req(root, '[data-testid="milestone-flourish"]'),
+    upgradeRows: collectUpgradeRows(root),
     upgradeHint: req(root, '[data-role="upgrade-hint"]'),
     equipped: req(root, '[data-role="equipped"]'),
     bagList: req(root, '[data-role="bag-list"]'),
@@ -546,7 +688,9 @@ function collectRefs(root: HTMLElement): Refs {
 
 function wireHandlers(refs: Refs, handlers: RendererHandlers): void {
   refs.enemy.addEventListener('click', () => handlers.onClick());
-  refs.upgradeBtn.addEventListener('click', () => handlers.onUpgrade());
+  for (const slot of EQUIP_SLOTS) {
+    refs.upgradeRows[slot].button.addEventListener('click', () => handlers.onUpgrade(slot));
+  }
   refs.waitBtn.addEventListener('click', () => handlers.onChoice('wait'));
   refs.watchAdBtn.addEventListener('click', () => handlers.onChoice('watchAd'));
   refs.iapBtn.addEventListener('click', () => handlers.onChoice('iap'));
@@ -597,8 +741,29 @@ function gearCard(state: GameState, slot: GearSlot, item: GearInstance | null): 
   stats.className = 'card__stats';
   stats.textContent = item ? gearStatLine(state, slot, item) : 'Equip a drop from your bag.';
 
-  card.append(title, stats);
+  card.append(title, stats, milestoneBadge(slot, item));
   return card;
+}
+
+/**
+ * The milestone badge for an equipped card. Hidden until the item has crossed a
+ * milestone; when shown it reads e.g. "★ ×2 — +1.0% power". Both the count and
+ * the wording come from the engine getter, so /web holds no balance number.
+ */
+function milestoneBadge(slot: GearSlot, item: GearInstance | null): HTMLElement {
+  const badge = document.createElement('p');
+  badge.className = 'card__milestone';
+  badge.setAttribute('data-testid', milestoneBadgeTestId(slot));
+  badge.setAttribute('data-slot', slot);
+
+  const info = getMilestoneInfo(slot, item ? item.upgradeLevel : 0);
+  if (item && info.achievedCount > 0) {
+    badge.textContent = `★ ×${formatInt(info.achievedCount)} — ${info.bonusDescription}`;
+    badge.hidden = false;
+  } else {
+    badge.hidden = true;
+  }
+  return badge;
 }
 
 function slotLabel(slot: GearSlot, item: GearInstance | null): string {

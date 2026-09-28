@@ -139,6 +139,7 @@ test('enemy and upgrade controls meet the 44px touch-target minimum', async ({
   const controls: Array<[string, typeof enemy]> = [
     ['enemy', enemy],
     ['upgrade-btn', upgradeBtn],
+    ['upgrade-btn-ring1', page.getByTestId('upgrade-btn-ring1')],
   ];
 
   for (const [name, control] of controls) {
@@ -147,6 +148,81 @@ test('enemy and upgrade controls meet the 44px touch-target minimum', async ({
     expect(box.width, `${name} width`).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
     expect(box.height, `${name} height`).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
   }
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('offers one upgrade control per slot, disabled while its slot is empty', async ({
+  page,
+  consoleErrors,
+}) => {
+  await page.goto('/');
+
+  // A fresh game is unarmed and has no rings/necklace, so every control exists
+  // but is independently disabled. The weapon control keeps its original testid.
+  await expect(page.getByTestId('upgrade-btn')).toBeVisible();
+  for (const testId of ['upgrade-btn', 'upgrade-btn-ring1', 'upgrade-btn-ring2', 'upgrade-btn-necklace']) {
+    await expect(page.getByTestId(testId)).toBeDisabled();
+  }
+  await expect(page.getByTestId('upgrade-level')).toHaveText('—');
+  await expect(page.getByTestId('upgrade-level-ring1')).toHaveText('—');
+  await expect(page.getByTestId('upgrade-cost')).toHaveText('—');
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('a non-weapon slot upgrades independently of the weapon', async ({ page, consoleErrors }) => {
+  await injectSave(page, {
+    gold: 100_000,
+    weapon: { itemLevel: 20, upgradeLevel: 0 },
+    ring1: { itemLevel: 20, upgradeLevel: 0 },
+  });
+  await page.goto('/');
+
+  const ringBtn = page.getByTestId('upgrade-btn-ring1');
+  await expect(ringBtn).toBeEnabled();
+  await expect(page.getByTestId('upgrade-level-ring1')).toHaveText('Lv 0');
+
+  await ringBtn.click();
+
+  // Only the ring is upgraded; the weapon's level is untouched (per-slot choice).
+  await expect(page.getByTestId('upgrade-level-ring1')).toHaveText('Lv 1');
+  await expect(page.getByTestId('upgrade-level')).toHaveText('Lv 0');
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('crossing an upgrade milestone shows a card badge and a non-blocking flourish', async ({
+  page,
+  consoleErrors,
+}) => {
+  // Plenty of gold so the milestone interval is reachable within a few clicks,
+  // whatever the interval is tuned to.
+  await injectSave(page, {
+    gold: 1_000_000,
+    weapon: { itemLevel: 20, upgradeLevel: 0 },
+  });
+  await page.goto('/');
+
+  const upgradeBtn = page.getByTestId('upgrade-btn');
+  const badge = page.getByTestId('milestone-badge');
+  const flourish = page.getByTestId('milestone-flourish');
+
+  await expect(upgradeBtn).toBeEnabled();
+  await expect(badge).toBeHidden();
+  await expect(flourish).toBeHidden();
+
+  // Upgrade the weapon until the milestone badge appears (bounded).
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    if (await badge.isVisible()) break;
+    await upgradeBtn.click();
+  }
+
+  await expect(badge).toBeVisible();
+  await expect(badge).toContainText('★ ×1');
+  // The step change is announced, not just the number.
+  await expect(flourish).toBeVisible();
+  await expect(flourish).toContainText('milestone');
 
   expect(consoleErrors).toEqual([]);
 });
@@ -196,14 +272,31 @@ test('unlocking an achievement shows a splash and increments the count', async (
 
 const SAVE_KEY = 'auto-auto-clicker.save.v1';
 
+interface InjectedGear {
+  itemLevel: number;
+  upgradeLevel: number;
+}
+
 interface InjectedState {
   totalPlayedMs?: number;
   active?: { kind: 'frenzy' | 'cache' | 'drop'; spawnedAtMs: number; expiresAtMs: number } | null;
   boost?: { dpsMultiplier: number; expiresAtMs: number } | null;
   gold?: number;
+  weapon?: InjectedGear | null;
+  ring1?: InjectedGear | null;
 }
 
-/** Build a minimal valid v4 save with an optional active Shiny / boost. */
+/** A persisted gear instance (SOURCE fields only). */
+function injectedInstance(id: string, definitionId: string, gear: InjectedGear): unknown {
+  return {
+    id,
+    definitionId,
+    itemLevel: gear.itemLevel,
+    upgradeLevel: gear.upgradeLevel,
+  };
+}
+
+/** Build a minimal valid v4 save with an optional active Shiny / boost / gear. */
 function injectedSave(options: InjectedState): unknown {
   return {
     version: 4,
@@ -220,7 +313,12 @@ function injectedSave(options: InjectedState): unknown {
       player: { gold: options.gold ?? 0 },
       combat: { stage: 1, enemyHp: 30, damageCarry: 0 },
       gear: {
-        equipped: { weapon: null, ring1: null, ring2: null, necklace: null },
+        equipped: {
+          weapon: options.weapon ? injectedInstance('test-weapon', 'weapon', options.weapon) : null,
+          ring1: options.ring1 ? injectedInstance('test-ring1', 'ring1', options.ring1) : null,
+          ring2: null,
+          necklace: null,
+        },
         bag: [],
         nextInstanceId: 1,
       },
@@ -241,9 +339,11 @@ async function injectSave(page: Page, options: InjectedState): Promise<void> {
   await page.addInitScript(
     ({ key, save }) => {
       window.localStorage.clear();
+      // A FUTURE savedAt means zero offline time, so boot shows no "welcome back"
+      // overlay (which would otherwise intercept pointer events on slow loads).
       window.localStorage.setItem(
         key,
-        JSON.stringify({ ...(save as { version: number; state: unknown }), savedAt: Date.now() }),
+        JSON.stringify({ ...(save as { version: number; state: unknown }), savedAt: Date.now() + 60_000 }),
       );
     },
     { key: SAVE_KEY, save: injectedSave(options) },

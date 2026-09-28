@@ -47,9 +47,15 @@ exponentially with item level, so a newer drop is the power jump. Besides the **
 (DPS/click), gear now includes two **ring** slots (critical chance/multiplier) and a rare
 **necklace** (gold gain + overall DPS bonus); critical strikes are modelled as an
 *expected-DPS* multiplier, so the pacing projection stays exact, and the ring/necklace
-totals are **clamped** so those secondary slots cannot out-scale the weapon. Spending gold on a
-few **upgrades** is only a minor multiplicative smoothing bonus (and equipping a new drop resets
-the upgrade level). Progress unlocks ~2 dozen snarky **achievements** (persisted by id), each
+totals are **clamped** so those secondary slots cannot out-scale the weapon. Gold is spent as an
+**allocation choice**: the Equipped panel offers **one upgrade control per slot** (weapon, both
+rings, necklace), each showing its own cost and independently disabled when empty or unaffordable.
+An upgrade is still only a small multiplicative smoothing bonus — but every **3rd** upgrade level
+in one item crosses a **milestone**, a visible step that grants a small extra boost to that slot's
+capped stat (crit for rings, gold for the necklace, overall power for the weapon). A milestone also
+announces itself with a brief, non-blocking **flourish** and a `★ ×N` badge on the item's card; the
+bonus is *derived* from the upgrade level (nothing new is saved). Progress unlocks ~2 dozen snarky
+**achievements** (persisted by id), each
 with a brief over-the-top **splash** (non-blocking — it never pauses the simulation; tap to
 dismiss early) and an **achievements shelf** showing unlocked vs `???` entries. Occasionally a
 **Stray Goblin** (a "Golden Event") wanders across the arena carrying something shiny — tap it
@@ -264,7 +270,10 @@ targets are:
   power*, where the score is built from engine getters only (the shared
   `getEffectiveStats` auto-DPS/click folded with the necklace gold bonus via
   `getGlobalBonuses`) — so rings/necklaces are judged by their real crit/power effect and
-  the sim duplicates no balance formula; then spend remaining gold on weapon upgrades;
+  the sim duplicates no balance formula; then spend remaining gold on the affordable **upgrade
+  across all four slots** with the largest real power gain (a slot whose upgrade adds nothing —
+  e.g. a ring already at the crit cap — scores zero and is skipped, so gold is never dumped into a
+  dead lever);
 - **2 clicks/second** (`ACTIVE_CLICKS_PER_SECOND`);
 - resolution of every pending choice on the **free `wait` path**;
 - a **5-seed hard assertion** — `SWEEP_SEEDS = [12345, 1, 999, 424242, 20250925]`. Every
@@ -283,21 +292,21 @@ Current observed result (5 sweep seeds, `npm run sim` → exit 0). Every seed is
 window and the canonical seed is inside its stricter comfortable range:
 
 ```
-seed     12345: soft 5.97 min st30  hard 49.07 min st50  dNet 99.6%  dGross 87.8%  [DROPS-PRIMARY]
-seed         1: soft 6.42 min st30  hard 46.55 min st50  dNet 100.0% dGross 87.4%  [DROPS-PRIMARY]
-seed       999: soft 5.97 min st30  hard 45.10 min st50  dNet 100.0% dGross 87.7%  [DROPS-PRIMARY]
-seed    424242: soft 5.91 min st30  hard 47.29 min st50  dNet 100.0% dGross 87.7%  [DROPS-PRIMARY]
-seed  20250925: soft 6.00 min st30  hard 46.03 min st50  dNet 99.6%  dGross 87.5%  [DROPS-PRIMARY]
-soft 6.00 min target ±20% → actual 5.97 min (delta -0.6%)  [PASS]
-hard 54.00 min target ±20% → actual 49.07 min (delta -9.1%)  [PASS]
+seed     12345: soft 6.18 min st30  hard 49.54 min st50  dNet 98.8%  dGross 87.4%  [DROPS-PRIMARY]
+seed         1: soft 6.14 min st30  hard 43.90 min st50  dNet 98.8%  dGross 84.7%  [DROPS-PRIMARY]
+seed       999: soft 6.10 min st30  hard 45.88 min st50  dNet 99.6%  dGross 86.2%  [DROPS-PRIMARY]
+seed    424242: soft 5.97 min st30  hard 45.45 min st50  dNet 99.6%  dGross 87.4%  [DROPS-PRIMARY]
+seed  20250925: soft 5.72 min st30  hard 45.46 min st50  dNet 98.3%  dGross 86.7%  [DROPS-PRIMARY]
+soft 6.00 min target ±20% → actual 6.18 min (delta +2.9%)  [PASS]
+hard 54.00 min target ±20% → actual 49.54 min (delta -8.3%)  [PASS]
 PACING OK
 ```
 
 Raw milestone snapshot (canonical seed):
 
 ```
-soft check   t=5.97min  stage=30  autoDps=1899     clickDamage=7591
-hard wall    t=49.07min stage=50  autoDps=226800   clickDamage=907198
+soft check   t=6.18min  stage=30  autoDps=1701    clickDamage=6801
+hard wall    t=49.54min stage=50  autoDps=290984  clickDamage=1163933
 ```
 
 **Drops are the primary power lever.** Gear stats are **exponential in item level**
@@ -318,21 +327,30 @@ designed in. Gold is a **minor smoothing lever**: `upgradeStatMultiplier = 1.05`
 (`upgradeCostGrowth = 6`) and flat gold (`goldGrowth = 1.0`) means only ≈0.7 upgrade levels are
 affordable per equip, and equipping a new drop resets `upgradeLevel` to 0 (cheap next to the
 ≈28% item-level jump). Free-path choices grant a fixed number of upgrade levels rather than
-stage-scaled gold. See `engine-core/src/balance.ts`.
+stage-scaled gold. **Upgrade milestones** add a visible step every `UPGRADE_MILESTONE_INTERVAL`
+(**3**) levels in one item: a small boost to that slot's *capped* stat (weapon → power,
+rings → crit, necklace → gold). They are **derived from `upgradeLevel` on read** — no new save
+field, so the schema stays at version 4 — and they feed the *same* clamped aggregations as ordinary
+gear, so they can never exceed a cap. The interval is 3 rather than 5 because costs grow ×6 against
+flat gold: measured per-run peaks of an item's `upgradeLevel` are 2–7 across the sweep seeds, so an
+interval of 5 would be unreachable content. See `engine-core/src/balance.ts`.
 
 The **power-attribution ledger** in `sim/src/sim.ts` proves the split exactly. The equipped
 stat's log is `ln(factor) + (itemLevel − 1)·ln(gearGrowth) + upgradeLevel·ln(upgradeStatMultiplier)`,
 so the run decomposes into per-equip `Δ(itemLevel − 1)·ln(gearGrowth)` plus per-upgrade
-`+ln(upgradeStatMultiplier)` — computed only from exported engine values. Ring/necklace equips are
+`+ln(upgradeStatMultiplier)` — computed only from exported engine values. A milestone crossing adds
+its (small) log delta to the bounded factor and is charged to **gold**, the lever that bought the
+upgrades that earned it. Ring/necklace equips are
 **also drops**, so the log delta of the bounded crit/power factor they contribute (`bonus-gross`)
 is counted with the weapon's drop gain; only gold-funded upgrade power counts as gold. Each
 equip resets the gold-funded `upgradeLevel` to 0, so the upgrade power bought with gold is
 destroyed by the swap. Charging that reset loss to the lever it came from
-(`goldNet = goldGross − resetLoss`) makes gold's **net** contribution ≈0 while drops carry
-**≈100% of net log-power growth**. The ledger reports both conventions unambiguously: **drops
-≈100% of NET** log-power growth and **≈87.6% of GROSS** (drops against raw gold purchased). On the
-sweep seeds `goldGross = resetLoss = 1.659` exactly, so `goldNet = 0`; the free `wait` grant is
-≈4.5% — a transient smoothing contribution, not a net power source.
+(`goldNet = goldGross − resetLoss`) keeps gold's **net** contribution near zero while drops carry
+**≈98–100% of net log-power growth**. The ledger reports both conventions unambiguously: **drops
+98.3–99.6% of NET** log-power growth and **≈84.7–87.4% of GROSS** (drops against raw gold purchased).
+On the sweep seeds `goldNet` is a small positive `+0.049…+0.202` (a couple of milestones and a few
+ring upgrades are not wiped by an equip), and the free `wait` grant is ≈4.5–13.5% — a transient
+smoothing contribution, not a net power source.
 
 ---
 
@@ -342,13 +360,28 @@ This is a prototype, and the honest edges matter:
 
 - **Drops-primary means drop RNG affects pacing.** Because gear drops (not a deterministic
   gold curve) carry the power, a lucky or unlucky drop stream moves the soft/hard timings.
-  `dropChance = 0.95` keeps the 5-seed spread tight (soft 5.7–6.2 min, hard 44.8–49.2
+  `dropChance = 0.95` keeps the 5-seed spread tight (soft 5.7–6.2 min, hard 43.9–49.5
   min), but sampling variance is real: lowering `dropChance` toward 0.8 blows the soft range
   out (observed 2.33–8.75 min). To reduce variance, raise `dropChance` toward 1.0 — never
   widen the ±20% tolerance or re-neuter drops.
 - **Gold is deliberately a small lever.** `goldGrowth = 1.0` makes late-game gold rewards
   flat, and steep upgrade costs mean only a few upgrade levels are ever affordable. Upgrades
   smooth rough edges; they are not a second power curve.
+- **Gold is now an *allocation* decision, not a single button.** The Equipped panel renders one
+  upgrade control per slot (`upgrade-btn` for the weapon — kept for the smoke test — plus
+  `upgrade-btn-ring1`/`ring2`/`necklace`) with a per-slot `upgrade-cost`/`upgrade-level` readout
+  and an independent disabled state. Every `UPGRADE_MILESTONE_INTERVAL` = **3** levels in one item
+  crosses a **milestone**: the engine emits `{ type: 'milestoneReached', slot, upgradeLevel,
+  description }`, and `/web` shows a brief, non-blocking flourish plus a `★ ×N — …` badge on the
+  card (the milestone counts are diffed across renders like the achievement shelf, so the renderer
+  still receives no event list). The bonus is **derived from `upgradeLevel` on read** — no persisted
+  field, schema stays **v4** — and feeds the same clamped aggregations, so it can never bypass
+  `CRIT_CHANCE_CAP`/`CRIT_MULTIPLIER_CAP`/`POWER_MULTIPLIER_CAP`/`GOLD_MULTIPLIER_CAP`. Because the
+  necklace's power base already saturates `POWER_MULTIPLIER_CAP`, the necklace milestone grants
+  **gold only** (no dead power term). A non-weapon upgrade that cannot raise power (e.g. a ring at
+  the crit cap) still costs gold — the UI lets the player make that mistake; the sim's policy does
+  not (it scores every slot by its real power gain and skips zero-gain upgrades).
+  **Gates: `typecheck` 0, `test` 126/126, `sim` PACING OK (exit 0), `build` 0, `smoke` 13/13.**
 - **A single low-item-level weapon upgrade may not move the HUD DPS readout.** Integer
   flooring plus a ×1.05 upgrade means a level-1 weapon's first several upgrades leave
   `autoDps` unchanged; the observable power jump now comes from equipping a newer drop.
@@ -386,10 +419,10 @@ This is a prototype, and the honest edges matter:
   measured to leapfrog the equipped weapon and push the wall from stage 50 to 59, so the drop kind
   is ring-only on purpose. Cadence is **151 s** (which lifts the canonical hard baseline to
   ~51.9 min, leaving the ~2.4–3.9 min of slack the feature consumes). Final sim: **PACING OK** —
-  canonical soft **6.19** / hard **49.55** min (both inside the comfortable ranges), all-seed hard
-  **43.90–45.90**, uptime 0.9–2.2 %, drops-primary net **99.6 %**, eq/stage 0.82–0.96. No threshold,
-  tolerance, canonical range, or assertion was changed or weakened.
-  **Gates: `typecheck` 0, `test` 113/113, `sim` PACING OK (exit 0), `build` 0, `smoke` 10/10.**
+  canonical soft **6.18** / hard **49.54** min (both inside the comfortable ranges), all-seed hard
+  **43.90–45.90**, uptime 0.9–2.2 %, drops-primary net **98.3–99.6 %**, eq/stage 0.82–0.96. No
+  threshold, tolerance, canonical range, or assertion was changed or weakened.
+  **Gates: `typecheck` 0, `test` 126/126, `sim` PACING OK (exit 0), `build` 0, `smoke` 13/13.**
 - **Rings/necklaces are real but bounded, secondary levers.** The sim now equips them (its
   policy ranks every slot by the engine's own effective stats / global bonuses), the pacing
   proof exercises them, and their crit/power totals are clamped so the multiplicative bonus

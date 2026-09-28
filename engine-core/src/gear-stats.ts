@@ -1,5 +1,5 @@
 // gear-stats.ts — derived gear reads: per-instance stats and the capped
-// ring/necklace aggregations computed from a GameState.
+// slot aggregations computed from a GameState.
 //
 // This is a LEAF module: it imports only balance.ts, content.ts, and types.ts.
 // Nothing here may import state.ts or achievements.ts. Keeping these reads in a
@@ -8,7 +8,9 @@
 // import cycle between state and achievements.
 //
 // GameState persists SOURCE fields only, so every value here is recomputed on
-// read — a balance/formula change cannot drift a persisted copy.
+// read — a balance/formula change cannot drift a persisted copy. Upgrade
+// milestones are likewise derived from each item's `upgradeLevel` (see
+// balance.ts) and folded into these same clamped aggregations.
 
 import {
   ACTIVE_CLICKS_PER_SECOND,
@@ -16,12 +18,15 @@ import {
   computeGearStats,
   CRIT_CHANCE_CAP,
   CRIT_MULTIPLIER_CAP,
+  GEAR_SLOTS,
   GOLD_MULTIPLIER_CAP,
   POWER_MULTIPLIER_CAP,
+  UPGRADE_MILESTONE_BONUS,
+  upgradeMilestoneCount,
 } from './balance';
 import { gearDefinitionFor, WEAPON_DEFINITION } from './content';
-import type { GearStats } from './balance';
-import type { GameState, GearInstance } from './types';
+import type { GearStats, MilestoneBonus } from './balance';
+import type { GameState, GearInstance, GearSlot } from './types';
 
 /**
  * Derived battle stats of a gear instance, resolved from its content
@@ -34,22 +39,54 @@ export function getGearStats(instance: GearInstance): GearStats {
   return computeGearStats(definition, instance.itemLevel, instance.upgradeLevel);
 }
 
+const NO_MILESTONE_BONUS: MilestoneBonus = {
+  critChance: 0,
+  critMultiplier: 0,
+  goldMultiplier: 0,
+  powerMultiplier: 0,
+};
+
 /**
- * Total critical chance and critical multiplier from both rings. `critChance` is
- * capped at `CRIT_CHANCE_CAP`; `critMultiplier` is the full multiplier
- * (`1 + sum of ring contributions`) clamped at `CRIT_MULTIPLIER_CAP`, so a
- * neutral state returns `{0, 1}` and the expected-DPS formula collapses to 1.
- * The clamp is what keeps the exponential ring contribution finite.
+ * Milestone contribution of the item equipped in `slot`: the per-slot bonus
+ * times the number of whole `UPGRADE_MILESTONE_INTERVAL` steps reached. Zero
+ * when nothing is equipped or no milestone has been reached. Derived from the
+ * item's `upgradeLevel` on every read — never persisted (see balance.ts).
+ */
+function milestoneBonus(state: GameState, slot: GearSlot): MilestoneBonus {
+  const item = state.gear.equipped[slot];
+  if (!item) return NO_MILESTONE_BONUS;
+  const count = upgradeMilestoneCount(item.upgradeLevel);
+  if (count <= 0) return NO_MILESTONE_BONUS;
+  const per = UPGRADE_MILESTONE_BONUS[slot];
+  return {
+    critChance: per.critChance * count,
+    critMultiplier: per.critMultiplier * count,
+    goldMultiplier: per.goldMultiplier * count,
+    powerMultiplier: per.powerMultiplier * count,
+  };
+}
+
+/**
+ * Total critical chance and critical multiplier from all equipped gear. Every
+ * slot is summed (only rings carry a raw crit contribution today, so a
+ * non-ring's raw term is 0), plus each slot's derived milestone bonus. Both
+ * totals are clamped at `CRIT_CHANCE_CAP` / `CRIT_MULTIPLIER_CAP`, which is what
+ * bounds the exponential ring contribution AND the milestone channel: a
+ * milestone can never push crit past the cap. A neutral state returns `{0, 1}`.
  */
 export function getCritStats(state: GameState): { critChance: number; critMultiplier: number } {
-  const rings = [state.gear.equipped.ring1, state.gear.equipped.ring2];
   let critChance = 0;
   let critMultiplierBonus = 0;
-  for (const ring of rings) {
-    if (!ring) continue;
-    const stats = getGearStats(ring);
-    critChance += stats.critChance;
-    critMultiplierBonus += stats.critMultiplier;
+  for (const slot of GEAR_SLOTS) {
+    const item = state.gear.equipped[slot];
+    if (item) {
+      const stats = getGearStats(item);
+      critChance += stats.critChance;
+      critMultiplierBonus += stats.critMultiplier;
+    }
+    const milestone = milestoneBonus(state, slot);
+    critChance += milestone.critChance;
+    critMultiplierBonus += milestone.critMultiplier;
   }
   return {
     critChance: Math.min(CRIT_CHANCE_CAP, critChance),
@@ -58,21 +95,32 @@ export function getCritStats(state: GameState): { critChance: number; critMultip
 }
 
 /**
- * Necklace bonuses: `goldMultiplier` (additive bonus to gold gain) and
- * `powerMultiplier` (additive bonus to overall effective DPS). Both are 0 with
- * no necklace equipped and both are clamped at their caps so the exponential
- * necklace contribution cannot explode late.
+ * Gold and power bonuses from all equipped gear: each slot's raw contribution
+ * (only the necklace carries these today) plus its derived milestone bonus.
+ * Both totals are clamped at `GOLD_MULTIPLIER_CAP` / `POWER_MULTIPLIER_CAP`, so
+ * milestones inherit the same ceiling as ordinary gear. A neutral state returns
+ * `{0, 0}`.
  */
 export function getGlobalBonuses(state: GameState): {
   goldMultiplier: number;
   powerMultiplier: number;
 } {
-  const necklace = state.gear.equipped.necklace;
-  if (!necklace) return { goldMultiplier: 0, powerMultiplier: 0 };
-  const stats = getGearStats(necklace);
+  let goldMultiplier = 0;
+  let powerMultiplier = 0;
+  for (const slot of GEAR_SLOTS) {
+    const item = state.gear.equipped[slot];
+    if (item) {
+      const stats = getGearStats(item);
+      goldMultiplier += stats.goldMultiplier;
+      powerMultiplier += stats.powerMultiplier;
+    }
+    const milestone = milestoneBonus(state, slot);
+    goldMultiplier += milestone.goldMultiplier;
+    powerMultiplier += milestone.powerMultiplier;
+  }
   return {
-    goldMultiplier: Math.min(GOLD_MULTIPLIER_CAP, stats.goldMultiplier),
-    powerMultiplier: Math.min(POWER_MULTIPLIER_CAP, stats.powerMultiplier),
+    goldMultiplier: Math.min(GOLD_MULTIPLIER_CAP, goldMultiplier),
+    powerMultiplier: Math.min(POWER_MULTIPLIER_CAP, powerMultiplier),
   };
 }
 

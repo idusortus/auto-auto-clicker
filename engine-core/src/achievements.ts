@@ -26,6 +26,8 @@ const HOARDER_THRESHOLD = 12;
 const LOOSE_CHANGE_GOLD = 100;
 /** Item level that qualifies as "big iron". */
 const BIG_IRON_ITEM_LEVEL = 40;
+/** Total upgrade levels across equipped gear that reads as "invested". */
+const UPGRADE_VETERAN_LEVELS = 10;
 
 export interface AchievementContext {
   /** State AFTER the change that is being evaluated. */
@@ -59,6 +61,17 @@ function ownsNecklace(state: GameState): boolean {
 
 function wornRingCount(state: GameState): number {
   return (state.gear.equipped.ring1 ? 1 : 0) + (state.gear.equipped.ring2 ? 1 : 0);
+}
+
+/** Total upgrade levels across every equipped slot (0 for empty slots). */
+function totalUpgradeLevels(state: GameState): number {
+  const eq = state.gear.equipped;
+  return (
+    (eq.weapon?.upgradeLevel ?? 0) +
+    (eq.ring1?.upgradeLevel ?? 0) +
+    (eq.ring2?.upgradeLevel ?? 0) +
+    (eq.necklace?.upgradeLevel ?? 0)
+  );
 }
 
 export const ACHIEVEMENTS: readonly AchievementDefinition[] = [
@@ -219,6 +232,38 @@ export const ACHIEVEMENTS: readonly AchievementDefinition[] = [
     title: 'Have You Tried Touching More Grass?',
     description: 'Play for 30 minutes straight. The sun is, statistically, a myth.',
     unlocked: (context) => context.state.meta.totalPlayedMs >= GRASS_THRESHOLD_MS,
+  },
+
+  // --- Upgrade milestones (the gold-allocation decision) ---
+  {
+    id: 'milestone-first',
+    title: 'The Spike Is Real',
+    description: 'Cross your first upgrade milestone. Same gold, but it finally did something.',
+    unlocked: (context) => hasEvent(context, (event) => event.type === 'milestoneReached'),
+  },
+  {
+    id: 'upgrade-diversified',
+    title: 'Equal Opportunity Investor',
+    description: 'Put at least one upgrade into every equipped slot. Diversify, they said.',
+    unlocked: (context) => {
+      const eq = context.state.gear.equipped;
+      return (
+        eq.weapon !== null &&
+        eq.ring1 !== null &&
+        eq.ring2 !== null &&
+        eq.necklace !== null &&
+        eq.weapon.upgradeLevel >= 1 &&
+        eq.ring1.upgradeLevel >= 1 &&
+        eq.ring2.upgradeLevel >= 1 &&
+        eq.necklace.upgradeLevel >= 1
+      );
+    },
+  },
+  {
+    id: 'upgrade-veteran',
+    title: 'Serial Upgrader',
+    description: `Hold ${UPGRADE_VETERAN_LEVELS} total upgrade levels across your gear. Gold well spent, allegedly.`,
+    unlocked: (context) => totalUpgradeLevels(context.state) >= UPGRADE_VETERAN_LEVELS,
   },
 
   // --- Golden Events (Shinies) ---

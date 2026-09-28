@@ -14,6 +14,7 @@ import {
   SHINY_FRENZY_DURATION_MS,
   SHINY_FRENZY_MULTIPLIER,
   upgradeCost,
+  upgradeMilestoneCount,
   WAIT_UPGRADE_GRANT_LEVELS,
   WATCH_AD_UPGRADE_GRANT_LEVELS,
 } from './balance';
@@ -21,7 +22,14 @@ import { gearDefinitionFor } from './content';
 import { grantAchievements } from './achievements';
 import { applyDamageToEnemy, killCurrentEnemy } from './combat';
 import { grantGearDrop } from './loot';
-import { cloneGameState, getActiveEvent, getChoiceGoldGrant, getEffectiveStats, getShinyCacheGold } from './state';
+import {
+  cloneGameState,
+  getActiveEvent,
+  getChoiceGoldGrant,
+  getEffectiveStats,
+  getMilestoneInfo,
+  getShinyCacheGold,
+} from './state';
 import type { Action, GameEvent, GearSlot, GameState } from './types';
 
 export function applyAction(
@@ -96,16 +104,28 @@ function applyUpgrade(
   const item = draft.gear.equipped[slot];
   if (!item) return { state, events: [] };
 
+  const milestonesBefore = upgradeMilestoneCount(item.upgradeLevel);
   draft.player.gold -= cost;
   item.upgradeLevel += 1;
 
-  return {
-    state: draft,
-    events: [
-      { type: 'gearUpgraded', instanceId: item.id, upgradeLevel: item.upgradeLevel, goldCost: cost },
-      { type: 'goldChanged', amount: -cost, total: draft.player.gold, reason: 'upgradeEquipped' },
-    ],
-  };
+  const events: GameEvent[] = [
+    { type: 'gearUpgraded', instanceId: item.id, upgradeLevel: item.upgradeLevel, goldCost: cost },
+    { type: 'goldChanged', amount: -cost, total: draft.player.gold, reason: 'upgradeEquipped' },
+  ];
+
+  // Crossing a milestone is a visible step change: emit it so hosts can show a
+  // flourish. Derived from the new level (nothing extra is persisted).
+  const milestonesAfter = upgradeMilestoneCount(item.upgradeLevel);
+  if (milestonesAfter > milestonesBefore) {
+    events.push({
+      type: 'milestoneReached',
+      slot,
+      upgradeLevel: item.upgradeLevel,
+      description: getMilestoneInfo(slot, item.upgradeLevel).bonusDescription,
+    });
+  }
+
+  return { state: draft, events };
 }
 
 /**

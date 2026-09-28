@@ -2,15 +2,21 @@
 //
 // Drives `advance`/`applyAction` with a fixed 100 ms step and a 2-clicks/sec
 // active player. The economy policy is greedy and deterministic:
-//   1. buy weapon upgrades while affordable;
+//   1. buy the single affordable upgrade — ACROSS ALL FOUR SLOTS — that most
+//      raises the player's TOTAL effective power, and repeat;
 //   2. equip, for EVERY occupiable slot (weapon, ring1, ring2, necklace), the
-//      bag item that most raises the player's TOTAL effective power. The power
-//      score is built from engine getters only (`getEffectiveStats` folds the
-//      weapon stats, the expected-DPS crit multiplier, and the necklace power
-//      bonus; `getGlobalBonuses` adds the necklace gold bonus), so a candidate
-//      is ranked by its real effect. The equip POLICY duplicates no balance
-//      math; only the attribution ledger re-derives the crit/power factor shape
-//      (`bonusLog`), because no engine getter returns the combined factor.
+//      bag item that most raises the player's TOTAL effective power.
+// Both steps are scored with engine getters only (`getEffectiveStats` folds the
+// weapon stats, the expected-DPS crit multiplier, the necklace power bonus, and
+// any active frenzy; `getGlobalBonuses` adds the necklace gold bonus), so a
+// candidate is ranked by its real effect and no balance math is duplicated. The
+// upgrade POLICY duplicates no balance math; only the attribution ledger
+// re-derives the crit/power factor shape (`bonusLog`) because no engine getter
+// returns the combined factor.
+//
+// A slot whose upgrade would add nothing (e.g. a ring already at the crit cap)
+// scores a zero gain and is never picked, so the policy can never dump gold into
+// a lever that does nothing for power.
 //
 // Drops are the PRIMARY power lever (Phase 3b reversed): every kill almost
 // always drops a weapon whose item level tracks the killed stage, and gear stats
@@ -151,6 +157,10 @@ interface Attribution {
   resetLoss: number;
   equips: number;
   upgrades: number;
+  /** Upgrades purchased, by slot (shows where gold was actually spent). */
+  upgradesBySlot: Record<GearSlot, number>;
+  /** Milestones crossed over the run (derived, gold-funded power steps). */
+  milestones: number;
   killGold: number;
   waitGold: number;
 }
@@ -186,6 +196,8 @@ function emptyAttribution(): Attribution {
     resetLoss: 0,
     equips: 0,
     upgrades: 0,
+    upgradesBySlot: { weapon: 0, ring1: 0, ring2: 0, necklace: 0 },
+    milestones: 0,
     killGold: 0,
     waitGold: 0,
   };
@@ -261,6 +273,25 @@ function scoreWithEquip(state: GameState, slot: GearSlot, item: GearInstance): n
 }
 
 /**
+ * Power score of a hypothetical state with the `slot` item upgraded ONE level.
+ * A shallow structural copy is enough: the engine getters are pure reads. The
+ * winning upgrade is still applied through `applyAction`, so the real action
+ * path (gold spend, events, achievements, milestones) runs.
+ */
+function scoreWithUpgrade(state: GameState, slot: GearSlot): number {
+  const item = state.gear.equipped[slot];
+  if (!item) return powerScore(state);
+  const candidate: GameState = {
+    ...state,
+    gear: {
+      ...state.gear,
+      equipped: { ...state.gear.equipped, [slot]: { ...item, upgradeLevel: item.upgradeLevel + 1 } },
+    },
+  };
+  return powerScore(candidate);
+}
+
+/**
  * Log of the bounded ring/necklace factor that `getEffectiveStats` folds in.
  * Re-derived here because no engine getter exposes the combined factor:
  * `getEffectiveStats` mixes it into the weapon-inclusive auto/click values, and
@@ -273,16 +304,17 @@ function bonusLog(state: GameState): number {
 }
 
 /**
- * Greedy economy: buy every affordable weapon upgrade, then equip the single
- * bag item (across ALL slots) that most raises total effective power; repeat
- * until neither action changes the state. Every equip strictly raises the
- * bounded `powerScore`, so the loop converges.
+ * Greedy economy: buy the single affordable UPGRADE (across all four slots) that
+ * most raises total effective power, then equip the single bag item (across all
+ * slots) that most raises it; repeat until neither action changes the state.
+ * Every chosen action strictly raises the bounded `powerScore`, so the loop
+ * converges.
  *
  * Attribution is recorded on real state changes only: each upgrade adds
- * +ln(upgradeStatMultiplier); each WEAPON equip adds Δ(itemLevel - 1) *
- * ln(gearGrowth) and charges the reset loss of the discarded weapon's upgrade
- * levels; each ring/necklace equip adds the log delta of the crit/power factor
- * (drop-attributed, never gold-attributed).
+ * +ln(upgradeStatMultiplier) plus any milestone factor gain; each WEAPON equip
+ * adds Δ(itemLevel - 1) * ln(gearGrowth) and charges the reset loss of the
+ * discarded weapon's upgrade levels; each ring/necklace equip adds the log delta
+ * of the crit/power factor (drop-attributed, never gold-attributed).
  */
 function runEconomy(state: GameState, attr: Attribution): GameState {
   let next = state;
@@ -290,14 +322,36 @@ function runEconomy(state: GameState, attr: Attribution): GameState {
   const lnUpgrade = Math.log(BALANCE.gear.upgradeStatMultiplier);
 
   for (let pass = 0; pass < MAX_ECONOMY_PASSES; pass += 1) {
+    // Buy the affordable upgrade with the largest real power gain, across ALL
+    // slots. A slot that cannot raise power (unaffordable, empty, or capped out)
+    // scores zero and is skipped, so gold is never dumped into a dead lever.
     for (;;) {
-      const cost = getUpgradeCost(next, 'weapon');
-      if (cost === null || next.player.gold < cost) break;
-      const upgraded = applyAction(next, { type: 'upgradeEquipped', slot: 'weapon' });
+      const currentScore = powerScore(next);
+      let bestSlot: GearSlot | null = null;
+      let bestGain = 0;
+      for (const slot of EQUIP_SLOTS) {
+        const cost = getUpgradeCost(next, slot);
+        if (cost === null || next.player.gold < cost) continue;
+        const gain = scoreWithUpgrade(next, slot) - currentScore;
+        if (gain > bestGain) {
+          bestGain = gain;
+          bestSlot = slot;
+        }
+      }
+      if (bestSlot === null) break;
+
+      const beforeBonus = bonusLog(next);
+      const upgraded = applyAction(next, { type: 'upgradeEquipped', slot: bestSlot });
       if (upgraded.state === next) break;
       next = upgraded.state;
-      attr.goldGross += lnUpgrade;
+      // The item's own stat multiplier is a gold-funded gain; a milestone
+      // crossing adds a further (small) gold-funded gain to the bounded factor.
+      attr.goldGross += lnUpgrade + Math.max(0, bonusLog(next) - beforeBonus);
       attr.upgrades += 1;
+      attr.upgradesBySlot[bestSlot] += 1;
+      for (const event of upgraded.events) {
+        if (event.type === 'milestoneReached') attr.milestones += 1;
+      }
     }
 
     const currentScore = powerScore(next);
@@ -443,6 +497,8 @@ interface AttributionSummary {
   freeShare: number;
   equips: number;
   upgrades: number;
+  upgradesBySlot: Record<GearSlot, number>;
+  milestones: number;
 }
 
 function summarizeAttribution(attr: Attribution): AttributionSummary {
@@ -472,6 +528,8 @@ function summarizeAttribution(attr: Attribution): AttributionSummary {
     freeShare: netTotal > 0 ? (freeGoldShare * attr.goldGross) / netTotal : 0,
     equips: attr.equips,
     upgrades: attr.upgrades,
+    upgradesBySlot: attr.upgradesBySlot,
+    milestones: attr.milestones,
   };
 }
 
@@ -553,7 +611,9 @@ function attributionLine(result: SimResult): string {
   const marker = result.seed === CANONICAL_SEED ? '*' : ' ';
   return (
     ` ${marker} seed ${String(result.seed).padEnd(9)} equips=${String(a.equips).padStart(3)} ` +
-    `upgrades=${String(a.upgrades).padStart(3)}  ` +
+    `upgrades=${String(a.upgrades).padStart(3)} ` +
+    `(w${a.upgradesBySlot.weapon}/r${a.upgradesBySlot.ring1 + a.upgradesBySlot.ring2}/n${a.upgradesBySlot.necklace}) ` +
+    `milestones=${String(a.milestones).padStart(2)}  ` +
     `drop-gross ${formatLog(a.dropGross)}  bonus-gross ${formatLog(a.bonusGross)}  ` +
     `gold-gross ${formatLog(a.goldGross)}  ` +
     `reset-loss ${a.resetLoss.toFixed(3)}  gold-net ${formatLog(a.goldNet)}  ` +

@@ -12,6 +12,7 @@ export {
   CRIT_CHANCE_CAP,
   CRIT_MULTIPLIER_CAP,
   CURRENT_SAVE_VERSION,
+  GEAR_SLOTS,
   GOLD_MULTIPLIER_CAP,
   HARD_WALL_PROJECTED_KILL_MS,
   isBoss,
@@ -29,6 +30,9 @@ export {
   shinySpawnDelayMs,
   shinySpawnRoll,
   SLOT_DROP_WEIGHTS,
+  UPGRADE_MILESTONE_BONUS,
+  UPGRADE_MILESTONE_INTERVAL,
+  upgradeMilestoneCount,
 } from './balance';
 
 export {
@@ -54,8 +58,10 @@ export {
   getGearStats,
   getGlobalBonuses,
   getGoldReward,
+  getMilestoneInfo,
   getProjectedKillMs,
   getShinyCacheGold,
+  getSlotMilestones,
   getUpgradeCost,
   loadGame,
   saveGame,
@@ -66,7 +72,9 @@ export { ACHIEVEMENTS, evaluateAchievements, grantAchievements } from './achieve
 export { advance } from './advance';
 export { applyAction } from './actions';
 
-export type { GearStats } from './balance';
+export type { GearStats, MilestoneBonus } from './balance';
+
+export type { MilestoneInfo } from './state';
 
 export type {
   AchievementContext,

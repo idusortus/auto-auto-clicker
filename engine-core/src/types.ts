@@ -151,6 +151,12 @@ export type GameEvent =
   | { type: 'enemyKilled'; stage: number; gold: number; drops: GearInstance[] }
   | { type: 'gearEquipped'; instanceId: string }
   | { type: 'gearUpgraded'; instanceId: string; upgradeLevel: number; goldCost: number }
+  | {
+      type: 'milestoneReached';
+      slot: GearSlot;
+      upgradeLevel: number;
+      description: string;
+    }
   | { type: 'goldChanged'; amount: number; total: number; reason: string }
   | { type: 'bossCheckFailed'; stage: number; projectedKillMs: number }
   | { type: 'progressionWall'; stage: number; projectedKillMs: number }
