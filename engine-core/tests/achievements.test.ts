@@ -17,9 +17,9 @@ function unlockedIds(events: { type: string; id?: string }[]): string[] {
 }
 
 describe('achievements — catalog', () => {
-  it('is a static catalog of 18-24 uniquely-identified achievements', () => {
+  it('is a static catalog of 18-30 uniquely-identified achievements', () => {
     expect(ACHIEVEMENTS.length).toBeGreaterThanOrEqual(18);
-    expect(ACHIEVEMENTS.length).toBeLessThanOrEqual(24);
+    expect(ACHIEVEMENTS.length).toBeLessThanOrEqual(30);
     const ids = ACHIEVEMENTS.map((achievement) => achievement.id);
     expect(new Set(ids).size).toBe(ids.length);
     for (const achievement of ACHIEVEMENTS) {

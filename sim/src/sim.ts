@@ -29,6 +29,13 @@
 // (equips must keep pace with stages cleared). Exit code 1 when any seed misses
 // any target.
 //
+// Golden Events (Shinies): the policy claims a Shiny the moment it is active and
+// the frenzy boost is folded into `getEffectiveStats`, so it feeds the same
+// projection and economy the sim already uses. The run reports spawns/claims/
+// misses and total boost uptime. Because a temporary boost can flip a
+// stage-entry threshold check, the Shiny knobs are tuned in balance.ts so every
+// seed still lands inside its window (see that file and decisions.md).
+//
 // Power attribution: the equipped weapon's stat is multiplicative —
 //   ln(stat) = ln(factor) + (itemLevel - 1) * ln(gearGrowth)
 //                       + upgradeLevel * ln(upgradeStatMultiplier)
@@ -49,13 +56,21 @@ import {
   BALANCE,
   CONTENT,
   createGame,
+  getActiveEvent,
+  getActiveBoost,
   getCritStats,
   getEffectiveStats,
   getGlobalBonuses,
   getUpgradeCost,
   isBoss,
 } from '@auto-auto-clicker/engine-core';
-import type { GameEvent, GameState, GearInstance, GearSlot } from '@auto-auto-clicker/engine-core';
+import type {
+  GameEvent,
+  GameState,
+  GearInstance,
+  GearSlot,
+  ShinyKind,
+} from '@auto-auto-clicker/engine-core';
 
 const STEP_MS = 100;
 const CLICK_INTERVAL_MS = 1000 / ACTIVE_CLICKS_PER_SECOND; // 500 ms → 2 clicks/sec
@@ -104,9 +119,21 @@ interface Milestone {
   projectedKillMs: number | null;
 }
 
+/** Per-reward-kind Golden-Event counters (spawns and claims), keyed by kind. */
+type ShinyKindCounts = Record<ShinyKind, number>;
+
 interface SimRecord {
   soft: Milestone | null;
   hard: Milestone | null;
+  /** Golden-Event bookkeeping (claimed + missed = spawned). */
+  shinySpawns: number;
+  shinyClaims: number;
+  shinyMisses: number;
+  /** Spawned/claimed Shinies broken down by reward kind. */
+  shinySpawnsByKind: ShinyKindCounts;
+  shinyClaimsByKind: ShinyKindCounts;
+  /** Total simulated ms during which a frenzy boost was active. */
+  boostUptimeMs: number;
 }
 
 /** Log-power bookkeeping accumulated over a run. All values are natural logs. */
@@ -137,6 +164,18 @@ interface SimResult {
   /** Stage the run ended on (the wall/stop stage); stages cleared = endStage - 1. */
   endStage: number;
   attr: Attribution;
+  shiny: {
+    spawns: number;
+    claims: number;
+    misses: number;
+    spawnsByKind: ShinyKindCounts;
+    claimsByKind: ShinyKindCounts;
+    boostUptimeMs: number;
+  };
+}
+
+function emptyKindCounts(): ShinyKindCounts {
+  return { frenzy: 0, cache: 0, drop: 0 };
 }
 
 function emptyAttribution(): Attribution {
@@ -179,6 +218,15 @@ function processEvents(
       record.hard = milestone(state, atMs, event.projectedKillMs);
     }
     if (event.type === 'enemyKilled') attr.killGold += event.gold;
+    if (event.type === 'eventSpawned') {
+      record.shinySpawns += 1;
+      record.shinySpawnsByKind[event.kind] += 1;
+    }
+    if (event.type === 'eventClaimed') {
+      record.shinyClaims += 1;
+      record.shinyClaimsByKind[event.kind] += 1;
+    }
+    if (event.type === 'eventExpired') record.shinyMisses += 1;
   }
 }
 
@@ -291,7 +339,16 @@ function runEconomy(state: GameState, attr: Attribution): GameState {
 
 function runSim(seed: number): SimResult {
   const initial = createGame(seed, 0);
-  const record: SimRecord = { soft: null, hard: null };
+  const record: SimRecord = {
+    soft: null,
+    hard: null,
+    shinySpawns: 0,
+    shinyClaims: 0,
+    shinyMisses: 0,
+    shinySpawnsByKind: emptyKindCounts(),
+    shinyClaimsByKind: emptyKindCounts(),
+    boostUptimeMs: 0,
+  };
   const attr = emptyAttribution();
   const start = milestone(initial, 0, null);
 
@@ -315,6 +372,10 @@ function runSim(seed: number): SimResult {
 
     if (record.hard !== null) break;
 
+    // Resolve a pending choice BEFORE claiming a Shiny. A pending choice freezes
+    // the world, and claiming it first would apply the frenzy boost on top of the
+    // very stage the choice is about — a real player cannot claim while frozen,
+    // and the boost must never decide whether the wall is raised.
     if (state.choices.pending) {
       const goldBefore = state.player.gold;
       const resolved = applyAction(state, { type: 'resolveChoice', choice: 'wait' });
@@ -323,10 +384,38 @@ function runSim(seed: number): SimResult {
       processEvents(resolved.events, totalMs, state, record, attr);
     }
 
+    // A real player taps a Shiny the moment it appears. Claiming it lets the
+    // frenzy boost feed back into the same `getEffectiveStats` the economy policy
+    // uses, so the sim stays honest about it; the projection deliberately ignores
+    // the temporary boost (see `getProjectedKillMs`).
+    if (getActiveEvent(state) !== null) {
+      const claimed = applyAction(state, { type: 'claimEvent' });
+      state = claimed.state;
+      processEvents(claimed.events, totalMs, state, record, attr);
+    }
+
     state = runEconomy(state, attr);
+
+    if (getActiveBoost(state) !== null) record.boostUptimeMs += STEP_MS;
   }
 
-  return { seed, totalMs, start, soft: record.soft, hard: record.hard, endStage: state.combat.stage, attr };
+  return {
+    seed,
+    totalMs,
+    start,
+    soft: record.soft,
+    hard: record.hard,
+    endStage: state.combat.stage,
+    attr,
+    shiny: {
+      spawns: record.shinySpawns,
+      claims: record.shinyClaims,
+      misses: record.shinyMisses,
+      spawnsByKind: record.shinySpawnsByKind,
+      claimsByKind: record.shinyClaimsByKind,
+      boostUptimeMs: record.boostUptimeMs,
+    },
+  };
 }
 
 interface AttributionSummary {
@@ -475,6 +564,20 @@ function attributionLine(result: SimResult): string {
   );
 }
 
+function shinyLine(result: SimResult): string {
+  const { spawns, claims, misses, claimsByKind, boostUptimeMs } = result.shiny;
+  const marker = result.seed === CANONICAL_SEED ? '*' : ' ';
+  const uptimePercent = result.totalMs > 0 ? (boostUptimeMs / result.totalMs) * 100 : 0;
+  const mix =
+    `mix(c=claims) frenzy ${claimsByKind.frenzy} / drop ${claimsByKind.drop} / cache ${claimsByKind.cache}`;
+  return (
+    ` ${marker} seed ${String(result.seed).padEnd(9)} spawns=${String(spawns).padStart(3)} ` +
+    `claims=${String(claims).padStart(3)} misses=${String(misses).padStart(3)}  ` +
+    `${mix.padEnd(38)}  ` +
+    `boost-uptime ${formatMinutes(boostUptimeMs).padStart(7)}min (${uptimePercent.toFixed(1)}% of run)`
+  );
+}
+
 interface SeedVerdict {
   seed: number;
   problems: string[];
@@ -574,6 +677,12 @@ function main(): void {
   console.log('power attribution (log-power decomposition; net-of-reset drops-primary gate > 50%)');
   for (const result of results) {
     console.log(attributionLine(result));
+  }
+  console.log('');
+
+  console.log('golden events (Shinies; every spawn claimed unless a window is missed)');
+  for (const result of results) {
+    console.log(shinyLine(result));
   }
   console.log('');
 

@@ -68,6 +68,30 @@ export interface PendingChoice {
   options: ('wait' | 'watchAd' | 'iap')[];
 }
 
+/**
+ * The three Golden-Event reward types ("Shinies"). `frenzy` applies a short,
+ * dramatic temporary damage multiplier (tempo); `drop` grants a guaranteed gear
+ * drop at the current stage (feeds the designed drops lever); `cache` grants a
+ * lump of gold (the deliberately minor lever). All are bonus-only: missing one
+ * has no penalty.
+ */
+export type ShinyKind = 'frenzy' | 'cache' | 'drop';
+
+/** A currently spawnable/collectable Shiny. SOURCE fields only. */
+export interface ActiveShiny {
+  kind: ShinyKind;
+  /** `meta.totalPlayedMs` basis when it appeared. */
+  spawnedAtMs: number;
+  /** `meta.totalPlayedMs` basis after which it is gone (no penalty). */
+  expiresAtMs: number;
+}
+
+/** A temporary damage multiplier. SOURCE fields only. */
+export interface ActiveBoost {
+  dpsMultiplier: number;
+  expiresAtMs: number;
+}
+
 export interface GameState {
   meta: {
     saveVersion: number;
@@ -100,13 +124,26 @@ export interface GameState {
   choices: {
     pending: PendingChoice | null;
   };
+  // Golden Events ("Shinies"). `event` is always present (its `active` is
+  // nullable); `boost` is null while no frenzy is running. SOURCE fields only:
+  // the multiplier / cache formula are recomputed from balance.ts on read.
+  event: {
+    /** Currently spawnable/collectable Shiny, or null. */
+    active: ActiveShiny | null;
+    /** How many Shinies have spawned this save (drives the tutorial cadence). */
+    spawned: number;
+    /** `meta.totalPlayedMs` basis when the next spawn becomes eligible. */
+    nextSpawnAtMs: number;
+  };
+  boost: ActiveBoost | null;
 }
 
 export type Action =
   | { type: 'click' }
   | { type: 'equip'; instanceId: string }
   | { type: 'upgradeEquipped'; slot: GearSlot }
-  | { type: 'resolveChoice'; choice: 'wait' | 'watchAd' | 'iap' };
+  | { type: 'resolveChoice'; choice: 'wait' | 'watchAd' | 'iap' }
+  | { type: 'claimEvent' };
 
 export type GameEvent =
   | { type: 'stageEntered'; stage: number; isBoss: boolean; maxHp: number }
@@ -118,7 +155,12 @@ export type GameEvent =
   | { type: 'bossCheckFailed'; stage: number; projectedKillMs: number }
   | { type: 'progressionWall'; stage: number; projectedKillMs: number }
   | { type: 'choiceResolved'; choice: 'wait' | 'watchAd' | 'iap' }
-  | { type: 'achievementUnlocked'; id: string; title: string };
+  | { type: 'achievementUnlocked'; id: string; title: string }
+  | { type: 'eventSpawned'; kind: ShinyKind }
+  | { type: 'eventClaimed'; kind: ShinyKind }
+  | { type: 'eventExpired'; kind: ShinyKind }
+  | { type: 'boostActivated'; dpsMultiplier: number; expiresAtMs: number }
+  | { type: 'boostExpired' };
 
 export interface SaveGame {
   version: number;

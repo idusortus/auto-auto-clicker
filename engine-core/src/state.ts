@@ -13,23 +13,34 @@
 // no copy to drift.
 
 import {
-  ACTIVE_CLICKS_PER_SECOND,
   BALANCE,
   choiceGoldGrant,
   CURRENT_SAVE_VERSION,
   enemyMaxHp,
   goldReward,
+  projectedKillMs,
+  SHINY_CACHE_GOLD_MULTIPLE,
+  shinySpawnDelayMs,
   upgradeCost,
 } from './balance';
 import { gearDefinitionFor } from './content';
 import { ACHIEVEMENTS } from './achievements';
-import { getCritStats, getGearStats, getGlobalBonuses } from './gear-stats';
-import type { GameState, GearInstance, GearSlot, PendingChoice, SaveGame } from './types';
+import { getCritStats, getGearStats, getGlobalBonuses, sustainedActiveDps } from './gear-stats';
+import type {
+  ActiveBoost,
+  ActiveShiny,
+  GameState,
+  GearInstance,
+  GearSlot,
+  PendingChoice,
+  SaveGame,
+  ShinyKind,
+} from './types';
 
 // The derived gear reads live in the leaf module `gear-stats.ts` so that
 // `achievements.ts` can read `getCritStats` without importing this module. They
 // are re-exported here to keep the public surface of `state.ts` unchanged.
-export { getCritStats, getGearStats, getGlobalBonuses } from './gear-stats';
+export { getCritStats, getGearStats, getGlobalBonuses, sustainedActiveDps } from './gear-stats';
 
 /** Build a fresh game at stage 1. `now` defaults to 0 for deterministic tests. */
 export function createGame(seed = 12345, now = 0): GameState {
@@ -59,6 +70,14 @@ export function createGame(seed = 12345, now = 0): GameState {
     choices: {
       pending: null,
     },
+    event: {
+      active: null,
+      spawned: 0,
+      // The first Shiny arrives on the tutorial cadence, so a new player meets
+      // the mechanic early instead of waiting a full base cadence.
+      nextSpawnAtMs: shinySpawnDelayMs(0),
+    },
+    boost: null,
   };
 }
 
@@ -84,6 +103,12 @@ export function cloneGameState(state: GameState): GameState {
         ? { ...state.choices.pending, options: [...state.choices.pending.options] }
         : null,
     },
+    event: {
+      active: state.event.active ? { ...state.event.active } : null,
+      spawned: state.event.spawned,
+      nextSpawnAtMs: state.event.nextSpawnAtMs,
+    },
+    boost: state.boost ? { ...state.boost } : null,
   };
 }
 
@@ -96,12 +121,13 @@ export function getEnemyMaxHp(state: GameState): number {
 }
 
 /**
- * Effective auto DPS and click damage including the equipped weapon and the
- * derived ring/necklace multipliers. Crit is an EXPECTED-DPS multiplier
- * (`1 + critChance * (critMultiplier - 1)`) and the necklace power bonus is
- * applied on top, so every consumer (sim, web, projection) sees the final
- * numbers automatically. The return SHAPE stays `{ autoDps, clickDamage }`;
- * the values may be fractional, and damage application floors them.
+ * Effective auto DPS and click damage including the equipped weapon, the
+ * derived ring/necklace multipliers, and any active Golden-Event frenzy boost.
+ * Crit is an EXPECTED-DPS multiplier (`1 + critChance * (critMultiplier - 1)`)
+ * and the necklace power bonus is applied on top, so every consumer (sim, web,
+ * projection) sees the final numbers automatically. The return SHAPE stays
+ * `{ autoDps, clickDamage }`; the values may be fractional, and damage
+ * application floors them.
  */
 export function getEffectiveStats(state: GameState): { autoDps: number; clickDamage: number } {
   const weapon = state.gear.equipped.weapon;
@@ -111,12 +137,52 @@ export function getEffectiveStats(state: GameState): { autoDps: number; clickDam
 
   const { critChance, critMultiplier } = getCritStats(state);
   const { powerMultiplier } = getGlobalBonuses(state);
-  const factor = (1 + critChance * (critMultiplier - 1)) * (1 + powerMultiplier);
+  const factor =
+    (1 + critChance * (critMultiplier - 1)) * (1 + powerMultiplier) * getBoostMultiplier(state);
 
   return {
     autoDps: baseAutoDps * factor,
     clickDamage: baseClickDamage * factor,
   };
+}
+
+/**
+ * The currently-active Shiny, or null. A Shiny whose window has elapsed is
+ * treated as absent even before `advance` clears it, so the tap target
+ * disappears the moment it can no longer be claimed.
+ */
+export function getActiveEvent(state: GameState): ActiveShiny | null {
+  const active = state.event.active;
+  if (!active) return null;
+  if (active.expiresAtMs <= state.meta.totalPlayedMs) return null;
+  return active;
+}
+
+/**
+ * The currently-active frenzy boost, or null. While a choice is pending the
+ * world is frozen (`meta.totalPlayedMs` does not advance), so a running boost
+ * pauses with it and resumes on the same clock.
+ */
+export function getActiveBoost(state: GameState): ActiveBoost | null {
+  const boost = state.boost;
+  if (!boost) return null;
+  if (boost.expiresAtMs <= state.meta.totalPlayedMs) return null;
+  return boost;
+}
+
+/** Active frenzy damage multiplier (1 when no boost is running). */
+export function getBoostMultiplier(state: GameState): number {
+  const boost = getActiveBoost(state);
+  return boost ? boost.dpsMultiplier : 1;
+}
+
+/**
+ * Gold granted by a `cache` Shiny at `stage`: a fixed multiple of the stage's
+ * (necklace-adjusted) kill reward, so it scales with the same economy as kills
+ * and routes the necklace gold bonus through the one existing multiplier.
+ */
+export function getShinyCacheGold(state: GameState, stage: number): number {
+  return Math.floor(getGoldReward(state, stage) * SHINY_CACHE_GOLD_MULTIPLE);
 }
 
 /**
@@ -143,15 +209,32 @@ export function getChoiceGoldGrant(
 }
 
 /**
- * Projected time to kill the live enemy using auto DPS plus assumed active
- * clicks. Returns null when there is no live enemy.
+ * Projected time to kill the CURRENT enemy from FULL health, measured against
+ * the stage's MAX HP and the player's SUSTAINED active power (auto DPS plus
+ * assumed clicks). Returns null when there is no live enemy (`enemyHp <= 0`)
+ * and when nothing deals damage (`sustainedActiveDps(state) <= 0`).
+ *
+ * Two properties matter here, both required for the stage-entry wall check:
+ *
+ *  1. MAX HP, not the live `enemyHp`. The projection measures the enemy's total
+ *     toughness, so it is independent of how much damage has already landed and
+ *     of exactly when the check runs. A mid-fight or re-entrant call cannot
+ *     under-report the projection and miss a wall.
+ *
+ *  2. SUSTAINED power, not temporarily-boosted power. `getEffectiveStats` folds
+ *     in the active Golden-Event frenzy multiplier; the projection uses the
+ *     sustained active DPS from `gear-stats.ts`, which excludes that temporary
+ *     boost. A transient buff can therefore only make a stage *clear faster* —
+ *     it can never decide *whether* a boss check / progression wall is raised.
+ *     Without this, a boost active at stage entry would launder a permanent
+ *     wall-pass (observed: an unarmed player's stage-19 wall was skipped while a
+ *     ×5 frenzy ran).
  */
 export function getProjectedKillMs(state: GameState): number | null {
   if (state.combat.enemyHp <= 0) return null;
-  const stats = getEffectiveStats(state);
-  const totalActiveDps = stats.autoDps + ACTIVE_CLICKS_PER_SECOND * stats.clickDamage;
-  if (totalActiveDps <= 0) return null;
-  return Math.ceil((state.combat.enemyHp / totalActiveDps) * 1000);
+  const dps = sustainedActiveDps(state);
+  const projected = projectedKillMs(enemyMaxHp(state.combat.stage), dps);
+  return Number.isFinite(projected) ? projected : null;
 }
 
 /** Cost to upgrade the equipped item in `slot`, or null when nothing is equipped. */
@@ -281,13 +364,62 @@ function parsePendingChoice(raw: unknown, what: string): PendingChoice | null {
   return { kind, stage: requireFiniteNumber(record.stage, `${what}.stage`), options };
 }
 
+function requireNonNegativeInteger(value: unknown, what: string): number {
+  const number = requireFiniteNumber(value, what);
+  if (!Number.isInteger(number) || number < 0) {
+    throw new Error(`Invalid save: ${what} must be a non-negative integer`);
+  }
+  return number;
+}
+
+function parseActiveShiny(raw: unknown, what: string): ActiveShiny {
+  const record = requireRecord(raw, what);
+  const kind = record.kind;
+  if (kind !== 'frenzy' && kind !== 'cache' && kind !== 'drop') {
+    throw new Error(`Invalid save: ${what}.kind must be 'frenzy', 'cache', or 'drop'`);
+  }
+  return {
+    kind: kind as ShinyKind,
+    spawnedAtMs: requireFiniteNumber(record.spawnedAtMs, `${what}.spawnedAtMs`),
+    expiresAtMs: requireFiniteNumber(record.expiresAtMs, `${what}.expiresAtMs`),
+  };
+}
+
 /**
- * Build a version-3 GameState from a persisted state object, reading ONLY the
- * source fields — everything derived is recomputed on read. Version 3 defaults
- * `gear.equipped` to the full four-slot map (`ring1`/`ring2`/`necklace` null
- * when absent) and `meta.achievements` to `[]`, so the same parser hydrates
- * hydration and every migration; v1/v2 blobs' extra or missing fields are
- * handled by defaulting rather than by bespoke per-version code.
+ * Read the Golden-Event block. Missing (every pre-v4 blob) defaults to "no
+ * active Shiny, none spawned yet, first spawn on the tutorial cadence".
+ */
+function parseEvent(raw: unknown, what: string): GameState['event'] {
+  if (raw === null || raw === undefined) {
+    return { active: null, spawned: 0, nextSpawnAtMs: shinySpawnDelayMs(0) };
+  }
+  const record = requireRecord(raw, what);
+  const activeRaw = record.active;
+  return {
+    active:
+      activeRaw === null || activeRaw === undefined ? null : parseActiveShiny(activeRaw, `${what}.active`),
+    spawned: requireNonNegativeInteger(record.spawned, `${what}.spawned`),
+    nextSpawnAtMs: requireFiniteNumber(record.nextSpawnAtMs, `${what}.nextSpawnAtMs`),
+  };
+}
+
+/** Read the frenzy boost. Missing/null (every pre-v4 blob) means no boost. */
+function parseBoost(raw: unknown, what: string): ActiveBoost | null {
+  if (raw === null || raw === undefined) return null;
+  const record = requireRecord(raw, what);
+  return {
+    dpsMultiplier: requireFiniteNumber(record.dpsMultiplier, `${what}.dpsMultiplier`),
+    expiresAtMs: requireFiniteNumber(record.expiresAtMs, `${what}.expiresAtMs`),
+  };
+}
+
+/**
+ * Build a current-version GameState from a persisted state object, reading ONLY
+ * the source fields — everything derived is recomputed on read. The parser
+ * defaults every field introduced after an older version, so it hydrates a
+ * current save and migrates v1/v2/v3 blobs in the same pass: `gear.equipped`
+ * gets the full four-slot map, `meta.achievements` defaults to `[]`, and
+ * `event`/`boost` default to "a fresh Golden-Event schedule / no boost".
  */
 function parseState(raw: unknown, context: string): GameState {
   const record = requireRecord(raw, `${context} state`);
@@ -329,16 +461,19 @@ function parseState(raw: unknown, context: string): GameState {
     pending: parsePendingChoice(choicesRaw.pending, `${context}.choices.pending`),
   };
 
-  return { meta, player, combat, gear, choices };
+  const event = parseEvent(record.event, `${context}.event`);
+  const boost = parseBoost(record.boost, `${context}.boost`);
+
+  return { meta, player, combat, gear, choices, event, boost };
 }
 
 /**
  * Migrate a version-1 state object forward. Version 1 persisted derived copies
  * (`player.baseAutoDps`/`baseClickDamage`, `combat.enemyMaxHp`, and each
  * instance's `dps`/`clickDamage`); this reads only the source fields and drops
- * those copies, which are recomputed on read. The parser also applies every
- * later default (four-slot `equipped`, `meta.achievements`), so v1 lands at v3
- * in one pass.
+ * those copies, which are recomputed on read. The parser applies every later
+ * default (four-slot `equipped`, `meta.achievements`, `event`/`boost`), so v1
+ * lands at the current version in one pass.
  */
 export function migrateV1ToV2(raw: unknown): GameState {
   return parseState(raw, 'version 1');
@@ -355,19 +490,34 @@ export function migrateV2ToV3(raw: unknown): GameState {
 }
 
 /**
+ * Migrate a version-3 state object to version 4. Version 3 predates Golden
+ * Events; the shared parser defaults `event` to "no active Shiny, none spawned,
+ * first spawn on the tutorial cadence" and `boost` to null while preserving
+ * every version-3 source field.
+ */
+export function migrateV3ToV4(raw: unknown): GameState {
+  return parseState(raw, 'version 3');
+}
+
+/**
  * Validate and hydrate a save blob.
  *
- * Accepts versions 1, 2, and 3; any other version throws. Version 1 and 2 blobs
- * are migrated forward through the same source-field parser. The returned state
+ * Accepts versions 1, 2, 3, and 4; any other version throws. Older blobs are
+ * migrated forward through the same source-field parser. The returned state
  * persists source fields only.
  */
 export function loadGame(save: SaveGame): GameState {
   if (!save || typeof save.version !== 'number') {
     throw new Error('Invalid save: missing version');
   }
-  if (save.version !== 1 && save.version !== 2 && save.version !== CURRENT_SAVE_VERSION) {
+  if (
+    save.version !== 1 &&
+    save.version !== 2 &&
+    save.version !== 3 &&
+    save.version !== CURRENT_SAVE_VERSION
+  ) {
     throw new Error(
-      `Unsupported save version ${save.version}; expected 1, 2, or ${CURRENT_SAVE_VERSION}`,
+      `Unsupported save version ${save.version}; expected 1, 2, 3, or ${CURRENT_SAVE_VERSION}`,
     );
   }
   if (save.state === null || typeof save.state !== 'object' || Array.isArray(save.state)) {
@@ -375,5 +525,6 @@ export function loadGame(save: SaveGame): GameState {
   }
   if (save.version === 1) return migrateV1ToV2(save.state);
   if (save.version === 2) return migrateV2ToV3(save.state);
-  return parseState(save.state, 'version 3');
+  if (save.version === 3) return migrateV3ToV4(save.state);
+  return parseState(save.state, 'version 4');
 }

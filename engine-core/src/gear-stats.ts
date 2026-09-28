@@ -11,6 +11,8 @@
 // read — a balance/formula change cannot drift a persisted copy.
 
 import {
+  ACTIVE_CLICKS_PER_SECOND,
+  BALANCE,
   computeGearStats,
   CRIT_CHANCE_CAP,
   CRIT_MULTIPLIER_CAP,
@@ -72,4 +74,30 @@ export function getGlobalBonuses(state: GameState): {
     goldMultiplier: Math.min(GOLD_MULTIPLIER_CAP, stats.goldMultiplier),
     powerMultiplier: Math.min(POWER_MULTIPLIER_CAP, stats.powerMultiplier),
   };
+}
+
+/**
+ * The player's SUSTAINED active DPS: auto DPS plus assumed clicks at the
+ * critical/power-adjusted effective stats, EXCLUDING any temporary Golden-Event
+ * frenzy multiplier. The stage-entry projection must measure sustained power so
+ * a transient buff cannot decide whether a wall is raised.
+ *
+ * `getEffectiveStats` multiplies by the active boost; this recomputes the same
+ * battle stats from the equipped weapon and the capped crit/power bonuses, which
+ * by construction never include the boost. Keeping it in this leaf module is
+ * required: the crit/power reads live here, and reading the boost directly from
+ * `state.boost` (rather than importing `getBoostMultiplier`) keeps this module
+ * from importing `state.ts`.
+ */
+export function sustainedActiveDps(state: GameState): number {
+  const weapon = state.gear.equipped.weapon;
+  const gear = weapon ? getGearStats(weapon) : null;
+  const baseAutoDps = BALANCE.baseAutoDps + (gear ? gear.dps : 0);
+  const baseClickDamage = BALANCE.baseClickDamage + (gear ? gear.clickDamage : 0);
+
+  const { critChance, critMultiplier } = getCritStats(state);
+  const { powerMultiplier } = getGlobalBonuses(state);
+  const factor = (1 + critChance * (critMultiplier - 1)) * (1 + powerMultiplier);
+
+  return (baseAutoDps + ACTIVE_CLICKS_PER_SECOND * baseClickDamage) * factor;
 }

@@ -237,6 +237,8 @@ p {
   align-items: center;
   justify-content: center;
   gap: var(--sp-2);
+  /* Positioning context for the wandering Shiny (presentation-only). */
+  position: relative;
 }
 
 .enemy {
@@ -685,6 +687,172 @@ p {
 }
 
 /* ==========================================================================
+   11b. Golden Events (Shinies) — bonus-only, never required
+   ========================================================================== */
+
+/* Active frenzy pill. Hidden whenever no boost is running. */
+.boost {
+  display: inline-flex;
+  align-self: center;
+  align-items: baseline;
+  gap: var(--sp-2);
+  padding: 6px 14px;
+  border: 1px solid #ff6b3d;
+  border-radius: var(--r-pill);
+  background: linear-gradient(180deg, rgba(255, 107, 61, 0.24), rgba(255, 107, 61, 0.08));
+  color: #ffd0b8;
+}
+
+.boost__label {
+  font-size: var(--fs-sm);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.boost__timer {
+  font-family: var(--font-data);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The wandering Stray Goblin. >=44px touch target; drifts across the arena. */
+.shiny {
+  position: absolute;
+  left: 8%;
+  top: 16px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 64px;
+  min-height: 64px;
+  padding: 8px 12px;
+  border: 2px solid #ffd257;
+  border-radius: var(--r-md);
+  background: radial-gradient(120% 120% at 50% 18%, #3a2c07, #191105 72%);
+  color: #ffe6a3;
+  font: inherit;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  -webkit-appearance: none;
+  appearance: none;
+  box-shadow: 0 0 0 3px rgba(255, 210, 87, 0.2), 0 6px 20px rgba(0, 0, 0, 0.5);
+  animation: shiny-pulse 900ms ease-in-out infinite alternate;
+}
+
+.shiny[data-kind="frenzy"] {
+  border-color: #ff6b3d;
+  background: radial-gradient(120% 120% at 50% 18%, #3a1206, #190a05 72%);
+  color: #ffd0b8;
+  box-shadow: 0 0 0 3px rgba(255, 107, 61, 0.22), 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+
+/* The `drop` kind is a guaranteed ring: cool, jewel-toned, distinct from gold. */
+.shiny[data-kind="drop"] {
+  border-color: #6fe3ff;
+  background: radial-gradient(120% 120% at 50% 18%, #06303a, #051419 72%);
+  color: #c9f4ff;
+  box-shadow: 0 0 0 3px rgba(111, 227, 255, 0.22), 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+
+.shiny--drift {
+  animation: shiny-pulse 900ms ease-in-out infinite alternate,
+    shiny-drift 3s ease-in-out infinite alternate;
+}
+
+.shiny:focus-visible {
+  outline: 3px solid var(--ember);
+  outline-offset: 2px;
+}
+
+.shiny__goblin {
+  font-size: 26px;
+  line-height: 1;
+}
+
+.shiny__name {
+  font-family: var(--font-data);
+  font-size: var(--fs-micro);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+@keyframes shiny-drift {
+  from {
+    left: 6%;
+  }
+  to {
+    left: 70%;
+  }
+}
+
+@keyframes shiny-pulse {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(1.06);
+  }
+}
+
+/*
+ * Transient, non-blocking messages. Both sit at the bottom so they never
+ * collide with the centered achievement splash; the claim flourish sits just
+ * above the escape toast. pointer-events:none keeps them purely cosmetic.
+ */
+.shiny-toast,
+.shiny-flourish {
+  position: fixed;
+  left: 50%;
+  z-index: 70;
+  max-width: min(92vw, 420px);
+  padding: 10px 16px;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-sm);
+  text-align: center;
+  pointer-events: none;
+  box-shadow: var(--shadow-modal);
+}
+
+.shiny-toast {
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  border: 1px solid var(--line-strong);
+  background: rgba(18, 21, 28, 0.96);
+  color: var(--text-dim);
+}
+
+.shiny-flourish {
+  bottom: calc(84px + env(safe-area-inset-bottom));
+  border: 1px solid var(--ember-edge);
+  background: linear-gradient(180deg, var(--ember-hi), var(--ember-lo));
+  color: var(--ember-ink);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.shiny-message--in {
+  animation: shiny-message-pop 220ms var(--ease) both;
+}
+
+@keyframes shiny-message-pop {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(8px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+
+/* ==========================================================================
    12. Fine-pointer hover only (never sticky on touch)
    ========================================================================== */
 
@@ -728,6 +896,17 @@ p {
      or spinning burst. */
   .splash--in,
   .splash--in * {
+    animation: none !important;
+  }
+
+  /* The Shiny stays visible and tappable, but stands still. */
+  .shiny,
+  .shiny--drift {
+    animation: none !important;
+    left: 38%;
+  }
+
+  .shiny-message--in {
     animation: none !important;
   }
 

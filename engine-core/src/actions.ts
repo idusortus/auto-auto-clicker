@@ -11,6 +11,8 @@
 // ever sees.
 
 import {
+  SHINY_FRENZY_DURATION_MS,
+  SHINY_FRENZY_MULTIPLIER,
   upgradeCost,
   WAIT_UPGRADE_GRANT_LEVELS,
   WATCH_AD_UPGRADE_GRANT_LEVELS,
@@ -18,7 +20,8 @@ import {
 import { gearDefinitionFor } from './content';
 import { grantAchievements } from './achievements';
 import { applyDamageToEnemy, killCurrentEnemy } from './combat';
-import { cloneGameState, getChoiceGoldGrant, getEffectiveStats } from './state';
+import { grantGearDrop } from './loot';
+import { cloneGameState, getActiveEvent, getChoiceGoldGrant, getEffectiveStats, getShinyCacheGold } from './state';
 import type { Action, GameEvent, GearSlot, GameState } from './types';
 
 export function applyAction(
@@ -38,6 +41,9 @@ export function applyAction(
       break;
     case 'resolveChoice':
       result = applyResolveChoice(state, action.choice);
+      break;
+    case 'claimEvent':
+      result = applyClaimEvent(state);
       break;
   }
 
@@ -100,6 +106,53 @@ function applyUpgrade(
       { type: 'goldChanged', amount: -cost, total: draft.player.gold, reason: 'upgradeEquipped' },
     ],
   };
+}
+
+/**
+ * Claim the active Golden Event. A no-op (same state reference, no events) when
+ * nothing is active or the window has already elapsed — missing a Shiny costs
+ * nothing. While a choice is pending the world is frozen, so a Shiny mid-window
+ * is not claimable until the choice is resolved (its clock resumes with
+ * `meta.totalPlayedMs`).
+ *
+ * A `cache` grants gold and leaves any running boost alone. A `drop` grants a
+ * guaranteed gear drop at the current stage through the normal loot pipeline
+ * (bag cap and first-weapon rules included). A `frenzy` sets the boost
+ * multiplier (it REPLACES, never multiplies, the current multiplier) and
+ * extends the window: `expiresAtMs = max(existing, now + duration)`, so a claim
+ * can never shorten a boost already running.
+ */
+function applyClaimEvent(state: GameState): { state: GameState; events: GameEvent[] } {
+  if (state.choices.pending) return { state, events: [] };
+
+  const active = getActiveEvent(state);
+  if (!active) return { state, events: [] };
+
+  const draft = cloneGameState(state);
+  draft.event.active = null;
+  const events: GameEvent[] = [];
+
+  if (active.kind === 'cache') {
+    const gold = getShinyCacheGold(draft, draft.combat.stage);
+    draft.player.gold += gold;
+    events.push({ type: 'goldChanged', amount: gold, total: draft.player.gold, reason: 'event:cache' });
+  } else if (active.kind === 'drop') {
+    grantGearDrop(draft, draft.combat.stage);
+  } else {
+    const expiresAtMs = Math.max(
+      draft.boost?.expiresAtMs ?? 0,
+      draft.meta.totalPlayedMs + SHINY_FRENZY_DURATION_MS,
+    );
+    draft.boost = { dpsMultiplier: SHINY_FRENZY_MULTIPLIER, expiresAtMs };
+    events.push({
+      type: 'boostActivated',
+      dpsMultiplier: SHINY_FRENZY_MULTIPLIER,
+      expiresAtMs,
+    });
+  }
+
+  events.push({ type: 'eventClaimed', kind: active.kind });
+  return { state: draft, events };
 }
 
 function applyResolveChoice(

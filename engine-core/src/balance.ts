@@ -10,10 +10,10 @@
 // (`upgradeStatMultiplier`) with steep cost growth, whose few affordable levels
 // are reset when a stronger drop is equipped.
 
-import type { GearDefinition, GearSlot } from './types';
+import type { GearDefinition, GearSlot, ShinyKind } from './types';
 
 /** Save schema version understood by this engine build. */
-export const CURRENT_SAVE_VERSION = 3;
+export const CURRENT_SAVE_VERSION = 4;
 
 /**
  * Hard ceiling on total critical chance from all slots. Critical strikes are
@@ -99,6 +99,131 @@ export const DROP_LEVEL_OFFSET = 0;
  */
 export const WAIT_UPGRADE_GRANT_LEVELS = 2;
 export const WATCH_AD_UPGRADE_GRANT_LEVELS = 4;
+
+// ---------------------------------------------------------------------------
+// Golden Events ("Shinies") — bonus-only wandering Stray Goblin.
+//
+// A Shiny spawns on a schedule, wanders for a short window, and is claimed by a
+// tap. Missing it costs NOTHING (it just leaves). A claim rolls one of THREE
+// reward kinds (`shinySpawnRoll`):
+//   - `frenzy` a short, dramatic TEMPO burst (temporary damage multiplier);
+//   - `drop`   a GUARANTEED drop at the current stage into the player's weaker
+//              ring slot (a drop, on the DESIGNED bounded-lever curve);
+//   - `cache`  a lump of gold (the deliberately minor lever).
+//
+// Every number below is a pacing knob:
+//   - SHINY_BASE_CADENCE_MS    steady-state gap between spawns (idle play).
+//   - SHINY_TUTORIAL_DELAYS_MS the first N spawn delays, so a new player meets
+//                              the mechanic early and then it settles to base.
+//   - SHINY_MIN_GAP_MS         floor on any single gap, so events never clump.
+//   - SHINY_WINDOW_MS          how long the tap target stays claimable.
+//   - SHINY_SPAWN_CHANCE       probability an eligible roll spawns.
+//   - SHINY_FRENZY_SHARE       share of spawns that are `frenzy`.
+//   - SHINY_DROP_SHARE         share of spawns that are `drop` (the rest cache).
+//   - SHINY_FRENZY_MULTIPLIER  temporary damage multiplier while active.
+//   - SHINY_FRENZY_DURATION_MS how long that multiplier lasts.
+//   - SHINY_CACHE_GOLD_MULTIPLE lump of gold = this multiple × the stage's
+//                              (necklace-adjusted) `goldReward`.
+//
+// WHY THIS IS WALL-INERT (the invariant the previous round established, kept):
+//   A stage-entry projection in `getProjectedKillMs` measures the stage's MAX HP
+//   against SUSTAINED power (`sustainedActiveDps`), which EXCLUDES the temporary
+//   boost. A frenzy can therefore only make a stage CLEAR FASTER; it can never
+//   decide WHETHER a boss check / progression wall is raised.
+//
+// WHAT A FELT FRENZY *CAN* STILL DO — and its hard bound:
+//   Speeding up clears shortens the WALL-CLOCK time at which the wall fires. That
+//   effect is bounded by construction. A boost that runs for D ms at multiplier M
+//   delivers exactly D·(M−1) ms of extra time-equivalent damage, INDEPENDENT of
+//   stage and DPS: the extra damage is (M−1)·dps·D, and it is divided by the same
+//   dps the stage is already measured against. So over a run the frenzy can save
+//   at most
+//       (frenzy claims) × D × (M−1)                          [the wall budget]
+//   and `shiny.test.ts` pins the per-claim budget `D × (M−1)` to a small fixed
+//   ceiling. With a modest `frenzy` share the run-wide saving stays inside the
+//   slack the canonical hard window leaves above the no-Shiny baseline; the sim
+//   prints the measured per-seed effect (spawns/claims/mix/uptime).
+//
+// WHY THE `drop` KIND LANDS IN A RING SLOT (measured, see decisions.md):
+//   A guaranteed DROP is on the designed curve only while it cannot leapfrog the
+//   equipped WEAPON. A same-stage weapon drop gives the player the item the NEXT
+//   kill would produce, so the current stage's loot fights the current stage; it
+//   compounds and moved the hard wall from stage 50 to stage 59 (canonical run
+//   ~100 min) with an untouched window. Rings/necklaces are the designed BOUNDED
+//   secondary levers (clamped by CRIT_CHANCE_CAP / CRIT_MULTIPLIER_CAP /
+//   POWER_MULTIPLIER_CAP), so a guaranteed same-stage ring is a real, felt
+//   upgrade that cannot outgrow the enemy-HP curve. `grantGearDrop` therefore
+//   fills the weaker ring slot and draws NO RNG, so it cannot even shift the loot
+//   stream.
+//
+// TUNING (2026-09-27, Option 3 — felt but wall-neutral): the frenzy is a ~6 s
+// ×3 tempo burst at a ~30% share; `drop` and `cache` are the common, immediately
+// rewarding kinds (30% / 40%). The cadence was lengthened to 151 s, which lifts
+// the canonical hard baseline to ~51.9 min (comfortable floor 48) and so leaves
+// the slack the bounded rewards consume. Measured final values: canonical hard
+// 49.55 min, all seeds 43.90–45.90 min, boost uptime 0.9–2.2% per seed.
+// ---------------------------------------------------------------------------
+
+/** Steady-state gap between Shiny spawns during idle play. */
+export const SHINY_BASE_CADENCE_MS = 151_000;
+
+/**
+ * Spawn delay (ms) for the first spawns, indexed by the number of Shinies that
+ * have ALREADY spawned. After the table is exhausted the base cadence applies.
+ */
+export const SHINY_TUTORIAL_DELAYS_MS: readonly number[] = [25_000, 70_000];
+
+/** Hard floor on any gap, so two events can never clump. */
+export const SHINY_MIN_GAP_MS = 20_000;
+
+/** How long a spawned Shiny stays claimable. */
+export const SHINY_WINDOW_MS = 10_000;
+
+/** Probability that an eligible RNG roll spawns a Shiny (1 = always). */
+export const SHINY_SPAWN_CHANCE = 1;
+
+/** Share of spawned Shinies that are `frenzy` (the rare, flashy reward). */
+export const SHINY_FRENZY_SHARE = 0.3;
+
+/** Share of spawned Shinies that are `drop` (the rest are `cache`). */
+export const SHINY_DROP_SHARE = 0.3;
+
+/** Temporary damage multiplier granted by a `frenzy` Shiny. */
+export const SHINY_FRENZY_MULTIPLIER = 3;
+
+/** How long a `frenzy` multiplier lasts. Short on purpose: the per-claim wall
+ * budget is `duration × (multiplier − 1)` and the test pins it to a ceiling. */
+export const SHINY_FRENZY_DURATION_MS = 6_000;
+
+/** A `cache` Shiny grants this multiple of the stage's `goldReward`. */
+export const SHINY_CACHE_GOLD_MULTIPLE = 2;
+
+/**
+ * Delay before the spawn after `spawned` prior spawns. Uses the tutorial table
+ * while it lasts, then the base cadence, and never less than the minimum gap.
+ * Non-integer/negative input falls through to the base cadence.
+ */
+export function shinySpawnDelayMs(spawned: number): number {
+  const tutorial =
+    Number.isInteger(spawned) && spawned >= 0 ? SHINY_TUTORIAL_DELAYS_MS[spawned] : undefined;
+  const base = tutorial === undefined ? SHINY_BASE_CADENCE_MS : tutorial;
+  return Math.max(SHINY_MIN_GAP_MS, base);
+}
+
+/**
+ * Resolve one uniform `[0, 1)` roll into "does it spawn" and "which kind". The
+ * kind roll is normalised by the spawn chance so the reward mix is independent
+ * of `SHINY_SPAWN_CHANCE`. The first `SHINY_FRENZY_SHARE` of the range is
+ * `frenzy`, the next `SHINY_DROP_SHARE` is `drop`, and the remainder is `cache`.
+ */
+export function shinySpawnRoll(roll: number): { spawns: boolean; kind: ShinyKind } {
+  const spawns = Number.isFinite(roll) && roll < SHINY_SPAWN_CHANCE;
+  const kindRoll = SHINY_SPAWN_CHANCE > 0 ? roll / SHINY_SPAWN_CHANCE : 0;
+  const dropThreshold = SHINY_FRENZY_SHARE + SHINY_DROP_SHARE;
+  const kind: ShinyKind =
+    kindRoll < SHINY_FRENZY_SHARE ? 'frenzy' : kindRoll < dropThreshold ? 'drop' : 'cache';
+  return { spawns, kind };
+}
 
 // Drops-primary tuning: enemy HP grows 1.42×/stage while the equipped weapon's
 // stat grows ≈gearGrowth (1.283×) per item level. Because drops track the stage

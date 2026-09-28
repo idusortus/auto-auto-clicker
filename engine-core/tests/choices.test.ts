@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { advance, applyAction } from '../src/index';
+import { advance, applyAction, getEffectiveStats, getProjectedKillMs } from '../src/index';
 import {
+  ACTIVE_CLICKS_PER_SECOND,
   BOSS_TIMER_MS,
-  HARD_WALL_PROJECTED_KILL_MS,
   enemyMaxHp,
   goldReward,
+  HARD_WALL_PROJECTED_KILL_MS,
   isBoss,
+  SHINY_FRENZY_MULTIPLIER,
   upgradeCost,
   WAIT_UPGRADE_GRANT_LEVELS,
   WATCH_AD_UPGRADE_GRANT_LEVELS,
@@ -86,6 +88,58 @@ describe('stage-entry pacing checks', () => {
     expect(isBoss(19)).toBe(false);
     expect(state.combat.stage).toBe(19);
     expect(state.choices.pending?.kind).toBe('progression-wall');
+  });
+});
+
+describe('projected kill time measures full HP and sustained power', () => {
+  // Unarmed base stats: autoDps 2, clickDamage 2, ACTIVE_CLICKS_PER_SECOND 2.
+  const SUSTAINED_DPS = 2 + ACTIVE_CLICKS_PER_SECOND * 2;
+
+  it('projects against the stage MAX HP, not the live (partially-damaged) HP', () => {
+    const stage = 5;
+    const full = makeState({ stage, enemyHp: enemyMaxHp(stage) });
+    const damaged = makeState({ stage, enemyHp: 1 });
+
+    const expected = Math.ceil((enemyMaxHp(stage) / SUSTAINED_DPS) * 1000);
+    expect(getProjectedKillMs(full)).toBe(expected);
+    // A mid-fight read must not under-report: the live HP is nearly dead, but
+    // the projection still measures the enemy's full toughness.
+    expect(getProjectedKillMs(damaged)).toBe(expected);
+  });
+
+  it('is invariant under a temporary frenzy boost (boost never changes the wall)', () => {
+    const stage = 19; // non-boss; unarmed projection is far over the hard wall
+    const plain = makeState({ stage, enemyHp: enemyMaxHp(stage) });
+    const boosted = makeState({
+      stage,
+      enemyHp: enemyMaxHp(stage),
+      boost: { dpsMultiplier: SHINY_FRENZY_MULTIPLIER, expiresAtMs: 100_000 },
+    });
+
+    const projected = getProjectedKillMs(plain);
+    expect(projected).toBe(Math.ceil((enemyMaxHp(stage) / SUSTAINED_DPS) * 1000));
+    expect(projected).toBeGreaterThan(HARD_WALL_PROJECTED_KILL_MS);
+    // The boost inflates effective DPS (×5), but the projection measures
+    // SUSTAINED power, so it is byte-identical with and without the boost.
+    expect(getProjectedKillMs(boosted)).toBe(projected);
+    expect(getEffectiveStats(boosted).autoDps).toBeCloseTo(2 * SHINY_FRENZY_MULTIPLIER, 6);
+  });
+
+  it('still raises the wall when a frenzy is active at stage entry', () => {
+    // Enter stage 19 (a wall for the unarmed player) with a frenzy already
+    // running. Pre-fix this skipped the check because the boosted DPS shrank the
+    // projected time below the threshold.
+    const boosted = makeState({
+      stage: 18,
+      enemyHp: 1,
+      boost: { dpsMultiplier: SHINY_FRENZY_MULTIPLIER, expiresAtMs: 200_000 },
+    });
+
+    const { state, events } = applyAction(boosted, { type: 'click' });
+
+    expect(state.combat.stage).toBe(19);
+    expect(state.choices.pending?.kind).toBe('progression-wall');
+    expect(events.some((event) => event.type === 'progressionWall')).toBe(true);
   });
 });
 

@@ -2,7 +2,7 @@
 
 import { NECKLACE_DEFINITION, RING_DEFINITION, RING_DEFINITION_2, WEAPON_DEFINITION } from '../src/content';
 import { createGame } from '../src/state';
-import type { GearInstance, GameState, PendingChoice } from '../src/types';
+import type { ActiveBoost, ActiveShiny, GearInstance, GameState, PendingChoice } from '../src/types';
 
 export interface StateOverrides {
   seed?: number;
@@ -20,6 +20,10 @@ export interface StateOverrides {
   bag?: GearInstance[];
   nextInstanceId?: number;
   pending?: PendingChoice | null;
+  activeEvent?: ActiveShiny | null;
+  spawned?: number;
+  nextSpawnAtMs?: number;
+  boost?: ActiveBoost | null;
 }
 
 /** Build a deterministic state from createGame plus explicit overrides. */
@@ -53,6 +57,12 @@ export function makeState(overrides: StateOverrides = {}): GameState {
     choices: {
       pending: overrides.pending ?? null,
     },
+    event: {
+      active: overrides.activeEvent ?? null,
+      spawned: overrides.spawned ?? base.event.spawned,
+      nextSpawnAtMs: overrides.nextSpawnAtMs ?? base.event.nextSpawnAtMs,
+    },
+    boost: overrides.boost ?? null,
   };
 }
 

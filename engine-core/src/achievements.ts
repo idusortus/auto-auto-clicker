@@ -220,6 +220,29 @@ export const ACHIEVEMENTS: readonly AchievementDefinition[] = [
     description: 'Play for 30 minutes straight. The sun is, statistically, a myth.',
     unlocked: (context) => context.state.meta.totalPlayedMs >= GRASS_THRESHOLD_MS,
   },
+
+  // --- Golden Events (Shinies) ---
+  {
+    id: 'shiny-claimed',
+    title: 'Ooh, Shiny',
+    description: 'Claim your first Stray Goblin haul. It was carrying that for you the whole time.',
+    unlocked: (context) => hasEvent(context, (event) => event.type === 'eventClaimed'),
+  },
+  {
+    id: 'shiny-frenzy',
+    title: 'Double-Dipping',
+    description: 'Claim a Shiny while a frenzy is already running. Greed is a strategy.',
+    unlocked: (context) =>
+      context.state.boost !== null &&
+      hasEvent(context, (event) => event.type === 'eventClaimed') &&
+      !hasEvent(context, (event) => event.type === 'boostActivated'),
+  },
+  {
+    id: 'shiny-escape',
+    title: 'No Shiny Left Behind',
+    description: "Let a Stray Goblin escape. It's fine. You didn't want it anyway.",
+    unlocked: (context) => hasEvent(context, (event) => event.type === 'eventExpired'),
+  },
 ];
 
 /**

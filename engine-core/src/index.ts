@@ -16,6 +16,18 @@ export {
   HARD_WALL_PROJECTED_KILL_MS,
   isBoss,
   POWER_MULTIPLIER_CAP,
+  SHINY_BASE_CADENCE_MS,
+  SHINY_CACHE_GOLD_MULTIPLE,
+  SHINY_DROP_SHARE,
+  SHINY_FRENZY_DURATION_MS,
+  SHINY_FRENZY_MULTIPLIER,
+  SHINY_FRENZY_SHARE,
+  SHINY_MIN_GAP_MS,
+  SHINY_SPAWN_CHANCE,
+  SHINY_TUTORIAL_DELAYS_MS,
+  SHINY_WINDOW_MS,
+  shinySpawnDelayMs,
+  shinySpawnRoll,
   SLOT_DROP_WEIGHTS,
 } from './balance';
 
@@ -32,6 +44,9 @@ export {
 export {
   cloneGameState,
   createGame,
+  getActiveBoost,
+  getActiveEvent,
+  getBoostMultiplier,
   getChoiceGoldGrant,
   getCritStats,
   getEffectiveStats,
@@ -40,6 +55,7 @@ export {
   getGlobalBonuses,
   getGoldReward,
   getProjectedKillMs,
+  getShinyCacheGold,
   getUpgradeCost,
   loadGame,
   saveGame,
@@ -59,6 +75,8 @@ export type {
 
 export type {
   Action,
+  ActiveBoost,
+  ActiveShiny,
   EnemyDefinition,
   GameEvent,
   GameState,
@@ -67,6 +85,7 @@ export type {
   GearSlot,
   PendingChoice,
   SaveGame,
+  ShinyKind,
 } from './types';
 
 export type { SaveRepository } from '../save/repository';

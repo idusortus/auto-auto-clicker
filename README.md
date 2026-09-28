@@ -51,7 +51,12 @@ totals are **clamped** so those secondary slots cannot out-scale the weapon. Spe
 few **upgrades** is only a minor multiplicative smoothing bonus (and equipping a new drop resets
 the upgrade level). Progress unlocks ~2 dozen snarky **achievements** (persisted by id), each
 with a brief over-the-top **splash** (non-blocking — it never pauses the simulation; tap to
-dismiss early) and an **achievements shelf** showing unlocked vs `???` entries. Every 10th stage
+dismiss early) and an **achievements shelf** showing unlocked vs `???` entries. Occasionally a
+**Stray Goblin** (a "Golden Event") wanders across the arena carrying something shiny — tap it
+within its short window for one of **three** bonus rewards: a short/rare **FRENZY** damage
+multiplier (a visibly faster burst), a guaranteed **ring drop** at your current stage into your
+weaker ring slot, or a lump of **gold**. Missing it costs *nothing* — it simply leaves with a
+snarky toast. Every 10th stage
 is a boss; if the projected time-to-kill is too slow, or if a stage becomes a progression wall, a
 choice appears. The free `wait` path always works (it grants gold equal to a fixed number of
 upgrade levels); the "watch ad" and "buy" options are visible but disabled placeholders in
@@ -191,7 +196,7 @@ Persistence is one versioned, serializable blob written through an async interfa
 
 ```ts
 interface SaveGame {
-  version: number;   // CURRENT_SAVE_VERSION = 3
+  version: number;   // CURRENT_SAVE_VERSION = 4
   savedAt: number;   // host wall-clock ms when written (used for offline replay)
   state: GameState;  // the entire per-player state
 }
@@ -206,24 +211,30 @@ interface SaveRepository {
   per-player save state.** They describe the game catalog and are never persisted — only
   `GameState` is saved. (`GameState.meta.seed` and `meta.rngState` are persisted so a
   reload continues the exact deterministic stream.)
-- **Version 3 persists source fields only; every derived value is computed on read.**
+- **Version 4 persists source fields only; every derived value is computed on read.**
   `GameState` stores `player.gold`, `combat.{stage,enemyHp,damageCarry}`, each gear instance as
   `{id, definitionId, itemLevel, upgradeLevel}` under a four-slot `equipped` map
-  (`weapon`/`ring1`/`ring2`/`necklace`), and the meta (including unlocked achievement **ids**)
-  plus choice bookkeeping. Gear battle stats and effect contributions (`getGearStats` — DPS,
-  click damage, crit chance/multiplier, gold/power bonuses), the final auto/click stats
-  (`getEffectiveStats` — includes the expected-crit and necklace-power multipliers), and the
-  enemy's max HP (`getEnemyMaxHp`) are all derived from those sources plus
-  `BALANCE`/`computeGearStats` at read time — they are never persisted. A balance or
+  (`weapon`/`ring1`/`ring2`/`necklace`), the meta (including unlocked achievement **ids**),
+  choice bookkeeping, and the Golden-Event block (`event: { active, spawned, nextSpawnAtMs }`
+  and a nullable `boost: { dpsMultiplier, expiresAtMs }`). Gear battle stats and effect
+  contributions (`getGearStats` — DPS, click damage, crit chance/multiplier, gold/power
+  bonuses), the final auto/click stats (`getEffectiveStats` — includes the expected-crit,
+  necklace-power, and active frenzy multipliers), the enemy's max HP (`getEnemyMaxHp`), and the
+  cache-gold reward (`getShinyCacheGold`) are all derived from those sources plus
+  `BALANCE`/`computeGearStats` at read time — they are never persisted. A Shiny `drop` reward adds
+  **no** new field: the granted ring is a normal `GearInstance` in `gear.bag`, and the reward kind
+  is the existing nullable `ActiveShiny.kind` (now `'frenzy' | 'cache' | 'drop'`, a same-shape
+  value the parser validates and unknown kinds still rejected). A balance or
   stat-formula change therefore cannot drift a stale copy on an existing save. The achievement
   catalog itself is static content (`achievements.ts`), not save state.
-- **Version 1 and 2 saves are migrated on load.** Version 1 persisted derived copies
+- **Versions 1–3 are migrated on load.** Version 1 persisted derived copies
   (`player.baseAutoDps`/`baseClickDamage`, `combat.enemyMaxHp`, per-instance
   `dps`/`clickDamage`); version 2 dropped those but predates rings, necklaces, and
-  achievements. A single source-field parser behind `migrateV1ToV2`/`migrateV2ToV3` drops any
-  derived copies and defaults the new fields (`equipped.ring1`/`ring2`/`necklace` to `null`,
-  `meta.achievements` to `[]`), so a v1 or v2 blob hydrates as a version-3 state. A version-3
-  blob round-trips as-is. Any other version throws a descriptive error.
+  achievements; version 3 predates Golden Events. A single source-field parser behind
+  `migrateV1ToV2`/`migrateV2ToV3`/`migrateV3ToV4` drops any derived copies and defaults the new
+  fields (`equipped.ring1`/`ring2`/`necklace` to `null`, `meta.achievements` to `[]`, `event` to
+  a fresh schedule, `boost` to `null`), so an older blob hydrates as a version-4 state. A
+  version-4 blob round-trips as-is. Any other version throws a descriptive error.
 - **The blob is one serializable object.** Today it is written to `localStorage` under
   `auto-auto-clicker.save.v1` by `LocalStorageSaveRepository`; `JSON.parse` failures and
   unsupported versions fall back to a fresh game rather than crashing the boot.
@@ -331,7 +342,7 @@ This is a prototype, and the honest edges matter:
 
 - **Drops-primary means drop RNG affects pacing.** Because gear drops (not a deterministic
   gold curve) carry the power, a lucky or unlucky drop stream moves the soft/hard timings.
-  `dropChance = 0.95` keeps the 5-seed spread tight (soft 6.39–6.52 min, hard 50.78–51.38
+  `dropChance = 0.95` keeps the 5-seed spread tight (soft 5.7–6.2 min, hard 44.8–49.2
   min), but sampling variance is real: lowering `dropChance` toward 0.8 blows the soft range
   out (observed 2.33–8.75 min). To reduce variance, raise `dropChance` toward 1.0 — never
   widen the ±20% tolerance or re-neuter drops.
@@ -349,16 +360,36 @@ This is a prototype, and the honest edges matter:
   render disabled ("coming soon") so the free `wait` path is always the working one. The
   engine actions exist; only the host integration is missing.
 - **Late-game numerals are large and not abbreviated.** At the hard wall auto-DPS is
-  ≈**2.4e5** (and click damage ≈9.8e5). The HUD prints full integers, so the readout wraps
+  ≈**3.1e5** (and click damage ≈1.2e6). The HUD prints full integers, so the readout wraps
   at the widest end of the game. Compact notation (1.2K / 3.4M) is not implemented.
 - **Offline progress is capped and auto-DPS only.** The web host replays at most 8 h of
   away time in 1000 ms steps with no clicks, and backgrounded-tab time beyond the host's
   10-step catch-up clamp is dropped until the next boot. Both are deliberate host
   policies chosen to avoid catch-up spirals and offline windfalls.
-- **Three save schema versions, one migration path.** `loadGame` accepts version 1 and 2
-  (both migrated to version 3 through the same source-field parser) and version 3. Older saves
-  gain a four-slot `equipped` map with `ring1`/`ring2`/`necklace` set to `null` and
-  `meta.achievements` set to `[]`. There is still no `clear()` on `SaveRepository`.
+- **Three save schema versions, one migration path.** `loadGame` accepts versions 1, 2, 3, and 4
+  (all older ones migrated to version 4 through the same source-field parser). Older saves
+  gain a four-slot `equipped` map with `ring1`/`ring2`/`necklace` set to `null`,
+  `meta.achievements` set to `[]`, and a fresh `event`/`boost` block. There is still no
+  `clear()` on `SaveRepository`.
+- **Golden Events (Shinies) are felt AND wall-neutral (Option 3 rework).** The player taps a
+  wandering Stray Goblin within a short window for one of three rewards; missing it costs nothing.
+  `getProjectedKillMs` measures the stage's **MAX HP** against the player's **sustained** power
+  (excluding the temporary boost), so a frenzy can only make a stage *clear faster* — it can never
+  decide *whether* a boss check / progression wall is raised. That leaves one residual effect: the
+  wall-clock time to reach the wall. It is bounded by construction — a burst that runs for `D` ms
+  at multiplier `M` saves exactly `D × (M − 1)` ms, independent of stage and DPS — so the final
+  knobs pin the per-claim wall budget at **6 s × 3 → 12 s** (`shiny.test.ts` asserts the ceiling).
+  The three rewards: a rare **FRENZY** (×3 for 6 s, ~30 % of spawns, measured uptime **0.9–2.2 %**
+  per run — a real, visible burst, not the old 0.1 % blip); a guaranteed **ring drop** at the
+  current stage into the weaker ring slot (`drop`, ~30 %), which is a drop on the *designed bounded*
+  secondary lever and draws no RNG; and a **gold cache** (~40 %). A same-stage **weapon** drop was
+  measured to leapfrog the equipped weapon and push the wall from stage 50 to 59, so the drop kind
+  is ring-only on purpose. Cadence is **151 s** (which lifts the canonical hard baseline to
+  ~51.9 min, leaving the ~2.4–3.9 min of slack the feature consumes). Final sim: **PACING OK** —
+  canonical soft **6.19** / hard **49.55** min (both inside the comfortable ranges), all-seed hard
+  **43.90–45.90**, uptime 0.9–2.2 %, drops-primary net **99.6 %**, eq/stage 0.82–0.96. No threshold,
+  tolerance, canonical range, or assertion was changed or weakened.
+  **Gates: `typecheck` 0, `test` 113/113, `sim` PACING OK (exit 0), `build` 0, `smoke` 10/10.**
 - **Rings/necklaces are real but bounded, secondary levers.** The sim now equips them (its
   policy ranks every slot by the engine's own effective stats / global bonuses), the pacing
   proof exercises them, and their crit/power totals are clamped so the multiplicative bonus

@@ -121,6 +121,7 @@ function startHost(root: HTMLElement, prepared: PreparedGame): void {
     onUpgrade: () => dispatch({ type: 'upgradeEquipped', slot: 'weapon' }),
     onEquip: (instanceId) => dispatch({ type: 'equip', instanceId }),
     onChoice: (choice) => dispatch({ type: 'resolveChoice', choice }),
+    onClaim: () => dispatch({ type: 'claimEvent' }),
   });
 
   renderer.render(state);

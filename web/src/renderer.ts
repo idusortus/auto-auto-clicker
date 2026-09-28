@@ -16,6 +16,8 @@
 import {
   ACHIEVEMENTS,
   gearDefinitionFor,
+  getActiveBoost,
+  getActiveEvent,
   getCritStats,
   getEffectiveStats,
   getEnemyMaxHp,
@@ -31,6 +33,7 @@ import type {
   GearInstance,
   GearSlot,
   PendingChoice,
+  ShinyKind,
 } from '@auto-auto-clicker/engine-core';
 
 type ChoiceOption = PendingChoice['options'][number];
@@ -44,6 +47,8 @@ export interface RendererHandlers {
   onEquip(instanceId: string): void;
   /** The player picked a resolution for a pending choice. */
   onChoice(choice: ChoiceOption): void;
+  /** The player tapped the wandering Stray Goblin (a Golden Event). */
+  onClaim(): void;
 }
 
 export interface OfflineSummary {
@@ -71,6 +76,9 @@ const MS_PER_MINUTE = 60_000;
 const MINUTES_PER_HOUR = 60;
 /** How long a splash stays up before auto-dismissing. */
 const SPLASH_DURATION_MS = 2600;
+/** How long the Shiny escape toast / claim flourish stays up. */
+const SHINY_MESSAGE_MS = 2200;
+const MS_PER_SECOND = 1000;
 
 /** Achievement catalog keyed by id, for splash lookup. */
 const ACHIEVEMENT_BY_ID = new Map<string, AchievementDefinition>(
@@ -86,6 +94,13 @@ interface Refs {
   bossBadge: HTMLElement;
   enemyHp: HTMLElement;
   hpFill: HTMLElement;
+  boostPill: HTMLElement;
+  boostLabel: HTMLElement;
+  boostTimer: HTMLElement;
+  shiny: HTMLButtonElement;
+  shinyName: HTMLElement;
+  shinyToast: HTMLElement;
+  shinyFlourish: HTMLElement;
   upgradeBtn: HTMLButtonElement;
   upgradeCost: HTMLElement;
   upgradeHint: HTMLElement;
@@ -126,6 +141,11 @@ const SKELETON = `
       </div>
     </header>
 
+    <div class="boost" data-testid="boost-pill" data-role="boost-pill" hidden aria-live="polite">
+      <span class="boost__label" data-role="boost-label">FRENZY</span>
+      <span class="boost__timer" data-role="boost-timer"></span>
+    </div>
+
     <main class="stage">
       <button class="enemy" data-testid="enemy" type="button" aria-label="Attack the enemy">
         <span class="enemy__badge" data-role="boss-badge" hidden>Boss</span>
@@ -135,8 +155,22 @@ const SKELETON = `
           <span class="enemy__hp-text" data-testid="enemy-hp">0 / 0</span>
         </span>
       </button>
+      <button
+        class="shiny"
+        data-testid="shiny"
+        data-role="shiny"
+        type="button"
+        aria-label="Catch the Stray Goblin"
+        hidden
+      >
+        <span class="shiny__goblin" aria-hidden="true">&#128520;</span>
+        <span class="shiny__name" data-role="shiny-name">Stray Goblin</span>
+      </button>
       <p class="hint">Tap the enemy to attack.</p>
     </main>
+
+    <div class="shiny-toast" data-testid="shiny-toast" data-role="shiny-toast" hidden aria-live="polite"></div>
+    <div class="shiny-flourish" data-testid="shiny-flourish" data-role="shiny-flourish" hidden aria-live="polite"></div>
 
     <section class="panel" aria-labelledby="equipped-title">
       <div class="panel__header">
@@ -205,6 +239,15 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
   let lastChoiceKey = '';
   let lastAchievementsSignature: string | null = null;
 
+  // Golden Event (Shiny) presentation state. Position/drift is /web-only and
+  // NEVER reaches engine state: the engine only knows the window's clock.
+  // `lastShinyId` identifies the Shiny currently on screen; when it disappears,
+  // a pending claim means the player grabbed it, otherwise it escaped.
+  let lastShinyId: string | null = null;
+  let lastShinyKind: ShinyKind | null = null;
+  let pendingClaim = false;
+  let shinyMessageTimer: number | null = null;
+
   // Achievement splash state: a queue so a burst of unlocks is never lost, and
   // a timer that auto-dismisses the current one.
   const splashQueue: AchievementDefinition[] = [];
@@ -254,6 +297,14 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     { capture: true },
   );
 
+  // A tap on the wandering Stray Goblin is a claim. The renderer marks the
+  // claim as its own so the next render can tell a grab from an escape (it
+  // deliberately never receives the event list).
+  refs.shiny.addEventListener('click', () => {
+    pendingClaim = true;
+    handlers.onClaim();
+  });
+
   function render(state: GameState): void {
     const stats = getEffectiveStats(state);
 
@@ -268,6 +319,9 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     const maxHp = getEnemyMaxHp(state);
     refs.enemyHp.textContent = `${formatInt(Math.min(state.combat.enemyHp, maxHp))} / ${formatInt(maxHp)}`;
     refs.hpFill.style.width = `${hpPercent(state) * FULL_PERCENT}%`;
+
+    renderBoost(state);
+    renderShiny(state);
 
     const equippedSignature = EQUIP_SLOTS.map((slot) => gearSignature(state.gear.equipped[slot]))
       .join('|');
@@ -337,7 +391,113 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     refs.offline.hidden = false;
   }
 
+  /**
+   * The active frenzy pill: label from the engine's multiplier, countdown from
+   * the engine's clock. Hidden while no boost is running. While a choice is
+   * pending the world is frozen, so the countdown naturally holds.
+   */
+  function renderBoost(state: GameState): void {
+    const boost = getActiveBoost(state);
+    if (boost === null) {
+      refs.boostPill.hidden = true;
+      return;
+    }
+    const remainingMs = Math.max(0, boost.expiresAtMs - state.meta.totalPlayedMs);
+    refs.boostLabel.textContent = `FRENZY ×${formatMultiplier(boost.dpsMultiplier)}`;
+    refs.boostTimer.textContent = `${Math.ceil(remainingMs / MS_PER_SECOND)}s`;
+    refs.boostPill.hidden = false;
+  }
+
+  /**
+   * The wandering Stray Goblin. The engine owns the window; /web owns only its
+   * on-screen position and drift. When a Shiny disappears, a pending claim is a
+   * grab (flourish); otherwise it escaped (toast) — and missing it costs
+   * nothing, which the toast says out loud.
+   */
+  function renderShiny(state: GameState): void {
+    // While a choice is pending the world is frozen: the Shiny window pauses
+    // too, so hide the (unclaimable) target without treating it as escaped.
+    if (state.choices.pending) {
+      refs.shiny.hidden = true;
+      return;
+    }
+
+    const active = getActiveEvent(state);
+    const id = active ? `${active.kind}:${active.spawnedAtMs}` : null;
+
+    if (active) {
+      if (id !== lastShinyId) {
+        lastShinyId = id;
+        lastShinyKind = active.kind;
+        refs.shiny.dataset.kind = active.kind;
+        refs.shinyName.textContent = shinyName(active.kind);
+        // Restart the drift each time a NEW Shiny appears so it always wanders
+        // across a fresh screen. Reduced-motion users get a static target.
+        refs.shiny.classList.remove('shiny--drift');
+        void refs.shiny.offsetWidth;
+        refs.shiny.classList.add('shiny--drift');
+      }
+      // Same Shiny still on screen: the claim (if any) did not take.
+      pendingClaim = false;
+      refs.shiny.hidden = false;
+      return;
+    }
+
+    // The previously-shown Shiny is gone: a pending claim means the player
+    // grabbed it, otherwise it escaped — and missing it costs nothing.
+    if (lastShinyId !== null) {
+      if (pendingClaim && lastShinyKind !== null) showShinyFlourish(lastShinyKind, state);
+      else showShinyToast();
+    }
+    lastShinyId = null;
+    lastShinyKind = null;
+    pendingClaim = false;
+    refs.shiny.hidden = true;
+    refs.shiny.classList.remove('shiny--drift');
+  }
+
+  function showShinyToast(): void {
+    showShinyMessage(refs.shinyToast, "It got away. It's fine. You didn't want it anyway.");
+  }
+
+  function showShinyFlourish(kind: ShinyKind, state: GameState): void {
+    const boost = getActiveBoost(state);
+    let message = 'GOTCHA! Shiny claimed.';
+    if (kind === 'frenzy' && boost) {
+      message = `GOTCHA! FRENZY ×${formatMultiplier(boost.dpsMultiplier)}`;
+    } else if (kind === 'drop') {
+      message = 'GOTCHA! Ring grabbed — check your bag.';
+    }
+    showShinyMessage(refs.shinyFlourish, message);
+  }
+
+  function showShinyMessage(element: HTMLElement, text: string): void {
+    element.textContent = text;
+    element.hidden = false;
+    element.classList.remove('shiny-message--in');
+    void element.offsetWidth;
+    element.classList.add('shiny-message--in');
+    if (shinyMessageTimer !== null) window.clearTimeout(shinyMessageTimer);
+    shinyMessageTimer = window.setTimeout(() => {
+      element.hidden = true;
+      element.classList.remove('shiny-message--in');
+      shinyMessageTimer = null;
+    }, SHINY_MESSAGE_MS);
+  }
+
   return { render, showOfflineSummary };
+}
+
+/** Format a damage multiplier without trailing zeros (e.g. 5, 2.5). */
+function formatMultiplier(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+/** The Stray Goblin's label for the reward it is carrying (engine-owned kind). */
+function shinyName(kind: ShinyKind): string {
+  if (kind === 'frenzy') return 'FRENZY goblin!';
+  if (kind === 'drop') return 'Ring goblin!';
+  return 'Gold goblin!';
 }
 
 /** Every occupiable gear slot, in display order. */
@@ -353,6 +513,13 @@ function collectRefs(root: HTMLElement): Refs {
     bossBadge: req(root, '[data-role="boss-badge"]'),
     enemyHp: req(root, '[data-testid="enemy-hp"]'),
     hpFill: req(root, '[data-role="hp-fill"]'),
+    boostPill: req(root, '[data-testid="boost-pill"]'),
+    boostLabel: req(root, '[data-role="boost-label"]'),
+    boostTimer: req(root, '[data-role="boost-timer"]'),
+    shiny: req(root, '[data-testid="shiny"]'),
+    shinyName: req(root, '[data-role="shiny-name"]'),
+    shinyToast: req(root, '[data-testid="shiny-toast"]'),
+    shinyFlourish: req(root, '[data-testid="shiny-flourish"]'),
     upgradeBtn: req(root, '[data-testid="upgrade-btn"]'),
     upgradeCost: req(root, '[data-role="upgrade-cost"]'),
     upgradeHint: req(root, '[data-role="upgrade-hint"]'),

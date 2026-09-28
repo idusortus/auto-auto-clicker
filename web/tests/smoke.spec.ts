@@ -188,6 +188,164 @@ test('unlocking an achievement shows a splash and increments the count', async (
   expect(consoleErrors).toEqual([]);
 });
 
+/* ---------------------------------------------------------------------------
+ * Golden Events (Shinies). These tests inject a save with an active event so
+ * the mechanic is exercised deterministically, without waiting for the cadence.
+ * The save shape is the public v4 blob; the localStorage key is engine-owned.
+ * ------------------------------------------------------------------------- */
+
+const SAVE_KEY = 'auto-auto-clicker.save.v1';
+
+interface InjectedState {
+  totalPlayedMs?: number;
+  active?: { kind: 'frenzy' | 'cache' | 'drop'; spawnedAtMs: number; expiresAtMs: number } | null;
+  boost?: { dpsMultiplier: number; expiresAtMs: number } | null;
+  gold?: number;
+}
+
+/** Build a minimal valid v4 save with an optional active Shiny / boost. */
+function injectedSave(options: InjectedState): unknown {
+  return {
+    version: 4,
+    savedAt: 0, // overwritten with Date.now() inside the browser
+    state: {
+      meta: {
+        saveVersion: 4,
+        seed: 12345,
+        rngState: 12345,
+        createdAt: 0,
+        totalPlayedMs: options.totalPlayedMs ?? 0,
+        achievements: [],
+      },
+      player: { gold: options.gold ?? 0 },
+      combat: { stage: 1, enemyHp: 30, damageCarry: 0 },
+      gear: {
+        equipped: { weapon: null, ring1: null, ring2: null, necklace: null },
+        bag: [],
+        nextInstanceId: 1,
+      },
+      choices: { pending: null },
+      event: {
+        active: options.active ?? null,
+        spawned: options.active ? 1 : 0,
+        // Far in the future so the cadence never spawns a second Shiny mid-test.
+        nextSpawnAtMs: 600_000,
+      },
+      boost: options.boost ?? null,
+    },
+  };
+}
+
+/** Write a save into localStorage before any page script runs. */
+async function injectSave(page: Page, options: InjectedState): Promise<void> {
+  await page.addInitScript(
+    ({ key, save }) => {
+      window.localStorage.clear();
+      window.localStorage.setItem(
+        key,
+        JSON.stringify({ ...(save as { version: number; state: unknown }), savedAt: Date.now() }),
+      );
+    },
+    { key: SAVE_KEY, save: injectedSave(options) },
+  );
+}
+
+test('tapping a cache Shiny claims gold and hides it', async ({ page, consoleErrors }) => {
+  await injectSave(page, {
+    active: { kind: 'cache', spawnedAtMs: 0, expiresAtMs: 600_000 },
+  });
+  await page.goto('/');
+
+  const shiny = page.getByTestId('shiny');
+  const gold = page.getByTestId('gold');
+  await expect(shiny).toBeVisible();
+
+  const goldBefore = parseLeadingInt(await gold.textContent());
+  // The Shiny drifts continuously, so a coordinate-based click can race the
+  // animation and miss; dispatch the click event directly to exercise the same
+  // tap handler a real finger would hit.
+  await shiny.dispatchEvent('click');
+
+  await expect(shiny).toBeHidden();
+  expect(parseLeadingInt(await gold.textContent())).toBeGreaterThan(goldBefore);
+  expect(consoleErrors).toEqual([]);
+});
+
+test('tapping a drop Shiny banks a ring and shows the claim flourish', async ({
+  page,
+  consoleErrors,
+}) => {
+  await injectSave(page, {
+    active: { kind: 'drop', spawnedAtMs: 0, expiresAtMs: 600_000 },
+  });
+  await page.goto('/');
+
+  const shiny = page.getByTestId('shiny');
+  const bagCount = page.locator('[data-role="bag-count"]');
+  await expect(shiny).toBeVisible();
+  await expect(shiny).toContainText('Ring goblin!');
+  await expect(bagCount).toHaveText('0');
+
+  // Direct dispatch for the same reason as the cache test above.
+  await shiny.dispatchEvent('click');
+
+  await expect(shiny).toBeHidden();
+  // The guaranteed ring lands in the bag immediately...
+  await expect(bagCount).toHaveText('1');
+  // ...and the claim flourish names the reward (not the generic message).
+  await expect(page.getByTestId('shiny-flourish')).toBeVisible();
+  await expect(page.getByTestId('shiny-flourish')).toContainText('Ring grabbed');
+  expect(consoleErrors).toEqual([]);
+});
+
+test('tapping a frenzy Shiny shows the FRENZY boost pill', async ({ page, consoleErrors }) => {
+  await injectSave(page, {
+    active: { kind: 'frenzy', spawnedAtMs: 0, expiresAtMs: 600_000 },
+  });
+  await page.goto('/');
+
+  const shiny = page.getByTestId('shiny');
+  const boostPill = page.getByTestId('boost-pill');
+  await expect(shiny).toBeVisible();
+  await expect(boostPill).toBeHidden();
+
+  // Direct dispatch for the same reason as the cache test above.
+  await shiny.dispatchEvent('click');
+
+  await expect(boostPill).toBeVisible();
+  await expect(boostPill).toContainText('FRENZY');
+  await expect(shiny).toBeHidden();
+  expect(consoleErrors).toEqual([]);
+});
+
+test('a missed Shiny leaves with a snarky, non-blocking toast', async ({ page, consoleErrors }) => {
+  await injectSave(page, {
+    totalPlayedMs: 0,
+    active: { kind: 'cache', spawnedAtMs: 0, expiresAtMs: 2_000 },
+  });
+  await page.goto('/');
+
+  // The Shiny is briefly present, then the engine expires it with no penalty.
+  await expect(page.getByTestId('shiny-toast')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId('shiny-toast')).toContainText('got away');
+  expect(consoleErrors).toEqual([]);
+});
+
+test('the Shiny meets the 44px touch-target minimum', async ({ page, consoleErrors }) => {
+  await injectSave(page, {
+    active: { kind: 'frenzy', spawnedAtMs: 0, expiresAtMs: 600_000 },
+  });
+  await page.goto('/');
+
+  const shiny = page.getByTestId('shiny');
+  await expect(shiny).toBeVisible();
+  const box = await shiny.boundingBox();
+  if (box === null) throw new Error('shiny has no bounding box');
+  expect(box.width).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
+  expect(box.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
+  expect(consoleErrors).toEqual([]);
+});
+
 /** Read the first integer from a text node, e.g. "28 / 30" -> 28. */
 function parseLeadingInt(text: string | null): number {
   const match = text === null ? null : text.match(/\d+/);
