@@ -30,6 +30,7 @@ import {
 import { gearDefinitionFor } from './content';
 import { ACHIEVEMENTS } from './achievements';
 import { getCritStats, getGearStats, getGlobalBonuses, sustainedActiveDps } from './gear-stats';
+import { ACTIVE_THEME } from './theme';
 import type {
   ActiveBoost,
   ActiveShiny,
@@ -297,12 +298,17 @@ function formatBonusPercent(value: number): string {
  */
 function describeMilestoneBonus(slot: GearSlot): string {
   const bonus = UPGRADE_MILESTONE_BONUS[slot];
+  const copy = ACTIVE_THEME.slots.milestone.bonus;
   const parts: string[] = [];
-  if (bonus.critChance > 0) parts.push(`+${formatBonusPercent(bonus.critChance)} crit`);
-  if (bonus.critMultiplier > 0) parts.push(`+${formatBonusPercent(bonus.critMultiplier)} crit dmg`);
-  if (bonus.goldMultiplier > 0) parts.push(`+${formatBonusPercent(bonus.goldMultiplier)} gold`);
-  if (bonus.powerMultiplier > 0) parts.push(`+${formatBonusPercent(bonus.powerMultiplier)} power`);
-  return parts.join(' · ');
+  if (bonus.critChance > 0) parts.push(copy.crit(formatBonusPercent(bonus.critChance)));
+  if (bonus.critMultiplier > 0) {
+    parts.push(copy.critDamage(formatBonusPercent(bonus.critMultiplier)));
+  }
+  if (bonus.goldMultiplier > 0) parts.push(copy.gold(formatBonusPercent(bonus.goldMultiplier)));
+  if (bonus.powerMultiplier > 0) {
+    parts.push(copy.power(formatBonusPercent(bonus.powerMultiplier)));
+  }
+  return parts.join(copy.separator);
 }
 
 /**

@@ -4,17 +4,23 @@
 // stores only the unlocked ids. The catalog never reads the RNG or mutates
 // anything, so unlocking cannot perturb balance or the RNG stream.
 //
+// IDENTITY vs DISPLAY: this file owns the stable `id` and the pure `unlocked`
+// predicate of every achievement (identity — persisted in saves and asserted by
+// the sim). The human `title`/`description` are DISPLAY and come from the active
+// theme, keyed by id. A theme therefore can never rename an id or change a
+// predicate. The public `ACHIEVEMENTS` shape is unchanged: the specs below are
+// resolved against the theme once at module load.
+//
 // Predicates are deliberately limited to what the engine can genuinely observe
 // (events emitted by the action, combat stage, equipped/bagged gear, gold,
 // playtime). There is no player HP, no death, and no enemy attack in this build,
 // so no achievement may imply one. Every entry must be reachable by a real
 // playthrough — no untriggerable flavour.
-//
-// Tone: snarky, PG-13, a little crass; the joke is at the player's expense.
 
 import { BAG_CAP, CRIT_CHANCE_CAP, isBoss } from './balance';
 import { gearDefinitionFor } from './content';
 import { getCritStats } from './gear-stats';
+import { ACTIVE_THEME } from './theme';
 import type { GameEvent, GameState } from './types';
 
 /** Playtime, in ms, that counts as "idling" for the comedic achievements. */
@@ -42,6 +48,17 @@ export interface AchievementDefinition {
   id: string;
   title: string;
   description: string;
+  unlocked(context: AchievementContext): boolean;
+}
+
+/**
+ * The code-owned half of an achievement: its stable id and pure predicate.
+ * `descriptionValue` is handed to the theme's description template when that
+ * template is a function, so a balance number is never hard-coded in the theme.
+ */
+interface AchievementSpec {
+  id: string;
+  descriptionValue?: number;
   unlocked(context: AchievementContext): boolean;
 }
 
@@ -74,103 +91,93 @@ function totalUpgradeLevels(state: GameState): number {
   );
 }
 
-export const ACHIEVEMENTS: readonly AchievementDefinition[] = [
+/**
+ * Resolve one spec against the active theme. The theme holds the copy; this
+ * function holds the identity. A missing catalog entry is a programming error
+ * (a theme must define every id), so it fails loudly rather than rendering
+ * blanks.
+ */
+function resolveAchievement(spec: AchievementSpec): AchievementDefinition {
+  const copy = ACTIVE_THEME.achievements.catalog[spec.id];
+  if (copy === undefined) {
+    throw new Error(
+      `Theme "${ACTIVE_THEME.name}" is missing achievement copy for id "${spec.id}"`,
+    );
+  }
+  const description =
+    typeof copy.description === 'function'
+      ? copy.description(spec.descriptionValue ?? 0)
+      : copy.description;
+  return { id: spec.id, title: copy.title, description, unlocked: spec.unlocked };
+}
+
+const ACHIEVEMENT_SPECS: readonly AchievementSpec[] = [
   // --- Combat ---
   {
     id: 'first-blood',
-    title: 'First Blood',
-    description: 'Kill your first enemy. Congratulations, you monster.',
     unlocked: (context) => hasEvent(context, (event) => event.type === 'enemyKilled'),
   },
   {
     id: 'first-click',
-    title: 'Finger Guns',
-    description: 'Deal damage by actually tapping the enemy. Feel that wrist.',
     unlocked: (context) =>
       hasEvent(context, (event) => event.type === 'damageDealt' && event.source === 'click'),
   },
   {
     id: 'boss-slayer',
-    title: 'Boss Slayer',
-    description: 'Defeat your first boss. They had a family; you had a spreadsheet.',
     unlocked: (context) =>
       hasEvent(context, (event) => event.type === 'enemyKilled' && isBoss(event.stage)),
   },
   {
     id: 'wall-hit',
-    title: 'The Wall',
-    description: "Hit your first progression wall. This is fine. Everything is fine.",
     unlocked: (context) => hasEvent(context, (event) => event.type === 'progressionWall'),
   },
   {
     id: 'choice-made',
-    title: 'Deal With It',
-    description: 'Resolve your first boss-check or wall choice. Growth is uncomfortable.',
     unlocked: (context) => hasEvent(context, (event) => event.type === 'choiceResolved'),
   },
 
   // --- Stages ---
   {
     id: 'stage-10',
-    title: 'Getting Somewhere',
-    description: 'Reach stage 10. Momentum is a hell of a drug.',
     unlocked: (context) => context.state.combat.stage >= 10,
   },
   {
     id: 'stage-25',
-    title: 'Deep Run',
-    description: 'Reach stage 25. This is your life now.',
     unlocked: (context) => context.state.combat.stage >= 25,
   },
   {
     id: 'stage-50',
-    title: 'Halfway to Nowhere',
-    description: 'Reach stage 50. Congratulations on the absence of an ending.',
     unlocked: (context) => context.state.combat.stage >= 50,
   },
 
   // --- Gear ---
   {
     id: 'geared-up',
-    title: 'Geared Up',
-    description: "Equip your first piece of gear. Now you're somebody.",
     unlocked: (context) => hasEvent(context, (event) => event.type === 'gearEquipped'),
   },
   {
     id: 'first-upgrade',
-    title: 'Cha-Ching',
-    description: 'Buy your first upgrade. The gold-to-power pipeline is now open.',
     unlocked: (context) => hasEvent(context, (event) => event.type === 'gearUpgraded'),
   },
   {
     id: 'ring-bearer',
-    title: 'My Precious',
-    description: "Equip a ring. It's not obsessive if it's enchanted.",
     unlocked: (context) => wornRingCount(context.state) >= 1,
   },
   {
     id: 'double-ringed',
-    title: 'Double-Fisted',
-    description: 'Wear a ring in both slots. Two hands, twice the commitment issues.',
     unlocked: (context) => wornRingCount(context.state) >= 2,
   },
   {
     id: 'bedazzled',
-    title: 'Bedazzled',
-    description: "Acquire a necklace. It's heavy, it's gaudy, it's load-bearing.",
     unlocked: (context) => ownsNecklace(context.state),
   },
   {
     id: 'bling',
-    title: 'Bling Bling',
-    description: 'Wear a necklace and at least one ring at once. Subtlety is for other games.',
     unlocked: (context) =>
       context.state.gear.equipped.necklace !== null && wornRingCount(context.state) >= 1,
   },
   {
     id: 'full-kit',
-    title: 'Dressed to Kill',
-    description: 'Fill all four slots — weapon, both rings, necklace. Absolutely shredded.',
     unlocked: (context) => {
       const eq = context.state.gear.equipped;
       return eq.weapon !== null && eq.ring1 !== null && eq.ring2 !== null && eq.necklace !== null;
@@ -178,73 +185,55 @@ export const ACHIEVEMENTS: readonly AchievementDefinition[] = [
   },
   {
     id: 'big-iron',
-    title: 'Big Iron on His Hip',
-    description: `Equip a weapon of item level ${BIG_IRON_ITEM_LEVEL} or higher.`,
+    descriptionValue: BIG_IRON_ITEM_LEVEL,
     unlocked: (context) =>
       (context.state.gear.equipped.weapon?.itemLevel ?? 0) >= BIG_IRON_ITEM_LEVEL,
   },
   {
     id: 'hoarder',
-    title: "It's Not Hoarding If It's Gear",
-    description: `Hold ${HOARDER_THRESHOLD} unequipped items in your bag. You may need them. You won't.`,
+    descriptionValue: HOARDER_THRESHOLD,
     unlocked: (context) => context.state.gear.bag.length >= HOARDER_THRESHOLD,
   },
   {
     id: 'bag-lady',
-    title: 'Bag Lady',
-    description: "Fill every bag slot. It's not a problem, it's a collection.",
     unlocked: (context) => context.state.gear.bag.length >= BAG_CAP,
   },
 
   // --- Crit / economy / time ---
   {
     id: 'crit-investor',
-    title: 'Crit Investor',
-    description: 'Reach 25% total critical chance. Math is on your side.',
     unlocked: (context) => context.critChance >= 0.25,
   },
   {
     id: 'crit-half',
-    title: 'Coin Flip',
-    description: 'Reach 50% total critical chance. Half the time, it works every time.',
     unlocked: (context) => context.critChance >= 0.5,
   },
   {
     id: 'crit-maxed',
-    title: 'Statistically Inevitable',
-    description: `Reach the ${CRIT_CHANCE_CAP * 100}% critical chance cap. The dice are rigged, and you rigged them.`,
+    descriptionValue: CRIT_CHANCE_CAP * 100,
     unlocked: (context) => context.critChance >= CRIT_CHANCE_CAP,
   },
   {
     id: 'loose-change',
-    title: 'Loose Change',
-    description: `Bank ${LOOSE_CHANGE_GOLD} gold at once. Big spender energy.`,
+    descriptionValue: LOOSE_CHANGE_GOLD,
     unlocked: (context) => context.state.player.gold >= LOOSE_CHANGE_GOLD,
   },
   {
     id: 'touch-grass',
-    title: 'Touch Grass',
-    description: 'Play for 10 minutes straight. The grass remains untouched.',
     unlocked: (context) => context.state.meta.totalPlayedMs >= IDLE_THRESHOLD_MS,
   },
   {
     id: 'grass-30',
-    title: 'Have You Tried Touching More Grass?',
-    description: 'Play for 30 minutes straight. The sun is, statistically, a myth.',
     unlocked: (context) => context.state.meta.totalPlayedMs >= GRASS_THRESHOLD_MS,
   },
 
   // --- Upgrade milestones (the gold-allocation decision) ---
   {
     id: 'milestone-first',
-    title: 'The Spike Is Real',
-    description: 'Cross your first upgrade milestone. Same gold, but it finally did something.',
     unlocked: (context) => hasEvent(context, (event) => event.type === 'milestoneReached'),
   },
   {
     id: 'upgrade-diversified',
-    title: 'Equal Opportunity Investor',
-    description: 'Put at least one upgrade into every equipped slot. Diversify, they said.',
     unlocked: (context) => {
       const eq = context.state.gear.equipped;
       return (
@@ -261,22 +250,17 @@ export const ACHIEVEMENTS: readonly AchievementDefinition[] = [
   },
   {
     id: 'upgrade-veteran',
-    title: 'Serial Upgrader',
-    description: `Hold ${UPGRADE_VETERAN_LEVELS} total upgrade levels across your gear. Gold well spent, allegedly.`,
+    descriptionValue: UPGRADE_VETERAN_LEVELS,
     unlocked: (context) => totalUpgradeLevels(context.state) >= UPGRADE_VETERAN_LEVELS,
   },
 
   // --- Golden Events (Shinies) ---
   {
     id: 'shiny-claimed',
-    title: 'Ooh, Shiny',
-    description: 'Claim your first Stray Goblin haul. It was carrying that for you the whole time.',
     unlocked: (context) => hasEvent(context, (event) => event.type === 'eventClaimed'),
   },
   {
     id: 'shiny-frenzy',
-    title: 'Double-Dipping',
-    description: 'Claim a Shiny while a frenzy is already running. Greed is a strategy.',
     unlocked: (context) =>
       context.state.boost !== null &&
       hasEvent(context, (event) => event.type === 'eventClaimed') &&
@@ -284,11 +268,17 @@ export const ACHIEVEMENTS: readonly AchievementDefinition[] = [
   },
   {
     id: 'shiny-escape',
-    title: 'No Shiny Left Behind',
-    description: "Let a Stray Goblin escape. It's fine. You didn't want it anyway.",
     unlocked: (context) => hasEvent(context, (event) => event.type === 'eventExpired'),
   },
 ];
+
+/**
+ * The resolved catalog: identity from the specs above, copy from the active
+ * theme. The public shape is `{ id, title, description, unlocked }`, identical
+ * to before the theme extraction.
+ */
+export const ACHIEVEMENTS: readonly AchievementDefinition[] =
+  ACHIEVEMENT_SPECS.map(resolveAchievement);
 
 /**
  * Return the achievements unlocked by the change from `stateBefore` to

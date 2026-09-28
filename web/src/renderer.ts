@@ -20,6 +20,7 @@
 // is pointer-events:none), so the splash is non-blocking.
 
 import {
+  ACTIVE_THEME,
   ACHIEVEMENTS,
   gearDefinitionFor,
   getActiveBoost,
@@ -49,9 +50,18 @@ import type {
   ShinyKind,
   SlotUpgradeAdvisory,
   StallAdvisory,
+  Theme,
 } from '@auto-auto-clicker/engine-core';
 
 type ChoiceOption = PendingChoice['options'][number];
+
+/**
+ * The active theme. ALL user-facing copy in this file is read from it, so
+ * swapping the theme (one line in `engine-core/src/theme/index.ts`) rescans the
+ * entire UI without touching the renderer. Identity values — achievement ids,
+ * gear `definitionId`s, `GearSlot`s, `ShinyKind`s — never come from the theme.
+ */
+const theme = ACTIVE_THEME;
 
 export interface RendererHandlers {
   /** The player tapped the enemy. */
@@ -179,26 +189,26 @@ const SKELETON = `
   <div class="app">
     <header class="hud">
       <div class="hud__stat">
-        <span class="hud__label">Gold</span>
+        <span class="hud__label">${theme.ui.hud.gold}</span>
         <span class="hud__value" data-testid="gold">0</span>
       </div>
       <div class="hud__stat">
-        <span class="hud__label">Stage</span>
+        <span class="hud__label">${theme.ui.hud.stage}</span>
         <span class="hud__value" data-testid="stage">1</span>
       </div>
       <div class="hud__stat">
-        <span class="hud__label">DPS</span>
+        <span class="hud__label">${theme.ui.hud.dps}</span>
         <span class="hud__value" data-testid="dps">0</span>
       </div>
     </header>
 
     <div class="boost" data-testid="boost-pill" data-role="boost-pill" hidden aria-live="polite">
-      <span class="boost__label" data-role="boost-label">FRENZY</span>
+      <span class="boost__label" data-role="boost-label">${theme.ui.boost.label}</span>
       <span class="boost__timer" data-role="boost-timer"></span>
     </div>
 
     <section class="advisory" data-testid="upgrade-advisory" data-role="upgrade-advisory" hidden aria-live="polite">
-      <p class="advisory__kicker" data-role="advisory-kicker">Bag check</p>
+      <p class="advisory__kicker" data-role="advisory-kicker">${theme.advisory.kicker}</p>
       <p class="advisory__body" data-testid="upgrade-advisory-body" data-role="advisory-body"></p>
       <button
         class="btn btn--primary btn--small"
@@ -206,17 +216,17 @@ const SKELETON = `
         data-role="advisory-equip"
         type="button"
       >
-        Equip it
+        ${theme.advisory.equipFallback}
       </button>
     </section>
 
     <main class="stage">
-      <button class="enemy" data-testid="enemy" type="button" aria-label="Attack the enemy">
-        <span class="enemy__badge" data-role="boss-badge" hidden>Boss</span>
-        <span class="enemy__name" data-role="enemy-name">Enemy</span>
+      <button class="enemy" data-testid="enemy" type="button" aria-label="${theme.enemy.attackAria}">
+        <span class="enemy__badge" data-role="boss-badge" hidden>${theme.enemy.boss}</span>
+        <span class="enemy__name" data-role="enemy-name">${theme.enemy.label}</span>
         <span class="enemy__hp">
           <span class="hp-bar"><span class="hp-bar__fill" data-role="hp-fill"></span></span>
-          <span class="enemy__hp-text" data-testid="enemy-hp">0 / 0</span>
+          <span class="enemy__hp-text" data-testid="enemy-hp">${theme.enemy.hp('0', '0')}</span>
         </span>
       </button>
       <button
@@ -224,13 +234,13 @@ const SKELETON = `
         data-testid="shiny"
         data-role="shiny"
         type="button"
-        aria-label="Catch the Stray Goblin"
+        aria-label="${theme.shiny.catchAria}"
         hidden
       >
         <span class="shiny__goblin" aria-hidden="true">&#128520;</span>
-        <span class="shiny__name" data-role="shiny-name">Stray Goblin</span>
+        <span class="shiny__name" data-role="shiny-name">${theme.shiny.name}</span>
       </button>
-      <p class="hint">Tap the enemy to attack.</p>
+      <p class="hint">${theme.ui.tapHint}</p>
     </main>
 
     <div class="shiny-toast" data-testid="shiny-toast" data-role="shiny-toast" hidden aria-live="polite"></div>
@@ -239,33 +249,33 @@ const SKELETON = `
 
     <section class="panel" aria-labelledby="equipped-title">
       <div class="panel__header">
-        <h2 class="panel__title" id="equipped-title">Equipped</h2>
+        <h2 class="panel__title" id="equipped-title">${theme.ui.equippedTitle}</h2>
       </div>
       <div class="equipped" data-testid="equipped" data-role="equipped"></div>
       <ul class="upgrades" data-role="upgrades">
         <li class="upgrade" data-slot="weapon">
-          <span class="upgrade__name">Weapon</span>
-          <span class="upgrade__level" data-testid="upgrade-level" data-role="upgrade-level">—</span>
-          <span class="upgrade__cost" data-testid="upgrade-cost" data-role="upgrade-cost">—</span>
-          <button class="btn btn--primary btn--small" data-testid="upgrade-btn" data-role="upgrade-btn" data-slot="weapon" type="button" disabled>Upgrade</button>
+          <span class="upgrade__name">${theme.slots.display.weapon}</span>
+          <span class="upgrade__level" data-testid="upgrade-level" data-role="upgrade-level">${theme.ui.placeholder}</span>
+          <span class="upgrade__cost" data-testid="upgrade-cost" data-role="upgrade-cost">${theme.ui.placeholder}</span>
+          <button class="btn btn--primary btn--small" data-testid="upgrade-btn" data-role="upgrade-btn" data-slot="weapon" type="button" disabled>${theme.ui.upgradeButton}</button>
         </li>
         <li class="upgrade" data-slot="ring1">
-          <span class="upgrade__name">Left ring</span>
-          <span class="upgrade__level" data-testid="upgrade-level-ring1">—</span>
-          <span class="upgrade__cost" data-testid="upgrade-cost-ring1">—</span>
-          <button class="btn btn--primary btn--small" data-testid="upgrade-btn-ring1" data-role="upgrade-btn-ring1" data-slot="ring1" type="button" disabled>Upgrade</button>
+          <span class="upgrade__name">${theme.slots.display.ring1}</span>
+          <span class="upgrade__level" data-testid="upgrade-level-ring1">${theme.ui.placeholder}</span>
+          <span class="upgrade__cost" data-testid="upgrade-cost-ring1">${theme.ui.placeholder}</span>
+          <button class="btn btn--primary btn--small" data-testid="upgrade-btn-ring1" data-role="upgrade-btn-ring1" data-slot="ring1" type="button" disabled>${theme.ui.upgradeButton}</button>
         </li>
         <li class="upgrade" data-slot="ring2">
-          <span class="upgrade__name">Right ring</span>
-          <span class="upgrade__level" data-testid="upgrade-level-ring2">—</span>
-          <span class="upgrade__cost" data-testid="upgrade-cost-ring2">—</span>
-          <button class="btn btn--primary btn--small" data-testid="upgrade-btn-ring2" data-role="upgrade-btn-ring2" data-slot="ring2" type="button" disabled>Upgrade</button>
+          <span class="upgrade__name">${theme.slots.display.ring2}</span>
+          <span class="upgrade__level" data-testid="upgrade-level-ring2">${theme.ui.placeholder}</span>
+          <span class="upgrade__cost" data-testid="upgrade-cost-ring2">${theme.ui.placeholder}</span>
+          <button class="btn btn--primary btn--small" data-testid="upgrade-btn-ring2" data-role="upgrade-btn-ring2" data-slot="ring2" type="button" disabled>${theme.ui.upgradeButton}</button>
         </li>
         <li class="upgrade" data-slot="necklace">
-          <span class="upgrade__name">Necklace</span>
-          <span class="upgrade__level" data-testid="upgrade-level-necklace">—</span>
-          <span class="upgrade__cost" data-testid="upgrade-cost-necklace">—</span>
-          <button class="btn btn--primary btn--small" data-testid="upgrade-btn-necklace" data-role="upgrade-btn-necklace" data-slot="necklace" type="button" disabled>Upgrade</button>
+          <span class="upgrade__name">${theme.slots.display.necklace}</span>
+          <span class="upgrade__level" data-testid="upgrade-level-necklace">${theme.ui.placeholder}</span>
+          <span class="upgrade__cost" data-testid="upgrade-cost-necklace">${theme.ui.placeholder}</span>
+          <button class="btn btn--primary btn--small" data-testid="upgrade-btn-necklace" data-role="upgrade-btn-necklace" data-slot="necklace" type="button" disabled>${theme.ui.upgradeButton}</button>
         </li>
       </ul>
       <p class="hint" data-role="upgrade-hint"></p>
@@ -273,18 +283,18 @@ const SKELETON = `
 
     <section class="panel" aria-labelledby="bag-title">
       <div class="panel__header">
-        <h2 class="panel__title" id="bag-title">Bag</h2>
-        <span class="panel__meta"><span data-role="bag-count">0</span> items</span>
+        <h2 class="panel__title" id="bag-title">${theme.ui.bag.title}</h2>
+        <span class="panel__meta"><span data-role="bag-count">0</span>${theme.ui.bag.countSuffix}</span>
       </div>
       <ul class="bag" data-role="bag-list"></ul>
-      <p class="hint" data-role="bag-empty">No drops yet — defeat enemies to find gear.</p>
+      <p class="hint" data-role="bag-empty">${theme.ui.bag.empty}</p>
     </section>
 
     <section class="panel" aria-labelledby="achievements-title">
       <div class="panel__header panel__header--center">
-        <h2 class="panel__title" id="achievements-title">Achievements</h2>
+        <h2 class="panel__title" id="achievements-title">${theme.achievements.title}</h2>
         <div class="panel__actions">
-          <span class="panel__meta"><span data-testid="achievements-count">0</span><span data-role="achievements-count-label"> unlocked</span></span>
+          <span class="panel__meta"><span data-testid="achievements-count">0</span><span data-role="achievements-count-label">${theme.achievements.shelf.countDefault}</span></span>
           <button
             class="btn btn--ghost btn--small"
             data-testid="achievements-toggle"
@@ -293,42 +303,42 @@ const SKELETON = `
             aria-expanded="false"
             aria-controls="achievements-list"
           >
-            Show hidden
+            ${theme.achievements.shelf.showDefault}
           </button>
         </div>
       </div>
       <ul class="ach" id="achievements-list" data-testid="achievements-list"></ul>
       <p class="hint" data-testid="achievements-empty" data-role="achievements-empty" hidden>
-        No achievements yet — go break something.
+        ${theme.achievements.shelf.empty}
       </p>
     </section>
   </div>
 
   <div class="splash" data-role="splash" data-testid="achievement-splash" hidden aria-live="polite">
     <span class="splash__burst" aria-hidden="true"></span>
-    <span class="splash__kicker">Achievement unlocked</span>
+    <span class="splash__kicker">${theme.ui.splashKicker}</span>
     <span class="splash__title" data-testid="achievement-splash-title"></span>
     <span class="splash__desc" data-role="splash-desc"></span>
   </div>
 
   <div class="overlay" data-role="choices" hidden>
     <div class="overlay__card" role="dialog" aria-modal="true" aria-labelledby="choices-title">
-      <h2 class="overlay__title" id="choices-title" data-role="choices-title">Choice</h2>
+      <h2 class="overlay__title" id="choices-title" data-role="choices-title">${theme.ui.choice.title}</h2>
       <p class="overlay__body" data-role="choices-body"></p>
       <div class="overlay__actions">
-        <button class="btn btn--primary btn--wide" type="button" data-testid="choice-wait" data-role="choice-wait">Wait — free</button>
-        <button class="btn btn--ghost" type="button" data-testid="choice-watchAd" data-role="choice-watchAd" disabled aria-disabled="true" title="Placeholder — ad integration is not wired in this build (see NOTES.md)">Watch ad — coming soon</button>
-        <button class="btn btn--ghost" type="button" data-testid="choice-iap" data-role="choice-iap" disabled aria-disabled="true" title="Placeholder — purchases are not wired in this build (see NOTES.md)">Buy — coming soon</button>
+        <button class="btn btn--primary btn--wide" type="button" data-testid="choice-wait" data-role="choice-wait">${theme.ui.choice.wait}</button>
+        <button class="btn btn--ghost" type="button" data-testid="choice-watchAd" data-role="choice-watchAd" disabled aria-disabled="true" title="${theme.ui.choice.watchAdTitle}">${theme.ui.choice.watchAd}</button>
+        <button class="btn btn--ghost" type="button" data-testid="choice-iap" data-role="choice-iap" disabled aria-disabled="true" title="${theme.ui.choice.iapTitle}">${theme.ui.choice.iap}</button>
       </div>
-      <p class="overlay__note">The free wait option always works. Ad and purchase paths are placeholders.</p>
+      <p class="overlay__note">${theme.ui.choice.note}</p>
     </div>
   </div>
 
   <div class="overlay" data-role="offline" hidden>
     <div class="overlay__card" role="dialog" aria-modal="true" aria-labelledby="offline-title">
-      <h2 class="overlay__title" id="offline-title">Welcome back</h2>
+      <h2 class="overlay__title" id="offline-title">${theme.ui.offline.title}</h2>
       <p class="overlay__body" data-role="offline-text"></p>
-      <button class="btn btn--primary btn--wide" type="button" data-role="offline-dismiss">Continue</button>
+      <button class="btn btn--primary btn--wide" type="button" data-role="offline-dismiss">${theme.ui.offline.dismiss}</button>
     </div>
   </div>
 `;
@@ -443,11 +453,14 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     refs.dps.textContent = formatInt(stats.autoDps);
 
     const boss = isBoss(state.combat.stage);
-    refs.enemyName.textContent = boss ? 'Boss' : 'Enemy';
+    refs.enemyName.textContent = boss ? theme.enemy.boss : theme.enemy.label;
     refs.bossBadge.hidden = !boss;
 
     const maxHp = getEnemyMaxHp(state);
-    refs.enemyHp.textContent = `${formatInt(Math.min(state.combat.enemyHp, maxHp))} / ${formatInt(maxHp)}`;
+    refs.enemyHp.textContent = theme.enemy.hp(
+      formatInt(Math.min(state.combat.enemyHp, maxHp)),
+      formatInt(maxHp),
+    );
     refs.hpFill.style.width = `${hpPercent(state) * FULL_PERCENT}%`;
 
     renderBoost(state);
@@ -498,7 +511,7 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     renderUpgradeControls(state);
     renderMilestones(state);
     refs.upgradeHint.textContent =
-      equippedWeapon === null ? 'Equip a weapon from your bag to upgrade it.' : '';
+      equippedWeapon === null ? theme.ui.upgradeHint : '';
 
     renderAchievements(state);
     renderChoice(state);
@@ -583,9 +596,12 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     const bestLevel = formatInt(item.itemLevel);
     const currentLevel = current ? formatInt(current.itemLevel) : null;
 
-    refs.advisoryKicker.textContent = 'Bag check';
+    refs.advisoryKicker.textContent = theme.advisory.kicker;
     refs.advisoryBody.textContent = advisoryBody(stall, best, bestLevel, currentLevel);
-    refs.advisoryEquip.textContent = `Equip the Level ${bestLevel} ${advisorySlotNoun(best.slot)}`;
+    refs.advisoryEquip.textContent = theme.advisory.equipCallout(
+      bestLevel,
+      advisorySlotNoun(best.slot),
+    );
     refs.advisoryEquip.setAttribute('data-instance-id', instanceId);
     refs.advisory.dataset.severity = stall.severity;
     refs.advisory.hidden = false;
@@ -601,8 +617,11 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
       const row = refs.upgradeRows[slot];
       const item = state.gear.equipped[slot];
       const cost = getUpgradeCost(state, slot);
-      row.level.textContent = item ? `Lv ${formatInt(item.upgradeLevel)}` : '—';
-      row.cost.textContent = cost === null ? '—' : `Cost ${formatInt(cost)}`;
+      row.level.textContent = item
+        ? theme.ui.upgradeRow.level(formatInt(item.upgradeLevel))
+        : theme.ui.placeholder;
+      row.cost.textContent =
+        cost === null ? theme.ui.placeholder : theme.ui.upgradeRow.cost(formatInt(cost));
       row.button.disabled = cost === null || state.player.gold < cost;
     }
   }
@@ -639,8 +658,11 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
    * pointer-events:none and never touches engine state or the tick loop.
    */
   function showMilestoneFlourish(slot: GearSlot, info: MilestoneInfo): void {
-    refs.milestoneFlourish.textContent =
-      `★ ${upgradeSlotLabel(slot)} milestone ×${formatInt(info.achievedCount)} — ${info.bonusDescription}`;
+    refs.milestoneFlourish.textContent = theme.slots.milestone.flourish(
+      upgradeSlotLabel(slot),
+      formatInt(info.achievedCount),
+      info.bonusDescription,
+    );
     refs.milestoneFlourish.hidden = false;
     refs.milestoneFlourish.classList.remove('shiny-message--in');
     void refs.milestoneFlourish.offsetWidth;
@@ -668,14 +690,16 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     }
 
     refs.achievementsCount.textContent = formatInt(unlocked.size);
-    refs.achievementsCountLabel.textContent = ` of ${formatInt(ACHIEVEMENTS.length)} unlocked`;
+    refs.achievementsCountLabel.textContent = theme.achievements.shelf.count(
+      formatInt(ACHIEVEMENTS.length),
+    );
 
     // The toggle only offers something to do while at least one entry is hidden.
     const lockedCount = ACHIEVEMENTS.length - unlocked.size;
     refs.achievementsToggle.hidden = lockedCount <= 0;
     refs.achievementsToggle.textContent = revealLockedAchievements
-      ? 'Hide hidden'
-      : `Show hidden ${formatInt(lockedCount)}`;
+      ? theme.achievements.shelf.hide
+      : theme.achievements.shelf.show(formatInt(lockedCount));
     refs.achievementsToggle.setAttribute('aria-expanded', revealLockedAchievements ? 'true' : 'false');
 
     // Nothing unlocked and nothing revealed: say so rather than show a blank shelf.
@@ -697,7 +721,8 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     lastChoiceKey = key;
     if (pending === null) return;
 
-    refs.choicesTitle.textContent = pending.kind === 'boss-check' ? 'Boss check' : 'Progression wall';
+    refs.choicesTitle.textContent =
+      pending.kind === 'boss-check' ? theme.enemy.bossCheck : theme.enemy.progressionWall;
     refs.choicesBody.textContent = choiceBody(state, pending);
   }
 
@@ -718,8 +743,10 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
       return;
     }
     const remainingMs = Math.max(0, boost.expiresAtMs - state.meta.totalPlayedMs);
-    refs.boostLabel.textContent = `FRENZY ×${formatMultiplier(boost.dpsMultiplier)}`;
-    refs.boostTimer.textContent = `${Math.ceil(remainingMs / MS_PER_SECOND)}s`;
+    refs.boostLabel.textContent = theme.ui.boost.pill(formatMultiplier(boost.dpsMultiplier));
+    refs.boostTimer.textContent = theme.ui.boost.timer(
+      String(Math.ceil(remainingMs / MS_PER_SECOND)),
+    );
     refs.boostPill.hidden = false;
   }
 
@@ -772,16 +799,16 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
   }
 
   function showShinyToast(): void {
-    showShinyMessage(refs.shinyToast, "It got away. It's fine. You didn't want it anyway.");
+    showShinyMessage(refs.shinyToast, theme.shiny.escape);
   }
 
   function showShinyFlourish(kind: ShinyKind, state: GameState): void {
     const boost = getActiveBoost(state);
-    let message = 'GOTCHA! Shiny claimed.';
+    let message = theme.shiny.claimed;
     if (kind === 'frenzy' && boost) {
-      message = `GOTCHA! FRENZY ×${formatMultiplier(boost.dpsMultiplier)}`;
+      message = theme.shiny.frenzyClaim(formatMultiplier(boost.dpsMultiplier));
     } else if (kind === 'drop') {
-      message = 'GOTCHA! Ring grabbed — check your bag.';
+      message = theme.shiny.dropClaim;
     }
     showShinyMessage(refs.shinyFlourish, message);
   }
@@ -810,9 +837,9 @@ function formatMultiplier(value: number): string {
 
 /** The Stray Goblin's label for the reward it is carrying (engine-owned kind). */
 function shinyName(kind: ShinyKind): string {
-  if (kind === 'frenzy') return 'FRENZY goblin!';
-  if (kind === 'drop') return 'Ring goblin!';
-  return 'Gold goblin!';
+  if (kind === 'frenzy') return theme.shiny.kind.frenzy;
+  if (kind === 'drop') return theme.shiny.kind.drop;
+  return theme.shiny.kind.cache;
 }
 
 /** Every occupiable gear slot, in display order. */
@@ -842,9 +869,9 @@ function upgradeBadgeTestId(slot: GearSlot): string {
 
 /** Short slot noun used in advisory copy (both rings read as "ring"). */
 function advisorySlotNoun(slot: GearSlot): string {
-  if (slot === 'weapon') return 'weapon';
-  if (slot === 'necklace') return 'necklace';
-  return 'ring';
+  if (slot === 'weapon') return theme.slots.noun.weapon;
+  if (slot === 'necklace') return theme.slots.noun.necklace;
+  return theme.slots.noun.ring;
 }
 
 /**
@@ -863,33 +890,27 @@ function advisoryBody(
   const duration = formatStallDuration(stall.stalledMs);
   const noun = advisorySlotNoun(best.slot);
   if (currentLevel === null) {
-    return (
-      `Stage ${stage} — ${duration} with no progress. Your ${noun} slot is empty and a ` +
-      `Level ${bestLevel} ${noun} is sitting in your bag. It won't equip itself.`
-    );
+    return theme.advisory.emptySlot(stage, duration, noun, bestLevel);
   }
   const ratio = Number.isFinite(best.ratio) && best.ratio >= 1.05 ? `~${best.ratio.toFixed(1)}× ` : '';
-  return (
-    `Stage ${stage} — ${duration} with no progress. The Level ${bestLevel} ${noun} in your bag ` +
-    `is ${ratio}the power of the Level ${currentLevel} you're running. It won't equip itself.`
-  );
+  return theme.advisory.betterSlot(stage, duration, noun, bestLevel, ratio, currentLevel);
 }
 
 /** Stall duration: seconds under a minute, otherwise the shared duration format. */
 function formatStallDuration(ms: number): string {
   if (!Number.isFinite(ms) || ms < MS_PER_MINUTE) {
     const seconds = Math.max(0, Math.floor(ms / MS_PER_SECOND));
-    return `${seconds} s`;
+    return theme.ui.duration.seconds(String(seconds));
   }
   return formatDuration(ms);
 }
 
 /** Short slot name used in upgrade/milestone copy. */
 function upgradeSlotLabel(slot: GearSlot): string {
-  if (slot === 'weapon') return 'Weapon';
-  if (slot === 'ring1') return 'Left ring';
-  if (slot === 'ring2') return 'Right ring';
-  return 'Necklace';
+  if (slot === 'weapon') return theme.slots.display.weapon;
+  if (slot === 'ring1') return theme.slots.display.ring1;
+  if (slot === 'ring2') return theme.slots.display.ring2;
+  return theme.slots.display.necklace;
 }
 
 /** Resolve the four per-slot upgrade controls from the mounted DOM. */
@@ -1021,7 +1042,7 @@ function gearCard(
 
   const stats = document.createElement('p');
   stats.className = 'card__stats';
-  stats.textContent = item ? gearStatLine(state, slot, item) : 'Equip a drop from your bag.';
+  stats.textContent = item ? gearStatLine(state, slot, item) : theme.slots.stats.empty;
 
   card.append(title, stats, milestoneBadge(slot, item), upgradeBadge(slot, advisory));
   return card;
@@ -1040,7 +1061,7 @@ function upgradeBadge(slot: GearSlot, advisory: SlotUpgradeAdvisory): HTMLElemen
   badge.setAttribute('data-testid', upgradeBadgeTestId(slot));
   badge.setAttribute('data-slot', slot);
   if (advisory.hasUpgrade) {
-    badge.textContent = `↑ Better ${advisorySlotNoun(slot)} in your bag`;
+    badge.textContent = theme.advisory.badge(advisorySlotNoun(slot));
     badge.hidden = false;
   } else {
     badge.hidden = true;
@@ -1061,7 +1082,10 @@ function milestoneBadge(slot: GearSlot, item: GearInstance | null): HTMLElement 
 
   const info = getMilestoneInfo(slot, item ? item.upgradeLevel : 0);
   if (item && info.achievedCount > 0) {
-    badge.textContent = `★ ×${formatInt(info.achievedCount)} — ${info.bonusDescription}`;
+    badge.textContent = theme.slots.milestone.badge(
+      formatInt(info.achievedCount),
+      info.bonusDescription,
+    );
     badge.hidden = false;
   } else {
     badge.hidden = true;
@@ -1070,11 +1094,11 @@ function milestoneBadge(slot: GearSlot, item: GearInstance | null): HTMLElement 
 }
 
 function slotLabel(slot: GearSlot, item: GearInstance | null): string {
-  const level = item ? formatInt(item.itemLevel) : null;
-  if (slot === 'weapon') return item ? `Weapon · level ${level}` : 'No weapon equipped';
-  if (slot === 'ring1') return item ? `Ring (left) · level ${level}` : 'No left ring';
-  if (slot === 'ring2') return item ? `Ring (right) · level ${level}` : 'No right ring';
-  return item ? `Necklace · level ${level}` : 'No necklace';
+  const level = item ? formatInt(item.itemLevel) : '';
+  if (slot === 'weapon') return item ? theme.slots.card.weapon(level) : theme.slots.empty.weapon;
+  if (slot === 'ring1') return item ? theme.slots.card.ring1(level) : theme.slots.empty.ring1;
+  if (slot === 'ring2') return item ? theme.slots.card.ring2(level) : theme.slots.empty.ring2;
+  return item ? theme.slots.card.necklace(level) : theme.slots.empty.necklace;
 }
 
 /**
@@ -1087,19 +1111,27 @@ function slotLabel(slot: GearSlot, item: GearInstance | null): string {
 function gearStatLine(state: GameState, slot: GearSlot, item: GearInstance): string {
   const gear = getGearStats(item);
   if (slot === 'weapon') {
-    return `DPS ${formatInt(gear.dps)} · click ${formatInt(gear.clickDamage)} · upgrades ${formatInt(item.upgradeLevel)}`;
+    return theme.slots.stats.weapon(
+      formatInt(gear.dps),
+      formatInt(gear.clickDamage),
+      formatInt(item.upgradeLevel),
+    );
   }
   if (slot === 'necklace') {
     const { goldMultiplier, powerMultiplier } = getGlobalBonuses(state);
-    return (
-      `gold +${formatPercent(gear.goldMultiplier)} (raw) · power +${formatPercent(gear.powerMultiplier)} (raw) · ` +
-      `total gold +${formatPercent(goldMultiplier)} · power +${formatPercent(powerMultiplier)} (capped)`
+    return theme.slots.stats.necklace(
+      formatPercent(gear.goldMultiplier),
+      formatPercent(gear.powerMultiplier),
+      formatPercent(goldMultiplier),
+      formatPercent(powerMultiplier),
     );
   }
   const { critChance, critMultiplier } = getCritStats(state);
-  return (
-    `crit ${formatPercent(gear.critChance)} (raw) · crit dmg +${formatPercent(gear.critMultiplier)} (raw) · ` +
-    `total crit ${formatPercent(critChance)} · crit dmg +${formatPercent(critMultiplier - 1)} (capped)`
+  return theme.slots.stats.ring(
+    formatPercent(gear.critChance),
+    formatPercent(gear.critMultiplier),
+    formatPercent(critChance),
+    formatPercent(critMultiplier - 1),
   );
 }
 
@@ -1141,13 +1173,13 @@ function bagItemNode(item: GearInstance, isUpgrade: boolean): Node {
   const tag = document.createElement('span');
   tag.className = 'bag__tag';
   tag.setAttribute('data-testid', 'bag-upgrade-tag');
-  tag.textContent = '↑ Better';
+  tag.textContent = theme.ui.bag.betterTag;
   tag.hidden = !isUpgrade;
 
   const equipButton = document.createElement('button');
   equipButton.className = 'btn btn--small';
   equipButton.type = 'button';
-  equipButton.textContent = 'Equip';
+  equipButton.textContent = theme.ui.bag.equip;
   equipButton.setAttribute('data-testid', 'equip-btn');
   equipButton.setAttribute('data-slot', slot);
   equipButton.setAttribute('data-instance-id', item.id);
@@ -1164,14 +1196,22 @@ function bagItemNode(item: GearInstance, isUpgrade: boolean): Node {
  */
 function bagItemSummary(slot: GearSlot, item: GearInstance): string {
   const gear = getGearStats(item);
-  const level = `Level ${formatInt(item.itemLevel)}`;
+  const level = theme.ui.bag.level(formatInt(item.itemLevel));
   if (slot === 'necklace') {
-    return `${level} · gold +${formatPercent(gear.goldMultiplier)} (raw) · power +${formatPercent(gear.powerMultiplier)} (raw)`;
+    return theme.ui.bag.necklaceSummary(
+      level,
+      formatPercent(gear.goldMultiplier),
+      formatPercent(gear.powerMultiplier),
+    );
   }
   if (slot === 'ring1' || slot === 'ring2') {
-    return `${level} · crit ${formatPercent(gear.critChance)} (raw) · crit dmg +${formatPercent(gear.critMultiplier)} (raw)`;
+    return theme.ui.bag.ringSummary(
+      level,
+      formatPercent(gear.critChance),
+      formatPercent(gear.critMultiplier),
+    );
   }
-  return `${level} · DPS ${formatInt(gear.dps)} · click ${formatInt(gear.clickDamage)}`;
+  return theme.ui.bag.weaponSummary(level, formatInt(gear.dps), formatInt(gear.clickDamage));
 }
 
 /**
@@ -1191,11 +1231,11 @@ function achievementNodes(unlocked: Set<string>, revealLocked: boolean): Node[] 
 
     const title = document.createElement('span');
     title.className = 'ach__title';
-    title.textContent = isUnlocked ? definition.title : '???';
+    title.textContent = isUnlocked ? definition.title : theme.achievements.shelf.teaser;
 
     const description = document.createElement('span');
     description.className = 'ach__desc';
-    description.textContent = isUnlocked ? definition.description : 'Locked';
+    description.textContent = isUnlocked ? definition.description : theme.achievements.shelf.locked;
 
     li.append(title, description);
     return li;
@@ -1204,18 +1244,20 @@ function achievementNodes(unlocked: Set<string>, revealLocked: boolean): Node[] 
 
 function choiceBody(state: GameState, pending: PendingChoice): string {
   const projected = getProjectedKillMs(state);
-  const projectedText = projected === null ? '' : ` Projected time to kill: ${formatInt(projected)} ms.`;
+  const projectedText =
+    projected === null ? '' : theme.enemy.projectedKill(formatInt(projected));
+  const stage = formatInt(pending.stage);
   if (pending.kind === 'boss-check') {
-    return `Stage ${formatInt(pending.stage)} is a boss check and you are below the boss timer.${projectedText}`;
+    return theme.enemy.bossCheckBody(stage, projectedText);
   }
-  return `Stage ${formatInt(pending.stage)} is a progression wall.${projectedText}`;
+  return theme.enemy.progressionWallBody(stage, projectedText);
 }
 
 function offlineText(summary: OfflineSummary): string {
   const duration = formatDuration(summary.simulatedMs);
   const earned = formatInt(summary.goldEarned);
-  const capped = summary.capped ? ' Offline progress is capped.' : '';
-  return `You earned ${earned} gold while away for about ${duration}.${capped}`;
+  const capped = summary.capped ? theme.ui.offline.capped : '';
+  return theme.ui.offline.earned(earned, duration) + capped;
 }
 
 function hpPercent(state: GameState): number {
@@ -1237,12 +1279,12 @@ function formatPercent(fraction: number): string {
 
 function formatDuration(ms: number): string {
   const totalMinutes = Math.floor(ms / MS_PER_MINUTE);
-  if (totalMinutes < 1) return 'less than a minute';
+  if (totalMinutes < 1) return theme.ui.duration.lessThanMinute;
   const hours = Math.floor(totalMinutes / MINUTES_PER_HOUR);
   const minutes = totalMinutes % MINUTES_PER_HOUR;
-  if (hours < 1) return `${minutes} min`;
-  if (minutes === 0) return `${hours} h`;
-  return `${hours} h ${minutes} min`;
+  if (hours < 1) return theme.ui.duration.minutes(String(minutes));
+  if (minutes === 0) return theme.ui.duration.hours(String(hours));
+  return theme.ui.duration.hoursMinutes(String(hours), String(minutes));
 }
 
 function req<T extends Element>(root: ParentNode, selector: string): T {

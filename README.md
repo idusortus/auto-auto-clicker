@@ -96,7 +96,11 @@ auto-auto-clicker/
 │   │   ├── types.ts             # GameState, Action, GameEvent, SaveGame, content definitions
 │   │   ├── balance.ts           # every gameplay number + economy formula (the one tuner file)
 │   │   ├── content.ts           # GearDefinition / EnemyDefinition catalog (never persisted)
-│   │   ├── achievements.ts      # static achievement catalog + pure evaluator (never persisted)
+│   │   ├── achievements.ts      # static achievement catalog + pure evaluator (ids/predicates; copy from theme)
+│   │   ├── theme/                # ALL user-facing TEXT (display) — see Theming
+│   │   │   ├── types.ts          # `Theme` contract (leaf: imports nothing)
+│   │   │   ├── fantasy.ts        # default "Standard Fantasy RPG" theme (current wording, verbatim)
+│   │   │   └── index.ts          # `ACTIVE_THEME` — the ONE-LINE theme switch
 │   │   ├── gear-stats.ts        # leaf: derived gear reads + the shared powerScore metric
 │   │   ├── advisory.ts         # leaf: upgrade/stall guidance (surfaces facts; never equips)
 │   │   ├── state.ts             # createGame / cloneGameState / derived reads / saveGame / loadGame
@@ -168,6 +172,34 @@ Three npm workspaces with a strict one-way dependency direction:
   adapter (`LocalStorageSaveRepository`) lives in `engine-core/save`, reads storage
   *structurally* through `globalThis`, and does not pull the DOM lib into the engine's
   config.
+
+### Theming
+
+All **user-facing text** is owned by one theme object in `engine-core/src/theme/`; neither
+the renderer nor the achievement catalog holds display copy any more. Swapping themes is a
+**one-line change**:
+
+```ts
+// engine-core/src/theme/index.ts
+export const ACTIVE_THEME: Theme = fantasy;
+```
+
+- **Identity stays in code; display moves to the theme.** Achievement `id`s, gear
+  `definitionId`s, `GearSlot` values, enemy ids, `ShinyKind` values, and the save-schema
+  version are *identity* — they are persisted in saves and asserted by the sim, so they are
+  never sourced from a theme and a theme can never change them. Every human-readable string
+  — HUD labels, slot/card labels, buttons, toasts, empty states, section headers, advisory
+  and offline copy, the Shiny's name, enemy display names, and each achievement's
+  `title`/`description` — is a theme slot (grouped `ui`, `slots`, `enemy`, `shiny`,
+  `advisory`, `achievements`).
+- **Interpolated copy stays a function.** Templates such as `Stage ${stage} — …`, the
+  advisory sentences, and achievement descriptions that embed a balance number remain
+  functions taking the same parameters, so a swapped theme cannot change the rendered bytes.
+- **The theme is a leaf.** `theme/types.ts` imports nothing; `fantasy.ts` imports only the
+  contract; `index.ts` selects the active theme. `engine-core/src` stays acyclic.
+- **This phase extracts text only.** Colors, pixel art, and animation are later phases; the
+  default theme reproduces the existing wording verbatim, so the rendered output is
+  byte-identical.
 
 ---
 
