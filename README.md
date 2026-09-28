@@ -116,7 +116,7 @@ auto-auto-clicker/
 │   ├── public/style.css
 │   ├── src/
 │   │   ├── main.ts              # owns the clock, fixed 100 ms loop, autosave, action dispatch
-│   │   ├── renderer.ts          # pure projection of GameState → DOM; forwards input, never dispatches
+│   │   ├── renderer.ts          # pure state → DOM projection; consumes the per-frame GameEvent[] (seam), forwards input
 │   │   └── storage.ts           # the only module touching SaveRepository / the save clock
 │   ├── tests/smoke.spec.ts      # Playwright mobile smoke test
 │   ├── playwright.config.ts     # 390x844 / touch / DPR 3, boots the real dev server on 5173
@@ -191,6 +191,14 @@ applyAction(state: GameState, action: Action): { state: GameState; events: GameE
   `requestAnimationFrame` deltas and calls `advance(state, 100)` while a whole step is
   available (with a 10-step catch-up clamp so a backgrounded tab cannot spiral). The sim
   harness drives the identical 100 ms step so its pacing matches live play.
+- **Events are plumbed to the renderer as one ordered batch per frame.** `web/src/main.ts`
+  coalesces every fixed step of a frame into a single `GameEvent[]` and passes it to
+  `renderer.render(state, context?, events?)`; the renderer's private `handleEvents(events)` is the
+  documented seam a future theme's animation code consumes (a deliberate no-op today, so the
+  projection stays byte-identical; events are discarded after the call, so no history accumulates).
+  Offline replay and the boot render deliberately drop their events — a multi-hour replay must not
+  fire a storm of animations for history the player never watched — so only the resulting state is
+  delivered and the existing state-diff cues still cover those cases.
 - **Offline progress is credited by replaying elapsed milliseconds through the *same*
   `advance()`**, in bounded fixed steps, rather than granting a special reward. The web
   host replays in 1000 ms steps (`OFFLINE_STEP_MS`) capped at 8 h (`OFFLINE_CAP_MS`),
@@ -433,8 +441,9 @@ This is a prototype, and the honest edges matter:
   and an independent disabled state. Every `UPGRADE_MILESTONE_INTERVAL` = **3** levels in one item
   crosses a **milestone**: the engine emits `{ type: 'milestoneReached', slot, upgradeLevel,
   description }`, and `/web` shows a brief, non-blocking flourish plus a `★ ×N — …` badge on the
-  card (the milestone counts are diffed across renders like the achievement shelf, so the renderer
-  still receives no event list). The bonus is **derived from `upgradeLevel` on read** — no persisted
+  card (the milestone counts are still diffed across renders like the achievement shelf, even though
+  the renderer now also receives the ordered `GameEvent[]` batch — see the event seam below). The
+  bonus is **derived from `upgradeLevel` on read** — no persisted
   field, schema stays **v4** — and feeds the same clamped aggregations, so it can never bypass
   `CRIT_CHANCE_CAP`/`CRIT_MULTIPLIER_CAP`/`POWER_MULTIPLIER_CAP`/`GOLD_MULTIPLIER_CAP`. Because the
   necklace's power base already saturates `POWER_MULTIPLIER_CAP`, the necklace milestone grants

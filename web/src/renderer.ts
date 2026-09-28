@@ -6,12 +6,18 @@
 // player input is forwarded to the host through the handlers passed to
 // mountRenderer; the renderer never dispatches actions itself.
 //
-// Achievement splashes are driven by diffing the unlocked-id list across
-// renders (the host passes no events here). A splash is purely visual: it never
-// touches engine state and never pauses the tick loop, and unlocks are queued so
-// a burst of them is shown one after another. Any tap dismisses the current
-// splash early — the tap still reaches the game underneath (the overlay is
-// pointer-events:none), so the splash is non-blocking.
+// `render(state, context?, events?)` also receives the ordered `GameEvent[]`
+// the engine produced since the previous frame; `handleEvents` is the documented
+// seam a future theme's animation code consumes. In this phase `handleEvents` is
+// deliberately a no-op, so the projection stays byte-identical.
+//
+// The existing flourishes are NOT driven by that event list yet: achievement
+// splashes are driven by diffing the unlocked-id list across renders, and the
+// milestone/Shiny cues diff their own state too. A splash is purely visual: it
+// never touches engine state and never pauses the tick loop, and unlocks are
+// queued so a burst of them is shown one after another. Any tap dismisses the
+// current splash early — the tap still reaches the game underneath (the overlay
+// is pointer-events:none), so the splash is non-blocking.
 
 import {
   ACHIEVEMENTS,
@@ -34,6 +40,7 @@ import {
 } from '@auto-auto-clicker/engine-core';
 import type {
   AchievementDefinition,
+  GameEvent,
   GameState,
   GearInstance,
   GearSlot,
@@ -82,8 +89,17 @@ export interface RenderContext {
 }
 
 export interface Renderer {
-  /** Project the given state onto the DOM. */
-  render(state: GameState, context?: RenderContext): void;
+  /**
+   * Project the given state onto the DOM.
+   *
+   * `events` is the ordered batch of engine `GameEvent`s produced since the
+   * previous render — the live host coalesces every fixed step of one frame into
+   * a single batch, so ordering is preserved and each event is delivered once.
+   * The parameter is ADDITIVE: omitting it (or passing an empty array) leaves the
+   * projection byte-identical. Events are handled and discarded within the call;
+   * the renderer keeps no event history.
+   */
+  render(state: GameState, context?: RenderContext, events?: readonly GameEvent[]): void;
   /** Show the "welcome back" summary for offline progress. */
   showOfflineSummary(summary: OfflineSummary): void;
 }
@@ -401,8 +417,9 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
   );
 
   // A tap on the wandering Stray Goblin is a claim. The renderer marks the
-  // claim as its own so the next render can tell a grab from an escape (it
-  // deliberately never receives the event list).
+  // claim as its own so the next render can tell a grab from an escape. It keeps
+  // this local flag rather than reacting to the event list, so the Shiny cue's
+  // existing diff-based behaviour is unchanged in this phase.
   refs.shiny.addEventListener('click', () => {
     pendingClaim = true;
     handlers.onClaim();
@@ -416,7 +433,7 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     if (latestState !== null) render(latestState, latestContext);
   });
 
-  function render(state: GameState, context?: RenderContext): void {
+  function render(state: GameState, context?: RenderContext, events?: readonly GameEvent[]): void {
     latestState = state;
     latestContext = context;
     const stats = getEffectiveStats(state);
@@ -485,6 +502,39 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
 
     renderAchievements(state);
     renderChoice(state);
+
+    // Events are delivered LAST, after the state has been projected, so a future
+    // animation trigger reads the freshly-rendered DOM and the current state.
+    if (events !== undefined && events.length > 0) handleEvents(events);
+  }
+
+  /**
+   * ANIMATION SEAM — themeable animation triggers bind here.
+   *
+   * Every engine `GameEvent` produced since the previous frame arrives here
+   * exactly once, in order, as ONE batch per rendered frame (the host coalesces
+   * all of a frame's fixed steps into a single batch). This is the seam a future
+   * theme's animation code consumes, so effects can react to *what just
+   * happened* — a hit, a kill, a stage change — instead of inferring it from a
+   * state diff.
+   *
+   * This phase is deliberately a NO-OP: events are plumbed but nothing is
+   * animated, so the projection stays byte-identical. The batch is processed and
+   * DISCARDED, so memory is bounded by a single frame no matter how long the
+   * session runs — the renderer keeps NO event history.
+   *
+   * TODO(animation): map event types to triggers, e.g. `damageDealt` → enemy hit
+   * flash, `enemyKilled` → death burst, `stageEntered` → stage transition,
+   * `gearEquipped`/`gearUpgraded`/`milestoneReached` → gear flourishes,
+   * `eventSpawned`/`eventClaimed`/`eventExpired` and
+   * `boostActivated`/`boostExpired` → Shiny/frenzy cues, and
+   * `achievementUnlocked`/`bossCheckFailed`/`progressionWall`/`choiceResolved`/
+   * `goldChanged` → their existing non-blocking callouts. Animation code must
+   * never mutate engine state or block the tick loop.
+   */
+  function handleEvents(events: readonly GameEvent[]): void {
+    // Intentionally a no-op in this phase (the only goal is delivery).
+    void events;
   }
 
   /**
@@ -558,10 +608,11 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
   }
 
   /**
-   * The visible step change. When an upgrade crosses a milestone, the host gets
-   * no event list, so the renderer diffs each slot's achieved-milestone count
-   * across renders (the same technique the achievement splash uses). The first
-   * render only seeds the counts.
+   * The visible step change. The engine also emits a `milestoneReached` event
+   * (delivered to `handleEvents`), but this flourish still diffs each slot's
+   * achieved-milestone count across renders (the same technique the achievement
+   * splash uses) and is deliberately unchanged in this phase. The first render
+   * only seeds the counts.
    */
   function renderMilestones(state: GameState): void {
     const milestones = getSlotMilestones(state);

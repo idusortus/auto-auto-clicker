@@ -12,6 +12,20 @@
 
 ---
 
+## 2026-09-28 — Plumb the engine's `GameEvent[]` through to the web renderer (animation seam, no-op)
+
+**Context:** `/web` received only a state DIFF, so the renderer could not tell "the enemy was just hit" or "the enemy just died" from "a number got smaller". A future themeable animation system needs real event triggers. The engine already emits a correct `GameEvent[]` from `advance`/`applyAction`; the host discarded it. This phase must be a provable visual NO-OP (no new animation/UI) so the plumbing is verifiable in isolation.
+
+**Choice:** (1) **`render(state, context?, events?)` — events as an additive third parameter, not a separate `pushEvents` method.** A `GameEvent[]` and the `GameState` it produced are the two outputs of the same simulation step(s), so delivering them in one call keeps them atomic, preserves order, and needs no pending buffer: events are consumed and discarded inside the call, so memory is bounded by one frame. A separate `pushEvents` would add a buffer plus a call-order hazard (push before vs after `render`) for no benefit. (2) **Per-frame coalescing.** The rAF `frame()` loop runs several 100 ms `advance` steps; it concatenates every step's `.events` into one ordered `frameEvents` batch and renders once with it, so each event is delivered exactly once, in order, one batch per frame. `dispatch` forwards `applyAction(...).events`. (3) **Offline + boot events are DELIBERATELY DROPPED.** `replayOffline` (up to 8 h at 1000 ms steps) would otherwise emit thousands of events and trigger an animation storm for history the player never watched; only the resulting state is delivered (the existing state-diff behaviours still cover it), and the boot render carries no events. (4) **`handleEvents(events)` is the documented private seam** — a single function with a `TODO(animation)` describing the future event→trigger mapping; it is a deliberate no-op this phase so the projection is byte-identical. (5) The existing non-blocking flourishes (achievement splash, Shiny toast/flourish, milestone flourish, advisory) keep their state-diff triggers unchanged; only their now-stale "the host passes no events" comments were updated.
+
+**Trade-offs:** The renderer now has two parallel inputs (state diff + event batch) and existing cues migrate to events only in a later phase, so there is temporary redundancy. `render`'s third parameter is optional and positional (an options object would be churn). Offline progress intentionally produces no animations even though it produced real kills/levels.
+
+**Revisit:** If a theme wants an *offline* summary animation, add an explicit bounded/summarised offline-event path — never a raw replay of every offline event. If more optional params accrete, switch `render` to an options object.
+
+**Evidence:** `typecheck` 0; `test` 141/141; `sim` PACING OK (canonical soft 6.21 / hard 50.25, all-seed hard 45.01–46.80 — engine untouched); `build` 0; `smoke` 17/17 unchanged. Temporary `handleEvents` instrumentation (removed after the run) recorded **51 events delivered across 40 taps**, in order — `damageDealt`, `achievementUnlocked`, `goldChanged`, `enemyKilled`, `stageEntered` — proving real delivery.
+
+---
+
 ## 2026-09-28 — Presentation-only UI: strongest-first bag sort + achievements hidden-by-default toggle
 
 **Context:** Two small /web UX changes, no engine change. (1) The bag rendered in raw `state.gear.bag` array order, so the strongest drop was not necessarily on top and the shelf could disagree visually with the advisory/sim ranking. (2) The achievements shelf rendered all ~30 entries, so a fresh player saw a tall list of `???` / `Locked` with no way to focus on what they had actually earned.

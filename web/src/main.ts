@@ -11,7 +11,7 @@ import {
   applyAction,
   createGame,
 } from '@auto-auto-clicker/engine-core';
-import type { Action, GameState } from '@auto-auto-clicker/engine-core';
+import type { Action, GameEvent, GameState } from '@auto-auto-clicker/engine-core';
 
 import { mountRenderer } from './renderer';
 import type { OfflineSummary } from './renderer';
@@ -78,6 +78,12 @@ async function prepareGame(): Promise<PreparedGame> {
  * less while away than they would have by tapping. Replay stops early when a
  * choice is pending, because the engine freezes the world until the player
  * resolves it; the pending choice is then shown on boot.
+ *
+ * The events `advance` emits during the replay are DELIBERATELY DISCARDED. A
+ * multi-hour replay can produce thousands of events, and an animation storm for
+ * history the player never watched would be wrong; only the resulting state is
+ * delivered (the renderer diffs that state for the achievements shelf etc.).
+ * The same applies to the boot-time render below.
  */
 function replayOffline(
   state: GameState,
@@ -90,6 +96,7 @@ function replayOffline(
 
   while (remaining > 0 && next.choices.pending === null) {
     const delta = Math.min(OFFLINE_STEP_MS, remaining);
+    // `.events` is intentionally not collected here — see the docblock above.
     const tick = advance(next, delta);
     if (tick.state === next) break;
     next = tick.state;
@@ -114,21 +121,21 @@ function startHost(root: HTMLElement, prepared: PreparedGame): void {
   let stageBeganAtMs: number | null = null;
   let renderedStage: number | null = null;
 
-  function anchoredRender(): void {
+  function anchoredRender(events?: readonly GameEvent[]): void {
     if (renderedStage !== state.combat.stage) {
       renderedStage = state.combat.stage;
       stageBeganAtMs = state.meta.totalPlayedMs;
     }
-    renderer.render(state, { stageBeganAtMs });
+    renderer.render(state, { stageBeganAtMs }, events);
   }
 
   function dispatch(action: Action): void {
     const result = applyAction(state, action);
-    // Invalid or unaffordable actions return the same state object; skip the
-    // render because nothing changed.
+    // Invalid or unaffordable actions return the same state object (and an empty
+    // event list); skip the render because nothing changed.
     if (result.state === state) return;
     state = result.state;
-    anchoredRender();
+    anchoredRender(result.events);
   }
 
   const renderer = mountRenderer(root, {
@@ -139,6 +146,8 @@ function startHost(root: HTMLElement, prepared: PreparedGame): void {
     onClaim: () => dispatch({ type: 'claimEvent' }),
   });
 
+  // Boot render carries NO events: any boot-time offline replay's events were
+  // intentionally dropped (see `replayOffline`), and a fresh game has none.
   anchoredRender();
   if (prepared.offline !== null) renderer.showOfflineSummary(prepared.offline);
 
@@ -151,15 +160,20 @@ function startHost(root: HTMLElement, prepared: PreparedGame): void {
 
     if (state.choices.pending === null) {
       let steps = 0;
+      // Coalesce every step's events of THIS frame into one ordered batch, so the
+      // renderer delivers them once each, in order, per frame.
+      const frameEvents: GameEvent[] = [];
       while (accumulator >= STEP_MS && steps < MAX_CATCHUP_STEPS) {
-        state = advance(state, STEP_MS).state;
+        const tick = advance(state, STEP_MS);
+        state = tick.state;
+        if (tick.events.length > 0) frameEvents.push(...tick.events);
         accumulator -= STEP_MS;
         steps += 1;
       }
       // Drop any backlog beyond the catch-up cap so a backgrounded tab cannot
       // spiral through thousands of steps on resume.
       if (steps >= MAX_CATCHUP_STEPS) accumulator = 0;
-      if (steps > 0) anchoredRender();
+      if (steps > 0) anchoredRender(frameEvents);
     } else {
       // The engine freezes the world while a choice is pending.
       accumulator = 0;
