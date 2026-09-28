@@ -63,6 +63,7 @@ export {
   getShinyCacheGold,
   getSlotMilestones,
   getUpgradeCost,
+  isUnarmed,
   loadGame,
   saveGame,
 } from './state';

@@ -125,6 +125,18 @@ export function getGlobalBonuses(state: GameState): {
 }
 
 /**
+ * True when no weapon is equipped. The weapon is the only item-level power
+ * lever, so with none equipped the player's sustained DPS cannot grow with
+ * progress; a gear-less player therefore has the constant base active DPS and
+ * `getProjectedKillMs` collapses to a pure function of the enemy curve — the
+ * wall becomes independent of gold, achievements, or non-weapon inventory.
+ * Exposed so the pacing sim can surface that degenerate, policy-dependent case.
+ */
+export function isUnarmed(state: GameState): boolean {
+  return state.gear.equipped.weapon === null;
+}
+
+/**
  * The player's SUSTAINED active DPS: auto DPS plus assumed clicks at the
  * critical/power-adjusted effective stats, EXCLUDING any temporary Golden-Event
  * frenzy multiplier. The stage-entry projection must measure sustained power so

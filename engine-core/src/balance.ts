@@ -528,7 +528,15 @@ export function computeGearStats(
   };
 }
 
-/** Projected time to kill the current enemy using auto DPS plus assumed active clicks. */
+/**
+ * Projected time to kill the current enemy using auto DPS plus assumed active
+ * clicks. The result depends on the CALLER'S CURRENT `totalActiveDps`, so the
+ * same stage projects differently as the player's gear changes. For an unarmed
+ * player that DPS is a constant (no item-level power lever), so the projection
+ * collapses to a pure function of `enemyHp`/the enemy curve; once a weapon is
+ * equipped the projection tracks the weapon's item level. This is what makes the
+ * derived wall timing policy-dependent rather than a fixed property of the game.
+ */
 export function projectedKillMs(enemyHp: number, totalActiveDps: number): number {
   if (totalActiveDps <= 0) return Number.POSITIVE_INFINITY;
   return Math.ceil((enemyHp / totalActiveDps) * 1000);

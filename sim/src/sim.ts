@@ -70,6 +70,7 @@ import {
   getGlobalBonuses,
   getUpgradeCost,
   isBoss,
+  isUnarmed,
 } from '@auto-auto-clicker/engine-core';
 import type {
   GameEvent,
@@ -87,9 +88,27 @@ const MAX_SIM_MS = 2 * 60 * 60 * 1000;
 // stage 90, so anything past this is a failure by definition.
 const MAX_SIM_STAGE = 400;
 const MAX_ECONOMY_PASSES = 10_000;
+// Alternative-policy safety cap. The canonical greedy economy converges well
+// inside MAX_ECONOMY_PASSES, but the DIAGNOSTIC playstyles below are not the
+// proven policy, so a divergent one must terminate and report "not reached"
+// rather than hang. This caps economy passes per tick for those policies only.
+const MAX_POLICY_ECONOMY_PASSES = 1_000;
+// Independent belt-and-braces cap on the main tick loop, so even a policy that
+// never raises a wall and never reaches MAX_SIM_MS in the expected number of
+// steps still terminates. The loop already advances `totalMs` by STEP_MS every
+// step, so this is a redundant guard, not a behaviour change.
+const MAX_SIM_STEPS = Math.ceil(MAX_SIM_MS / STEP_MS) + 1;
 
 const CANONICAL_SEED = 12345;
 const SWEEP_SEEDS = [CANONICAL_SEED, 1, 999, 424242, 20250925];
+
+/**
+ * Economy policy for a run. `greedy` is the canonical, hard-asserted playstyle;
+ * the rest are DIAGNOSTIC-only alternatives that expose how policy-dependent the
+ * wall timing is (see `main`'s policy-sensitivity section). They never gate the
+ * process exit code.
+ */
+type EconomyPolicy = 'greedy' | 'passive' | 'equip-only' | 'upgrade-lazy';
 
 /** Occupiable slots, in a fixed order that makes the greedy equip deterministic. */
 const EQUIP_SLOTS: readonly GearSlot[] = ['weapon', 'ring1', 'ring2', 'necklace'];
@@ -178,6 +197,12 @@ interface SimResult {
   hard: Milestone | null;
   /** Stage the run ended on (the wall/stop stage); stages cleared = endStage - 1. */
   endStage: number;
+  /**
+   * True when the run ended with no weapon equipped. This is the degenerate case
+   * where sustained DPS is constant, so `getProjectedKillMs` is a pure function
+   * of the stage and the wall timing says nothing about player choices.
+   */
+  unarmedEnd: boolean;
   attr: Attribution;
   shiny: {
     spawns: number;
@@ -311,17 +336,105 @@ function bonusLog(state: GameState): number {
 }
 
 /**
- * Greedy economy: buy the single affordable UPGRADE (across all four slots) that
- * most raises total effective power, then equip the single bag item (across all
- * slots) that most raises it; repeat until neither action changes the state.
- * Every chosen action strictly raises the bounded `powerScore`, so the loop
- * converges.
+ * Buy the single affordable UPGRADE (across all four slots) that most raises
+ * total effective power, or return null when no upgrade would raise it. The
+ * chosen action is applied through `applyAction`, so the real action path (gold
+ * spend, events, milestones) runs; attribution is recorded on a real change.
  *
- * Attribution is recorded on real state changes only: each upgrade adds
- * +ln(upgradeStatMultiplier) plus any milestone factor gain; each WEAPON equip
- * adds Δ(itemLevel - 1) * ln(gearGrowth) and charges the reset loss of the
- * discarded weapon's upgrade levels; each ring/necklace equip adds the log delta
- * of the crit/power factor (drop-attributed, never gold-attributed).
+ * A slot that cannot raise power (unaffordable, empty, or capped out) scores
+ * zero and is skipped, so gold is never dumped into a dead lever.
+ */
+function buyBestUpgrade(next: GameState, attr: Attribution, lnUpgrade: number): GameState | null {
+  const currentScore = powerScore(next);
+  let bestSlot: GearSlot | null = null;
+  let bestGain = 0;
+  for (const slot of EQUIP_SLOTS) {
+    const cost = getUpgradeCost(next, slot);
+    if (cost === null || next.player.gold < cost) continue;
+    const gain = scoreWithUpgrade(next, slot) - currentScore;
+    if (gain > bestGain) {
+      bestGain = gain;
+      bestSlot = slot;
+    }
+  }
+  if (bestSlot === null) return null;
+
+  const beforeBonus = bonusLog(next);
+  const upgraded = applyAction(next, { type: 'upgradeEquipped', slot: bestSlot });
+  if (upgraded.state === next) return null;
+  const nextState = upgraded.state;
+
+  // The item's own stat multiplier is a gold-funded gain; a milestone crossing
+  // adds a further (small) gold-funded gain to the bounded factor.
+  attr.goldGross += lnUpgrade + Math.max(0, bonusLog(nextState) - beforeBonus);
+  attr.upgrades += 1;
+  attr.upgradesBySlot[bestSlot] += 1;
+  const level = nextState.gear.equipped[bestSlot]?.upgradeLevel ?? 0;
+  if (level > attr.maxUpgradeLevelBySlot[bestSlot]) {
+    attr.maxUpgradeLevelBySlot[bestSlot] = level;
+  }
+  for (const event of upgraded.events) {
+    if (event.type === 'milestoneReached') {
+      attr.milestones += 1;
+      attr.milestonesBySlot[event.slot] += 1;
+    }
+  }
+  return nextState;
+}
+
+/**
+ * Equip the single bag item (across all slots) that most raises total effective
+ * power, or return null when no equip would raise it. The winning equip is
+ * applied through `applyAction`, so the real bag swap and events run; the reset
+ * loss of the discarded weapon and the drop/bonus log gains are attributed
+ * exactly as the canonical ledger records them.
+ */
+function equipBest(
+  next: GameState,
+  attr: Attribution,
+  lnGrowth: number,
+  lnUpgrade: number,
+): GameState | null {
+  const currentScore = powerScore(next);
+  let bestItem: GearInstance | null = null;
+  let bestSlot: GearSlot | null = null;
+  let bestScore = currentScore;
+  for (const slot of EQUIP_SLOTS) {
+    for (const item of next.gear.bag) {
+      if (SLOT_FOR_DEFINITION[item.definitionId] !== slot) continue;
+      const score = scoreWithEquip(next, slot, item);
+      if (score > bestScore) {
+        bestScore = score;
+        bestItem = item;
+        bestSlot = slot;
+      }
+    }
+  }
+  if (bestItem === null || bestSlot === null) return null;
+
+  const beforeBonus = bonusLog(next);
+  const swapped = applyAction(next, { type: 'equip', instanceId: bestItem.id });
+  if (swapped.state === next) return null;
+
+  const old = next.gear.equipped[bestSlot];
+  if (bestSlot === 'weapon') {
+    const oldItemLevel = old ? old.itemLevel : 1;
+    const oldUpgradeLevel = old ? old.upgradeLevel : 0;
+    attr.dropGross += (bestItem.itemLevel - oldItemLevel) * lnGrowth;
+    attr.resetLoss += oldUpgradeLevel * lnUpgrade;
+  }
+  const nextState = swapped.state;
+  attr.bonusGross += Math.max(0, bonusLog(nextState) - beforeBonus);
+  attr.equips += 1;
+  return nextState;
+}
+
+/**
+ * Greedy economy (the canonical, asserted policy): buy the single affordable
+ * UPGRADE (across all four slots) that most raises total effective power, then
+ * equip the single bag item (across all slots) that most raises it; repeat until
+ * neither action changes the state. Every chosen action strictly raises the
+ * bounded `powerScore`, so the loop converges inside `MAX_ECONOMY_PASSES`.
  */
 function runEconomy(state: GameState, attr: Attribution): GameState {
   let next = state;
@@ -329,83 +442,89 @@ function runEconomy(state: GameState, attr: Attribution): GameState {
   const lnUpgrade = Math.log(BALANCE.gear.upgradeStatMultiplier);
 
   for (let pass = 0; pass < MAX_ECONOMY_PASSES; pass += 1) {
-    // Buy the affordable upgrade with the largest real power gain, across ALL
-    // slots. A slot that cannot raise power (unaffordable, empty, or capped out)
-    // scores zero and is skipped, so gold is never dumped into a dead lever.
     for (;;) {
-      const currentScore = powerScore(next);
-      let bestSlot: GearSlot | null = null;
-      let bestGain = 0;
-      for (const slot of EQUIP_SLOTS) {
-        const cost = getUpgradeCost(next, slot);
-        if (cost === null || next.player.gold < cost) continue;
-        const gain = scoreWithUpgrade(next, slot) - currentScore;
-        if (gain > bestGain) {
-          bestGain = gain;
-          bestSlot = slot;
-        }
-      }
-      if (bestSlot === null) break;
-
-      const beforeBonus = bonusLog(next);
-      const upgraded = applyAction(next, { type: 'upgradeEquipped', slot: bestSlot });
-      if (upgraded.state === next) break;
-      next = upgraded.state;
-      // The item's own stat multiplier is a gold-funded gain; a milestone
-      // crossing adds a further (small) gold-funded gain to the bounded factor.
-      attr.goldGross += lnUpgrade + Math.max(0, bonusLog(next) - beforeBonus);
-      attr.upgrades += 1;
-      attr.upgradesBySlot[bestSlot] += 1;
-      const level = next.gear.equipped[bestSlot]?.upgradeLevel ?? 0;
-      if (level > attr.maxUpgradeLevelBySlot[bestSlot]) {
-        attr.maxUpgradeLevelBySlot[bestSlot] = level;
-      }
-      for (const event of upgraded.events) {
-        if (event.type === 'milestoneReached') {
-          attr.milestones += 1;
-          attr.milestonesBySlot[event.slot] += 1;
-        }
-      }
+      const upgraded = buyBestUpgrade(next, attr, lnUpgrade);
+      if (upgraded === null) break;
+      next = upgraded;
     }
 
-    const currentScore = powerScore(next);
-    let bestItem: GearInstance | null = null;
-    let bestSlot: GearSlot | null = null;
-    let bestScore = currentScore;
-    for (const slot of EQUIP_SLOTS) {
-      for (const item of next.gear.bag) {
-        if (SLOT_FOR_DEFINITION[item.definitionId] !== slot) continue;
-        const score = scoreWithEquip(next, slot, item);
-        if (score > bestScore) {
-          bestScore = score;
-          bestItem = item;
-          bestSlot = slot;
-        }
-      }
-    }
-
-    if (bestItem === null || bestSlot === null) break;
-
-    const beforeBonus = bonusLog(next);
-    const swapped = applyAction(next, { type: 'equip', instanceId: bestItem.id });
-    if (swapped.state === next) break;
-
-    const old = next.gear.equipped[bestSlot];
-    if (bestSlot === 'weapon') {
-      const oldItemLevel = old ? old.itemLevel : 1;
-      const oldUpgradeLevel = old ? old.upgradeLevel : 0;
-      attr.dropGross += (bestItem.itemLevel - oldItemLevel) * lnGrowth;
-      attr.resetLoss += oldUpgradeLevel * lnUpgrade;
-    }
-    next = swapped.state;
-    attr.bonusGross += Math.max(0, bonusLog(next) - beforeBonus);
-    attr.equips += 1;
+    const equipped = equipBest(next, attr, lnGrowth, lnUpgrade);
+    if (equipped === null) break;
+    next = equipped;
   }
 
   return next;
 }
 
-function runSim(seed: number): SimResult {
+/**
+ * DIAGNOSTIC policy — equip-only: exactly the greedy equip half, but NEVER buys
+ * an upgrade. Each equip strictly raises the bounded `powerScore`, so the loop
+ * terminates inside the per-policy safety cap.
+ */
+function runEquipOnlyEconomy(state: GameState, attr: Attribution): GameState {
+  let next = state;
+  const lnGrowth = Math.log(BALANCE.gear.gearGrowth);
+  const lnUpgrade = Math.log(BALANCE.gear.upgradeStatMultiplier);
+
+  for (let pass = 0; pass < MAX_POLICY_ECONOMY_PASSES; pass += 1) {
+    const equipped = equipBest(next, attr, lnGrowth, lnUpgrade);
+    if (equipped === null) break;
+    next = equipped;
+  }
+
+  return next;
+}
+
+/**
+ * DIAGNOSTIC policy — upgrade-lazy: equip whenever anything can be equipped;
+ * spend gold on upgrades only once nothing can be equipped. Bounded by the
+ * per-policy safety cap.
+ */
+function runUpgradeLazyEconomy(state: GameState, attr: Attribution): GameState {
+  let next = state;
+  const lnGrowth = Math.log(BALANCE.gear.gearGrowth);
+  const lnUpgrade = Math.log(BALANCE.gear.upgradeStatMultiplier);
+
+  for (let pass = 0; pass < MAX_POLICY_ECONOMY_PASSES; pass += 1) {
+    const equipped = equipBest(next, attr, lnGrowth, lnUpgrade);
+    if (equipped !== null) {
+      next = equipped;
+      continue;
+    }
+    const upgraded = buyBestUpgrade(next, attr, lnUpgrade);
+    if (upgraded === null) break;
+    next = upgraded;
+  }
+
+  return next;
+}
+
+/**
+ * Apply the economy step for `policy`. `passive` never touches the economy at
+ * all — the run advances and clicks (and resolves pending choices) but never
+ * equips or upgrades, which is exactly the degenerate unarmed case
+ * `getProjectedKillMs`'s docblock describes.
+ */
+function applyEconomyPolicy(state: GameState, attr: Attribution, policy: EconomyPolicy): GameState {
+  switch (policy) {
+    case 'passive':
+      return state;
+    case 'equip-only':
+      return runEquipOnlyEconomy(state, attr);
+    case 'upgrade-lazy':
+      return runUpgradeLazyEconomy(state, attr);
+    case 'greedy':
+      return runEconomy(state, attr);
+  }
+}
+
+/**
+ * Run one seed under `policy` (default `greedy`, the canonical asserted
+ * playstyle). Clicking, choice resolution (free `wait`), and Shiny claiming are
+ * IDENTICAL across policies — only the per-tick economy step differs — so any
+ * difference in wall timing is attributable to the economy policy alone.
+ */
+function runSim(seed: number, policy: EconomyPolicy = 'greedy'): SimResult {
   const initial = createGame(seed, 0);
   const record: SimRecord = {
     soft: null,
@@ -423,8 +542,15 @@ function runSim(seed: number): SimResult {
   let state = initial;
   let totalMs = 0;
   let clickAcc = 0;
+  let steps = 0;
 
-  while (totalMs < MAX_SIM_MS && record.hard === null && state.combat.stage <= MAX_SIM_STAGE) {
+  while (
+    totalMs < MAX_SIM_MS &&
+    record.hard === null &&
+    state.combat.stage <= MAX_SIM_STAGE &&
+    steps < MAX_SIM_STEPS
+  ) {
+    steps += 1;
     const tick = advance(state, STEP_MS);
     state = tick.state;
     totalMs += STEP_MS;
@@ -462,7 +588,7 @@ function runSim(seed: number): SimResult {
       processEvents(claimed.events, totalMs, state, record, attr);
     }
 
-    state = runEconomy(state, attr);
+    state = applyEconomyPolicy(state, attr, policy);
 
     if (getActiveBoost(state) !== null) record.boostUptimeMs += STEP_MS;
   }
@@ -474,6 +600,7 @@ function runSim(seed: number): SimResult {
     soft: record.soft,
     hard: record.hard,
     endStage: state.combat.stage,
+    unarmedEnd: isUnarmed(state),
     attr,
     shiny: {
       spawns: record.shinySpawns,
@@ -658,6 +785,34 @@ function shinyLine(result: SimResult): string {
   );
 }
 
+/**
+ * DIAGNOSTIC policies shown in the policy-sensitivity section, each with a plain
+ * description of the playstyle. These are informational only.
+ */
+const POLICY_DIAGNOSTICS: readonly { policy: EconomyPolicy; description: string }[] = [
+  { policy: 'passive', description: 'advance + click only; never equips, never upgrades' },
+  { policy: 'equip-only', description: 'equips the best bag item by engine power; never upgrades' },
+  { policy: 'upgrade-lazy', description: 'equips first; upgrades only when it cannot equip anything' },
+];
+
+/** One diagnostic line: soft/hard timing per seed under an alternative policy. */
+function policyLine(result: SimResult): string {
+  const marker = result.seed === CANONICAL_SEED ? '*' : ' ';
+  const softText =
+    result.soft === null
+      ? 'not reached'
+      : `${formatMinutes(result.soft.ms)} min (stage ${result.soft.stage})`;
+  const hardText =
+    result.hard === null
+      ? 'not reached'
+      : `${formatMinutes(result.hard.ms)} min (stage ${result.hard.stage})`;
+  const unarmed = result.unarmedEnd ? 'yes' : 'no';
+  return (
+    `   ${marker} seed ${String(result.seed).padEnd(9)} soft ${softText.padStart(22)}  ` +
+    `hard ${hardText.padStart(22)}  unarmed@end=${unarmed}`
+  );
+}
+
 interface SeedVerdict {
   seed: number;
   problems: string[];
@@ -785,6 +940,28 @@ function main(): void {
     );
     for (const problem of verdict.problems) {
       console.log(`     - ${problem}`);
+    }
+  }
+  console.log('');
+
+  // POLICY SENSITIVITY — DIAGNOSTIC ONLY. The canonical assertions above are the
+  // proof. These alternative playstyles are printed for robustness visibility and
+  // deliberately do NOT set `failed` or touch `process.exitCode`. The pacing
+  // target is proven for the canonical greedy policy; wall timing is a property of
+  // the policy (and the unarmed case is degenerate), not a guarantee about the game.
+  console.log('policy sensitivity (DIAGNOSTIC — informational only; does NOT gate the exit code)');
+  console.log('  The pacing target above is proven for the canonical greedy policy. The same seed');
+  console.log('  set is re-run under alternative playstyles to show that wall timing is a property');
+  console.log('  of the policy, not a guarantee about the game. For an UNARMED player sustained DPS');
+  console.log('  is constant, so the projection is a pure function of stage; `unarmed@end` flags it.');
+  console.log(
+    `  caps: maxMs=${formatMinutes(MAX_SIM_MS)}min  maxStage=${MAX_SIM_STAGE}  ` +
+      `economyPasses=${MAX_ECONOMY_PASSES}  policyPasses=${MAX_POLICY_ECONOMY_PASSES}`,
+  );
+  for (const { policy, description } of POLICY_DIAGNOSTICS) {
+    console.log(`  policy "${policy}" — ${description}`);
+    for (const result of SWEEP_SEEDS.map((seed) => runSim(seed, policy))) {
+      console.log(policyLine(result));
     }
   }
   console.log('');

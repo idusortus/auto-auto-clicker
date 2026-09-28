@@ -365,6 +365,32 @@ mostly-reset upgrades plus a few persistent ring/necklace levels), and the free 
 ≈0.4% — a transient smoothing contribution, not a net power source (the grant is denominated in
 upgrade *levels*, so a flatter curve makes the same two free levels worth less gold, not less power).
 
+### Policy sensitivity (diagnostic)
+
+The pacing targets above are proven for the **canonical greedy policy** — that is the
+asserted run, and it is the only run that gates the exit code. Wall timing is nevertheless
+**policy-dependent**: the same five seeds re-run under alternative playstyles land the walls
+at different stages and times, so `npm run sim` prints an explicitly **informational**
+`policy sensitivity` section (it never sets the exit code). Measured across the sweep seeds:
+
+| policy | soft (stage) | hard (stage) |
+| --- | --- | --- |
+| greedy (canonical) | 5.76–6.21 min (30) | 45.01–50.25 min (50) |
+| equip-only (equips, never upgrades) | 5.79–6.27 min (30) | 45.46–51.98 min (50) |
+| upgrade-lazy (equips first, upgrades last) | 5.67–6.13 min (30) | 44.28–49.47 min (50) |
+| passive (click only, never equips/upgrades) | 4.07–4.45 min (10) | 28.18–28.94 min (15) |
+
+The passive row is the **degenerate** case: with no weapon equipped (the only item-level power
+lever) sustained DPS never grows, so `getProjectedKillMs` collapses to a **pure function of the
+stage** — the wall is unavoidable and identical regardless of gold, achievements, or non-weapon
+inventory. The engine getter `isUnarmed(state)` reports that no-weapon state and the sim flags it
+(`unarmed@end=yes`); `engine-core/tests/projection.test.ts` pins both halves of the documented
+behaviour (gear-less projection is a pure function of stage and exactly
+`enemyMaxHp(stage) / sustainedActiveDps`; equipping a weapon changes it). The alternative policies
+are bounded by the existing `MAX_SIM_MS` / `MAX_SIM_STAGE` / `MAX_ECONOMY_PASSES` caps plus a
+per-policy economy-pass cap and a main-loop step cap, so a divergent playstyle terminates and
+reports "not reached" rather than hanging.
+
 ---
 
 ## Known trade-offs / limitations

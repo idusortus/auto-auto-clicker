@@ -44,7 +44,13 @@ import type {
 // The derived gear reads live in the leaf module `gear-stats.ts` so that
 // `achievements.ts` can read `getCritStats` without importing this module. They
 // are re-exported here to keep the public surface of `state.ts` unchanged.
-export { getCritStats, getGearStats, getGlobalBonuses, sustainedActiveDps } from './gear-stats';
+export {
+  getCritStats,
+  getGearStats,
+  getGlobalBonuses,
+  isUnarmed,
+  sustainedActiveDps,
+} from './gear-stats';
 
 /** Build a fresh game at stage 1. `now` defaults to 0 for deterministic tests. */
 export function createGame(seed = 12345, now = 0): GameState {
@@ -233,6 +239,19 @@ export function getChoiceGoldGrant(
  *     Without this, a boost active at stage entry would launder a permanent
  *     wall-pass (observed: an unarmed player's stage-19 wall was skipped while a
  *     ×5 frenzy ran).
+ *
+ *  3. The player's CURRENT sustained power, which makes the projection a function
+ *     of BOTH the enemy curve and the gear the player actually holds.
+ *     `sustainedActiveDps` derives from the equipped weapon plus the capped
+ *     crit/power bonuses, so equipping or upgrading changes it. With NO weapon
+ *     equipped the player has no item-level power lever, so sustained DPS cannot
+ *     grow with progress; for a GEAR-LESS player it is exactly the constant base
+ *     active DPS, and `getProjectedKillMs` degenerates to a PURE FUNCTION OF
+ *     `combat.stage`: the wall is then unavoidable and identical regardless of
+ *     gold, achievements, or non-weapon inventory. That is why wall timing is
+ *     POLICY-dependent — the canonical sim policy and an unarmed/passive
+ *     playstyle reach the walls at different stages and times.
+ *     `isUnarmed(state)` reports the no-weapon case.
  */
 export function getProjectedKillMs(state: GameState): number | null {
   if (state.combat.enemyHp <= 0) return null;
