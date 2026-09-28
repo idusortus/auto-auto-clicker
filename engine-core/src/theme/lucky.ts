@@ -60,10 +60,10 @@ export const lucky: Theme = {
       dps: 'Chomp',
     },
     placeholder: '—',
-    tapHint: 'Tap the mail carrier. Bite.',
+    tapHint: 'Bite the mail carrier.',
     equippedTitle: 'Wearing',
     upgradeButton: 'Train',
-    upgradeHint: 'You need something in your jaw before you can train it.',
+    upgradeHint: 'Nothing in your jaw to train. Put something in your jaw.',
     upgradeRow: {
       level: (level) => `Lv ${level}`,
       cost: (cost) => `Cost ${cost}`,
@@ -87,8 +87,8 @@ export const lucky: Theme = {
       title: 'You woke up',
       dismiss: 'Stretch',
       earned: (gold, duration) =>
-        `You dreamed of squirrels and earned ${gold} kibble over about ${duration}.`,
-      capped: ' Offline dreams are capped.',
+        `You dreamed about the squirrel again and made ${gold} kibble over about ${duration}.`,
+      capped: ' Dreams are capped. Deal with it.',
     },
     duration: {
       lessThanMinute: 'less than a minute',
@@ -100,7 +100,7 @@ export const lucky: Theme = {
     bag: {
       title: 'The stash',
       countSuffix: ' buried',
-      empty: "Nothing buried yet — go ruin a mail carrier's day.",
+      empty: 'Nothing buried. Somewhere out there a mail carrier is having a normal day.',
       betterTag: '↑ Better',
       equip: 'Wear',
       level: (level) => `Level ${level}`,
@@ -181,7 +181,7 @@ export const lucky: Theme = {
       drop: 'Buried tag',
       cache: 'Treat stash',
     },
-    escape: "It made the fence. You'll be replaying that miss at 3am for a week.",
+    escape: "It made the fence. You'll be replaying that miss at 3am for the rest of your life.",
     claimed: 'GOT IT! Squirrel caught.',
     frenzyClaim: (multiplier) => `GOT IT! ZOOMIES ×${multiplier}`,
     dropClaim: 'GOT IT! Dug up a tag — check your stash.',
@@ -197,7 +197,7 @@ export const lucky: Theme = {
       `Level ${bestLevel} ${noun} is buried in your stash. Nobody is putting it on for you.`,
     betterSlot: (stage, duration, noun, bestLevel, ratio, currentLevel) =>
       `Block ${stage} — ${duration} with no progress. The Level ${bestLevel} ${noun} in your stash ` +
-      `is ${ratio}the power of the Level ${currentLevel} you're wearing. It won't put itself on.`,
+      `is ${ratio}the power of the Level ${currentLevel} you're wearing. You are choosing this.`,
   },
 
   achievements: {
@@ -210,45 +210,52 @@ export const lucky: Theme = {
       },
       'first-click': {
         title: 'Teeth First',
-        description: 'Deal damage by actually biting — sorry, tapping — the enemy. Feel that jaw.',
+        description:
+          'Deal damage by actually biting — sorry, tapping — the enemy. Feel that jaw.',
       },
       'boss-slayer': {
         title: 'Truck Wrecked',
-        description: 'Take down your first boss. He had a route. You had unresolved feelings.',
+        description:
+          'Take down your first boss. A moving vehicle. On purpose. Nothing wrong with you.',
       },
       'wall-hit': {
         title: 'The Fence',
         description:
-          'Hit your first progression wall. You cannot dig under it. Believe me, you have tried.',
+          'Hit your first wall. You cannot dig under it. You will be trying again in about four minutes.',
       },
       'choice-made': {
         title: 'Made A Call',
         description:
-          'Resolve your first boss-check or fence decision. Growth is uncomfortable; so is the mail.',
+          'Resolve your first fenced-in decision. You waited instead of doing something stupid. Growth.',
       },
       'stage-10': {
         title: 'End Of The Block',
-        description: 'Reach stage 10. Momentum is one hell of a drug. So is the mail carrier.',
+        description: 'Reach stage 10. The mail is still coming. It is always still coming.',
       },
       'stage-25': {
         title: 'Deep In The Neighbourhood',
-        description: 'Reach stage 25. This is your life now. The leash is off.',
+        description:
+          'Reach stage 25. Nobody is coming to get you. This is just your life now.',
       },
       'stage-50': {
         title: 'Halfway To Nowhere',
-        description: 'Reach stage 50. Congratulations on the complete absence of an ending.',
+        description:
+          'Reach stage 50. There is no ending. There was never going to be an ending. Keep biting.',
       },
       'geared-up': {
         title: 'Fit Check',
-        description: "Equip your first piece of gear. Now you're somebody's dog.",
+        description:
+          "Equip your first piece of gear. You are now somebody's dog. Congratulations, I guess.",
       },
       'first-upgrade': {
         title: 'Bought In',
-        description: 'Buy your first upgrade. The kibble-to-power pipeline is now open.',
+        description:
+          'Buy your first upgrade. You have officially converted kibble into an advantage. Capitalism, but for dogs.',
       },
       'ring-bearer': {
         title: 'Tagged',
-        description: "Equip a dog tag. It's not a collar if it's load-bearing.",
+        description:
+          "Equip a dog tag. It's not a collar if it's load-bearing. That's the rule.",
       },
       'double-ringed': {
         title: 'Double Tagged',
@@ -257,29 +264,32 @@ export const lucky: Theme = {
       bedazzled: {
         title: 'Bandana Acquisition',
         description:
-          "Get your paws on a bandana, worn or buried in the stash. Heavy, gaudy, load-bearing.",
+          'Get your paws on a bandana, worn or buried in the stash. Heavy, gaudy, load-bearing. Perfect.',
       },
       bling: {
         title: 'Business Casual',
         description:
-          'Wear a bandana and at least one dog tag at the same time. Subtlety is for cats.',
+          'Wear a bandana and at least one tag at the same time. You look ridiculous. You feel incredible.',
       },
       'full-kit': {
         title: 'Fully Dressed',
-        description: 'Fill all four slots — jaw, both tags, bandana. Absolutely shredded, for a dog.',
+        description:
+          'Fill all four slots — jaw, both tags, bandana. Absolutely shredded. For a dog. Whatever.',
       },
       'big-iron': {
         title: 'Big Jaw On The Block',
-        description: (level) => `Wear a jaw of item level ${level} or higher. An absolute unit of a bite.`,
+        description: (level) =>
+          `Wear a jaw of item level ${level} or higher. That's not a bite any more, that's a legal event.`,
       },
       hoarder: {
         title: "It's Not Hoarding If It's Stashed",
         description: (threshold) =>
-          `Bury ${threshold} unequipped items in your stash. You might need them. You absolutely will not.`,
+          `Bury ${threshold} unequipped items. You might need them. You absolutely will not.`,
       },
       'bag-lady': {
         title: 'Stash Goblin',
-        description: "Fill every stash slot. It's not a problem, it's a curated collection.",
+        description:
+          'Fill every single stash slot. There is nothing left to bury and you are still digging.',
       },
       'crit-investor': {
         title: 'Tag Investor',
@@ -288,7 +298,8 @@ export const lucky: Theme = {
       },
       'crit-half': {
         title: 'Coin Flip',
-        description: 'Reach 50% total critical chance. Half the time it works every time.',
+        description:
+          'Reach 50% total critical chance. Every other bite is a war crime. Statistically.',
       },
       'crit-maxed': {
         title: 'Statistically Inevitable',
@@ -297,7 +308,8 @@ export const lucky: Theme = {
       },
       'loose-change': {
         title: 'Loose Kibble',
-        description: (gold) => `Bank ${gold} kibble at once. Big spender energy. Small dog wallet.`,
+        description: (gold) =>
+          `Bank ${gold} kibble at once. Big spender energy. Small dog wallet. Same as it ever was.`,
       },
       'touch-grass': {
         title: 'Touch Grass',
@@ -305,7 +317,8 @@ export const lucky: Theme = {
       },
       'grass-30': {
         title: 'Have You Tried Touching More Grass?',
-        description: 'Play for 30 minutes straight. The sun, at this point, is an unverified rumour.',
+        description:
+          'Play for 30 minutes straight. You have not seen the sun in half an hour and you do not care.',
       },
       'milestone-first': {
         title: 'The Step Is Real',
@@ -313,20 +326,23 @@ export const lucky: Theme = {
       },
       'upgrade-diversified': {
         title: 'Equal Opportunity Chewer',
-        description: 'Put at least one upgrade into every equipped slot. Diversify, they said.',
+        description:
+          'Put at least one upgrade into every equipped slot. Diversify, they said. Like you have a portfolio.',
       },
       'upgrade-veteran': {
         title: 'Serial Upgrader',
         description: (levels) =>
-          `Hold ${levels} total upgrade levels across your gear. Kibble well spent, allegedly.`,
+          `Hold ${levels} total upgrade levels across your gear. Kibble well spent. Allegedly.`,
       },
       'shiny-claimed': {
         title: 'Ooh, Squirrel',
-        description: 'Claim your first squirrel haul. It was burying that for you the entire time.',
+        description:
+          'Claim your first squirrel haul. It was burying that for you the entire time. Rude.',
       },
       'shiny-frenzy': {
         title: 'Double-Dipping',
-        description: 'Claim a squirrel while the zoomies are already running. Greed is a strategy.',
+        description:
+          'Claim a squirrel while the zoomies are already running. Greed is a strategy and it is working.',
       },
       'shiny-escape': {
         title: 'The One That Got Away',
