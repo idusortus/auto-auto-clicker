@@ -57,7 +57,10 @@ announces itself with a brief, non-blocking **flourish** and a `★ ×N` badge o
 bonus is *derived* from the upgrade level (nothing new is saved). Progress unlocks ~2 dozen snarky
 **achievements** (persisted by id), each
 with a brief over-the-top **splash** (non-blocking — it never pauses the simulation; tap to
-dismiss early) and an **achievements shelf** showing unlocked vs `???` entries. If you leave a strictly better item for a
+dismiss early) and an **achievements shelf** that shows only your **unlocked** entries by default
+(the count reads `N of TOTAL unlocked`), with a **Show hidden N / Hide hidden** toggle to peek at
+the locked `???` entries. Your **bag lists items strongest-first**, ranked by the same engine power
+metric the advisory and the sim use, so the best drop is always at the top. If you leave a strictly better item for a
 slot sitting in your bag, the game **tells you** — a quiet `↑ Better … in your bag` badge on the
 equipped card (plus a `↑ Better` tag on the item itself) appears whenever one exists, and if you make
 **no stage progress for a while** it escalates to a prominent **Bag check** callout that states the
@@ -402,6 +405,18 @@ reports "not reached" rather than hanging.
 ## Known trade-offs / limitations
 
 This is a prototype, and the honest edges matter:
+
+- **The bag lists strongest-first; the achievements shelf hides locked entries by default.**
+  Both are pure presentation and hold no balance numbers. Bag ordering ranks each item by
+  `scoreWithEquip(state, slot, item)` (the same engine power metric the advisory and the sim use),
+  with a deterministic tie-break of item level then instance id; the render-diff signature is taken
+  from the *sorted* order so a re-sort always forces a re-render. The achievements shelf renders
+  every catalog entry but marks locked ones `hidden` until the player presses the **Show hidden N**
+  toggle (`achievements-toggle`, `aria-expanded`, `aria-controls`), which flips renderer-local
+  presentation state only — never an engine action, never persisted. The count keeps its
+  `achievements-count` number and adds `N of TOTAL unlocked`; an empty shelf shows an empty-state
+  hint, and the toggle meets the ≥44px touch target.
+  **Gates: `typecheck` 0, `test` 141/141, `sim` PACING OK (exit 0), `build` 0, `smoke` 17/17.**
 
 - **Drops-primary means drop RNG affects pacing.** Because gear drops (not a deterministic
   gold curve) carry the power, a lucky or unlucky drop stream moves the soft/hard timings.

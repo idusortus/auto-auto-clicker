@@ -443,6 +443,21 @@ p {
   font-variant-numeric: tabular-nums;
 }
 
+/* Headers whose right side carries interactive controls (the achievements
+   shelf): center the items vertically and let the group wrap on narrow screens
+   instead of squeezing the toggle. */
+.panel__header--center {
+  align-items: center;
+}
+
+.panel__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
 /* ==========================================================================
    8. Equipped weapon card
    ========================================================================== */

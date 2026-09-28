@@ -30,6 +30,7 @@ import {
   getStallAdvisory,
   getUpgradeCost,
   isBoss,
+  scoreWithEquip,
 } from '@auto-auto-clicker/engine-core';
 import type {
   AchievementDefinition,
@@ -141,6 +142,9 @@ interface Refs {
   bagCount: HTMLElement;
   achievementsList: HTMLElement;
   achievementsCount: HTMLElement;
+  achievementsCountLabel: HTMLElement;
+  achievementsToggle: HTMLButtonElement;
+  achievementsEmpty: HTMLElement;
   choices: HTMLElement;
   choicesTitle: HTMLElement;
   choicesBody: HTMLElement;
@@ -261,11 +265,26 @@ const SKELETON = `
     </section>
 
     <section class="panel" aria-labelledby="achievements-title">
-      <div class="panel__header">
+      <div class="panel__header panel__header--center">
         <h2 class="panel__title" id="achievements-title">Achievements</h2>
-        <span class="panel__meta"><span data-testid="achievements-count">0</span> unlocked</span>
+        <div class="panel__actions">
+          <span class="panel__meta"><span data-testid="achievements-count">0</span><span data-role="achievements-count-label"> unlocked</span></span>
+          <button
+            class="btn btn--ghost btn--small"
+            data-testid="achievements-toggle"
+            data-role="achievements-toggle"
+            type="button"
+            aria-expanded="false"
+            aria-controls="achievements-list"
+          >
+            Show hidden
+          </button>
+        </div>
       </div>
-      <ul class="ach" data-testid="achievements-list"></ul>
+      <ul class="ach" id="achievements-list" data-testid="achievements-list"></ul>
+      <p class="hint" data-testid="achievements-empty" data-role="achievements-empty" hidden>
+        No achievements yet — go break something.
+      </p>
     </section>
   </div>
 
@@ -307,6 +326,15 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
   let lastBagSignature = '';
   let lastChoiceKey = '';
   let lastAchievementsSignature: string | null = null;
+
+  // Achievements presentation state: locked entries are hidden until the player
+  // chooses to reveal them. This is view-only — it never touches engine state
+  // and is never persisted, so a reload starts collapsed again.
+  let revealLockedAchievements = false;
+  // The most recent render input, so the local toggle can re-project without the
+  // host dispatching anything (the toggle is not a game action).
+  let latestState: GameState | null = null;
+  let latestContext: RenderContext | undefined;
 
   // Golden Event (Shiny) presentation state. Position/drift is /web-only and
   // NEVER reaches engine state: the engine only knows the window's clock.
@@ -380,7 +408,17 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     handlers.onClaim();
   });
 
+  // The achievements "show hidden" toggle is PRESENTATION state owned by the
+  // renderer: it flips a local flag and re-projects the current state. It never
+  // dispatches an engine action and is never persisted.
+  refs.achievementsToggle.addEventListener('click', () => {
+    revealLockedAchievements = !revealLockedAchievements;
+    if (latestState !== null) render(latestState, latestContext);
+  });
+
   function render(state: GameState, context?: RenderContext): void {
+    latestState = state;
+    latestContext = context;
     const stats = getEffectiveStats(state);
 
     refs.gold.textContent = formatInt(state.player.gold);
@@ -421,16 +459,21 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
       refs.equipped.replaceChildren(...equippedNodes(state, advisories));
     }
 
-    const bagSignature = state.gear.bag
+    // Bag items render strongest-first by the engine's shared power metric, so
+    // the shelf agrees with the upgrade advisory and the sim. The signature is
+    // taken from the SORTED order (and includes definitionId), so any change in
+    // the order the player sees always changes it and forces a re-render.
+    const bag = sortedBag(state);
+    const bagSignature = bag
       .map(
         (item) =>
-          `${item.id}:${item.itemLevel}:${item.upgradeLevel}:${bestBagIds.has(item.id) ? '1' : '0'}`,
+          `${item.id}:${item.definitionId}:${item.itemLevel}:${item.upgradeLevel}:${bestBagIds.has(item.id) ? '1' : '0'}`,
       )
       .join('|');
     if (bagSignature !== lastBagSignature) {
       lastBagSignature = bagSignature;
-      refs.bagList.replaceChildren(...state.gear.bag.map((item) => bagItemNode(item, bestBagIds.has(item.id))));
-      refs.bagEmpty.hidden = state.gear.bag.length > 0;
+      refs.bagList.replaceChildren(...bag.map((item) => bagItemNode(item, bestBagIds.has(item.id))));
+      refs.bagEmpty.hidden = bag.length > 0;
     }
     refs.bagCount.textContent = formatInt(state.gear.bag.length);
 
@@ -574,11 +617,23 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     }
 
     refs.achievementsCount.textContent = formatInt(unlocked.size);
+    refs.achievementsCountLabel.textContent = ` of ${formatInt(ACHIEVEMENTS.length)} unlocked`;
 
-    const signature = state.meta.achievements.join('|');
+    // The toggle only offers something to do while at least one entry is hidden.
+    const lockedCount = ACHIEVEMENTS.length - unlocked.size;
+    refs.achievementsToggle.hidden = lockedCount <= 0;
+    refs.achievementsToggle.textContent = revealLockedAchievements
+      ? 'Hide hidden'
+      : `Show hidden ${formatInt(lockedCount)}`;
+    refs.achievementsToggle.setAttribute('aria-expanded', revealLockedAchievements ? 'true' : 'false');
+
+    // Nothing unlocked and nothing revealed: say so rather than show a blank shelf.
+    refs.achievementsEmpty.hidden = !(unlocked.size === 0 && !revealLockedAchievements);
+
+    const signature = `${revealLockedAchievements ? 'reveal' : 'hide'}:${state.meta.achievements.join('|')}`;
     if (signature !== lastAchievementsSignature) {
       lastAchievementsSignature = signature;
-      refs.achievementsList.replaceChildren(...achievementNodes(unlocked));
+      refs.achievementsList.replaceChildren(...achievementNodes(unlocked, revealLockedAchievements));
     }
   }
 
@@ -829,6 +884,9 @@ function collectRefs(root: HTMLElement): Refs {
     bagCount: req(root, '[data-role="bag-count"]'),
     achievementsList: req(root, '[data-testid="achievements-list"]'),
     achievementsCount: req(root, '[data-testid="achievements-count"]'),
+    achievementsCountLabel: req(root, '[data-role="achievements-count-label"]'),
+    achievementsToggle: req(root, '[data-testid="achievements-toggle"]'),
+    achievementsEmpty: req(root, '[data-role="achievements-empty"]'),
     choices: req(root, '[data-role="choices"]'),
     choicesTitle: req(root, '[data-role="choices-title"]'),
     choicesBody: req(root, '[data-role="choices-body"]'),
@@ -994,6 +1052,30 @@ function gearStatLine(state: GameState, slot: GearSlot, item: GearInstance): str
   );
 }
 
+/** The slot a bag item occupies, resolved from its content definition. */
+function bagItemSlot(item: GearInstance): GearSlot {
+  return gearDefinitionFor(item.definitionId)?.slot ?? 'weapon';
+}
+
+/**
+ * Bag items ordered strongest-first. A bag item is ranked by the power of the
+ * state with that item equipped in its own slot (`scoreWithEquip`) — the SAME
+ * engine metric the upgrade advisory and the sim's economy policy use, so the
+ * order can never disagree with them (no balance math is duplicated in /web).
+ * Ties break on item level (descending), then instance id, so the order is fully
+ * deterministic between renders.
+ */
+function sortedBag(state: GameState): GearInstance[] {
+  return state.gear.bag
+    .map((item) => ({ item, score: scoreWithEquip(state, bagItemSlot(item), item) }))
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (b.item.itemLevel !== a.item.itemLevel) return b.item.itemLevel - a.item.itemLevel;
+      return a.item.id < b.item.id ? -1 : a.item.id > b.item.id ? 1 : 0;
+    })
+    .map((entry) => entry.item);
+}
+
 function bagItemNode(item: GearInstance, isUpgrade: boolean): Node {
   const li = document.createElement('li');
   li.className = `bag__item${isUpgrade ? ' bag__item--upgrade' : ''}`;
@@ -1041,14 +1123,20 @@ function bagItemSummary(slot: GearSlot, item: GearInstance): string {
   return `${level} · DPS ${formatInt(gear.dps)} · click ${formatInt(gear.clickDamage)}`;
 }
 
-/** The achievements shelf: unlocked entries show title+description, locked tease. */
-function achievementNodes(unlocked: Set<string>): Node[] {
+/**
+ * The achievements shelf. Unlocked entries show title+description; locked ones
+ * remain in the DOM (so the full catalog is always addressable and the count is
+ * honest) but are `hidden` until the player reveals them with the shelf toggle,
+ * where they tease with `???` / `Locked`.
+ */
+function achievementNodes(unlocked: Set<string>, revealLocked: boolean): Node[] {
   return ACHIEVEMENTS.map((definition) => {
     const isUnlocked = unlocked.has(definition.id);
     const li = document.createElement('li');
     li.className = `ach__item${isUnlocked ? ' ach__item--unlocked' : ''}`;
     li.setAttribute('data-testid', 'achievement-item');
     if (isUnlocked) li.setAttribute('data-unlocked', 'true');
+    else li.hidden = !revealLocked;
 
     const title = document.createElement('span');
     title.className = 'ach__title';

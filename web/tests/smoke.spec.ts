@@ -264,6 +264,97 @@ test('unlocking an achievement shows a splash and increments the count', async (
   expect(consoleErrors).toEqual([]);
 });
 
+test('locked achievements are hidden by default and revealed by the toggle', async ({
+  page,
+  consoleErrors,
+}) => {
+  await page.goto('/');
+
+  const toggle = page.getByTestId('achievements-toggle');
+  const empty = page.getByTestId('achievements-empty');
+  const visibleItems = page.locator('[data-testid="achievement-item"]:visible');
+
+  // Nothing unlocked yet: the shelf shows an empty state and every catalog entry
+  // is present but hidden behind the toggle.
+  await expect(page.getByTestId('achievements-count')).toHaveText('0');
+  await expect(empty).toBeVisible();
+  await expect(toggle).toBeVisible();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(toggle).toContainText('Show hidden');
+  await expect(visibleItems).toHaveCount(0);
+
+  const total = await page.getByTestId('achievement-item').count();
+  expect(total).toBeGreaterThanOrEqual(18);
+
+  // Reveal: the locked entries become visible and tease as ??? / Locked.
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(toggle).toContainText('Hide hidden');
+  await expect(visibleItems).toHaveCount(total);
+  await expect(empty).toBeHidden();
+  await expect(visibleItems.first()).toContainText('???');
+
+  // Hide again — back to the collapsed default, empty state restored.
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(visibleItems).toHaveCount(0);
+  await expect(empty).toBeVisible();
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('the achievements toggle meets the 44px touch-target minimum', async ({ page, consoleErrors }) => {
+  await page.goto('/');
+
+  const toggle = page.getByTestId('achievements-toggle');
+  await expect(toggle).toBeVisible();
+  const box = await toggle.boundingBox();
+  if (box === null) throw new Error('achievements-toggle has no bounding box');
+  expect(box.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+
+
+/* ---------------------------------------------------------------------------
+ * Bag ordering: the shelf lists the strongest item first, ranked by the engine's
+ * shared power metric (`scoreWithEquip`). An unkillable enemy keeps the bag
+ * frozen so no fresh drop can enter while the order is read.
+ * ------------------------------------------------------------------------- */
+
+test('bag items render strongest-first by the engine power metric', async ({ page, consoleErrors }) => {
+  await injectSave(page, {
+    // Unkillable enemy so no new drops arrive while the order is read.
+    enemyHp: 1e15,
+    bag: [
+      { itemLevel: 4, upgradeLevel: 0, definitionId: 'weapon' },
+      { itemLevel: 9, upgradeLevel: 0, definitionId: 'weapon' },
+      { itemLevel: 15, upgradeLevel: 0, definitionId: 'weapon' },
+      { itemLevel: 22, upgradeLevel: 0, definitionId: 'weapon' },
+    ],
+  });
+  await page.goto('/');
+
+  // The injected bag ids are `test-bag-<index>` in array order; strongest-first
+  // means the highest item level (index 3) leads, the lowest (index 0) trails.
+  const order = await page
+    .locator('[data-testid="equip-btn"]')
+    .evaluateAll((buttons) => buttons.map((button) => button.getAttribute('data-instance-id')));
+  expect(order).toEqual(['test-bag-3', 'test-bag-2', 'test-bag-1', 'test-bag-0']);
+
+  // The "better item" tag still rides the strongest (first) row after the re-sort.
+  const taggedId = await page
+    .locator('[data-testid="bag-upgrade-tag"]:visible')
+    .first()
+    .evaluate((tag) =>
+      tag.closest('li')?.querySelector('[data-testid="equip-btn"]')?.getAttribute('data-instance-id'),
+    );
+  expect(taggedId).toBe('test-bag-3');
+
+  expect(consoleErrors).toEqual([]);
+});
+
 /* ---------------------------------------------------------------------------
  * Golden Events (Shinies). These tests inject a save with an active event so
  * the mechanic is exercised deterministically, without waiting for the cadence.
