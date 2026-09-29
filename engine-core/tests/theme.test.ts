@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { ACTIVE_THEME, fantasy, lucky, THEMES } from '../src/theme';
 import type { AnimationCueKey, Theme } from '../src/theme';
 import { ACHIEVEMENTS } from '../src/achievements';
+import { ENEMY_ROSTER } from '../src/content';
+import type { TauntKind } from '../src/types';
 import {
   ASSET_SLOTS,
   LIMITS,
@@ -172,6 +174,176 @@ describe('theme contract — animation cues', () => {
       }
     });
   }
+});
+
+// Enemy display copy is theme-owned DISPLAY data keyed by the stable engine
+// enemy id. The validator registers the `enemy.roster` section but does NOT
+// check its contents (exactly like `animation`), so these tests are its
+// enforcement: every roster id is present, every taunt kind has enough phrases,
+// and no phrase is empty.
+describe('theme contract — enemy roster (display copy)', () => {
+  const TAUNT_KINDS: readonly TauntKind[] = [
+    'spawn',
+    'defeat',
+    'bossDefeat',
+    'wall',
+    'shiny',
+    'ambient',
+  ];
+  const ROSTER_IDS = ENEMY_ROSTER.map((enemy) => enemy.id).sort();
+
+  it('covers exactly the stable engine enemy id set in every theme', () => {
+    expect(ROSTER_IDS.length).toBe(12);
+    for (const theme of THEMES) {
+      expect(Object.keys(theme.enemy.roster).sort(), theme.name).toEqual(ROSTER_IDS);
+    }
+  });
+
+  for (const theme of THEMES) {
+    it(`gives every "${theme.name}" enemy a name and >= 4 phrases per taunt kind`, () => {
+      for (const id of ROSTER_IDS) {
+        const entry = theme.enemy.roster[id];
+        expect(entry, `${theme.name} is missing roster entry "${id}"`).toBeDefined();
+        if (entry === undefined) continue;
+        expect(entry.name.trim().length, `${theme.name}.${id} name`).toBeGreaterThan(0);
+        for (const kind of TAUNT_KINDS) {
+          const phrases = entry.catchphrases[kind];
+          expect(Array.isArray(phrases), `${theme.name}.${id}.${kind} must be an array`).toBe(true);
+          expect(
+            phrases.length,
+            `${theme.name}.${id}.${kind} needs >= 4 phrases`,
+          ).toBeGreaterThanOrEqual(4);
+          for (const phrase of phrases) {
+            expect(typeof phrase, `${theme.name}.${id}.${kind}`).toBe('string');
+            expect(
+              phrase.trim().length,
+              `${theme.name}.${id}.${kind} has an empty phrase`,
+            ).toBeGreaterThan(0);
+          }
+        }
+      }
+    });
+  }
+
+  it('the two themes give the roster genuinely different names and phrases', () => {
+    // A copy-pasted roster would defeat the point of a second theme.
+    const fantasyNames = ROSTER_IDS.map((id) => fantasy.enemy.roster[id]?.name);
+    const luckyNames = ROSTER_IDS.map((id) => lucky.enemy.roster[id]?.name);
+    expect(luckyNames).not.toEqual(fantasyNames);
+    for (const id of ROSTER_IDS) {
+      expect(lucky.enemy.roster[id]?.catchphrases.wall, id).not.toEqual(
+        fantasy.enemy.roster[id]?.catchphrases.wall,
+      );
+    }
+  });
+});
+
+// The roster is a `DYNAMIC_CONTAINER`, so the walk skips its subtree and a
+// dedicated completeness pass in `validateTheme` is its ONLY content check
+// (mirroring `achievements.catalog`). These fixtures are the negative side:
+// every break must surface with an exact path + kind, never slip through.
+describe('theme contract — enemy roster validator (completeness, both directions)', () => {
+  it('reports a missing roster entry as missing-enemy', () => {
+    const theme = broken();
+    delete theme.enemy.roster['grunt'];
+    const { problems } = validateTheme(theme as Theme);
+    const problem = findProblem(problems, 'enemy.roster.grunt', 'missing-enemy');
+    expect(problem).toBeDefined();
+    expect(problem?.message).toContain('grunt');
+  });
+
+  it('reports an extra (typo) roster id as extra-enemy', () => {
+    const theme = broken();
+    theme.enemy.roster.gobln = cloneTheme(theme.enemy.roster.goblin);
+    const { problems } = validateTheme(theme as Theme);
+    const problem = findProblem(problems, 'enemy.roster.gobln', 'extra-enemy');
+    expect(problem).toBeDefined();
+    expect(problem?.message).toContain('unknown enemy id');
+  });
+
+  it('reports a non-object roster entry as wrong-type', () => {
+    const theme = broken();
+    theme.enemy.roster.grunt = 'Grunt';
+    const { problems } = validateTheme(theme as Theme);
+    expect(findProblem(problems, 'enemy.roster.grunt', 'wrong-type')).toBeDefined();
+  });
+
+  it('reports an empty roster name as empty-string', () => {
+    const theme = broken();
+    theme.enemy.roster.grunt.name = '   ';
+    const { problems } = validateTheme(theme as Theme);
+    expect(findProblem(problems, 'enemy.roster.grunt.name', 'empty-string')).toBeDefined();
+  });
+
+  it('reports a missing taunt kind as missing', () => {
+    const theme = broken();
+    delete theme.enemy.roster.grunt.catchphrases.ambient;
+    const { problems } = validateTheme(theme as Theme);
+    expect(
+      findProblem(problems, 'enemy.roster.grunt.catchphrases.ambient', 'missing'),
+    ).toBeDefined();
+  });
+
+  it('reports a short catchphrase array as too-few-phrases', () => {
+    const theme = broken();
+    theme.enemy.roster.grunt.catchphrases.wall = ['only one'];
+    const { problems } = validateTheme(theme as Theme);
+    const problem = findProblem(problems, 'enemy.roster.grunt.catchphrases.wall', 'too-few-phrases');
+    expect(problem).toBeDefined();
+    expect(problem?.message).toContain('at least 4');
+  });
+
+  it('reports an empty catchphrase as empty-string', () => {
+    const theme = broken();
+    theme.enemy.roster.grunt.catchphrases.wall[0] = '   ';
+    const { problems } = validateTheme(theme as Theme);
+    expect(
+      findProblem(problems, 'enemy.roster.grunt.catchphrases.wall.0', 'empty-string'),
+    ).toBeDefined();
+  });
+
+  it('reports an unknown key inside an entry as bad-key', () => {
+    const theme = broken();
+    theme.enemy.roster.grunt.nickname = 'Big Grunt';
+    const { problems } = validateTheme(theme as Theme);
+    expect(findProblem(problems, 'enemy.roster.grunt.nickname', 'bad-key')).toBeDefined();
+  });
+
+  it('catches an enemy id used as a NESTED key under the roster (no longer skipped)', () => {
+    // The top-level roster keys ARE enemy ids and are deliberately allowed (they
+    // are the sanctioned copy-keyed location — the clean-theme tests above only
+    // pass because of it). A nested enemy-id key is NOT sanctioned: it is not a
+    // TauntKind, so the catchphrases key check must flag it instead of the
+    // DYNAMIC_CONTAINER walk silently skipping it.
+    const theme = broken();
+    theme.enemy.roster.grunt.catchphrases['wolf'] = ['A nested, illegal key.'];
+    const { problems } = validateTheme(theme as Theme);
+    const problem = findProblem(problems, 'enemy.roster.grunt.catchphrases.wolf', 'bad-key');
+    expect(problem).toBeDefined();
+    expect(problem?.message).toContain('unknown taunt kind');
+  });
+
+  it('binds catchphrase length to the catchphrase limit group (too-long)', () => {
+    const theme = broken();
+    theme.enemy.roster.grunt.catchphrases.wall[0] = 'z'.repeat(LIMITS.catchphrase.max + 1);
+    const { problems } = validateTheme(theme as Theme);
+    const problem = findProblem(problems, 'enemy.roster.grunt.catchphrases.wall.0', 'too-long');
+    expect(problem).toBeDefined();
+    expect(problem?.message).toContain(String(LIMITS.catchphrase.max));
+  });
+
+  it('reports every roster problem at once, not just the first', () => {
+    const theme = broken();
+    delete theme.enemy.roster.goblin;
+    theme.enemy.roster.typo = cloneTheme(theme.enemy.roster.bat);
+    theme.enemy.roster.grunt.catchphrases.spawn = [];
+    const { problems, ok } = validateTheme(theme as Theme);
+    expect(ok).toBe(false);
+    const paths = problems.map((problem) => `${problem.kind}:${problem.path}`);
+    expect(paths).toContain('missing-enemy:enemy.roster.goblin');
+    expect(paths).toContain('extra-enemy:enemy.roster.typo');
+    expect(paths).toContain('too-few-phrases:enemy.roster.grunt.catchphrases.spawn');
+  });
 });
 
 // Guard against a "second theme" that is a copy-paste of the first: the whole

@@ -13,6 +13,7 @@ export { lucky } from './lucky';
 export type {
   AchievementCopy,
   AnimationCueKey,
+  EnemyDisplayEntry,
   Theme,
   ThemeAnimation,
   ThemeAnimationCue,

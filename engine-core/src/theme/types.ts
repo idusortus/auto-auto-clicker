@@ -6,12 +6,16 @@
 // asserted by the sim / persisted in saves. A theme must never be able to
 // change them.
 //
-// LEAF MODULE: this file imports nothing, so the theme package stays acyclic
-// and engine-core can keep it out of every import cycle. Every string slot is
-// explicit — no engine internals are referenced.
+// LEAF MODULE: the ONLY import here is a TYPE-ONLY `TauntKind` from the
+// dependency-free `../types` module, so the theme package stays acyclic and
+// engine-core can keep it out of every import cycle (`../types` imports
+// nothing, so there is no back-edge). Every string slot is explicit — no engine
+// internals are referenced.
 //
 // Interpolated copy stays a FUNCTION taking the same parameters the old inline
 // template took, so a swapped theme cannot change the rendered bytes.
+
+import type { TauntKind } from '../types';
 
 /**
  * The themeable colour tokens the UI renders through. Each value is a CSS colour
@@ -102,6 +106,19 @@ export interface ThemeAnimationCue {
 
 export interface ThemeAnimation {
   cues: Record<AnimationCueKey, ThemeAnimationCue>;
+}
+
+/**
+ * Display entry for one engine enemy id. This is COPY ONLY — a theme must never
+ * control enemy identity (that is the stable engine id) or stats. `name` is the
+ * arena label; `catchphrases` are keyed by the semantic taunt kind the engine
+ * emits so a line always fits the moment.
+ */
+export interface EnemyDisplayEntry {
+  /** The arena label for this enemy (replaces the old single `enemy.label`). */
+  name: string;
+  /** Catchphrases per taunt kind; at least 4 for each kind (test-enforced). */
+  catchphrases: Record<TauntKind, string[]>;
 }
 
 /**
@@ -246,6 +263,12 @@ export interface Theme {
     projectedKill(ms: string): string;
     bossCheckBody(stage: string, projected: string): string;
     progressionWallBody(stage: string, projected: string): string;
+    /**
+     * Display copy for each stable engine enemy id (see `ENEMY_ROSTER`). EVERY
+     * roster id must be present; the renderer fails loudly on a missing one.
+     * `label`/`boss` stay as the pre-render skeleton fallback and the boss badge.
+     */
+    roster: Record<string, EnemyDisplayEntry>;
   };
 
   /** The wandering Stray Goblin ("Shiny") and its transient messages. */

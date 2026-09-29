@@ -13,15 +13,17 @@
 import {
   SHINY_FRENZY_DURATION_MS,
   SHINY_FRENZY_MULTIPLIER,
+  TAUNT_SHINY_CHANCE,
   upgradeCost,
   upgradeMilestoneCount,
   WAIT_UPGRADE_GRANT_LEVELS,
   WATCH_AD_UPGRADE_GRANT_LEVELS,
 } from './balance';
-import { gearDefinitionFor } from './content';
+import { enemyForStage, gearDefinitionFor } from './content';
 import { grantAchievements } from './achievements';
 import { applyDamageToEnemy, killCurrentEnemy } from './combat';
 import { grantGearDrop } from './loot';
+import { makeTaunt } from './taunts';
 import {
   cloneGameState,
   getActiveEvent,
@@ -172,6 +174,14 @@ function applyClaimEvent(state: GameState): { state: GameState; events: GameEven
   }
 
   events.push({ type: 'eventClaimed', kind: active.kind });
+  const taunt = makeTaunt(
+    draft,
+    'shiny',
+    enemyForStage(draft.combat.stage).id,
+    draft.combat.stage,
+    TAUNT_SHINY_CHANCE,
+  );
+  if (taunt) events.push(taunt);
   return { state: draft, events };
 }
 

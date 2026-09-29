@@ -564,3 +564,43 @@ export function projectedKillMs(enemyHp: number, totalActiveDps: number): number
   if (totalActiveDps <= 0) return Number.POSITIVE_INFINITY;
   return Math.ceil((enemyHp / totalActiveDps) * 1000);
 }
+
+// ---------------------------------------------------------------------------
+// Enemy taunts (F3) — deterministic catchphrase cadence.
+//
+// These knobs are PRESENTATION-ADJACENT (they decide how often the engine
+// emits an `enemyTaunt` cue) but live here with every other tunable. They are
+// deliberately NOT pacing knobs: taunts are emitted on a SEPARATE derived RNG
+// channel (see taunts.ts), never through `meta.rngState`, so changing any of
+// these cannot move the pacing proof. The sim ignores `enemyTaunt` events
+// entirely; the empty `npm run sim` diff is the check.
+//
+// `phraseIndex` is emitted as a BOUNDED integer in `[0, TAUNT_NOMINAL_PHRASES)`;
+// a renderer resolves the wording and MUST reduce out-of-range indices with
+// modulo (a theme may ship fewer phrases than the nominal count). Bounding keeps
+// the event shape stable and testable; the theme still owns the text.
+// ---------------------------------------------------------------------------
+
+/** Nominal number of phrases per taunt kind the bounded `phraseIndex` addresses. */
+export const TAUNT_NOMINAL_PHRASES = 6;
+
+/** Chance a normal enemy kill emits a `defeat` taunt. */
+export const TAUNT_DEFEAT_CHANCE = 0.25;
+
+/** Chance a boss kill emits a `bossDefeat` taunt. */
+export const TAUNT_BOSS_DEFEAT_CHANCE = 0.8;
+
+/** Chance entering a stage emits a `spawn` taunt. */
+export const TAUNT_SPAWN_CHANCE = 0.3;
+
+/** Chance a progression wall / boss-check failure emits a `wall` taunt. */
+export const TAUNT_WALL_CHANCE = 1;
+
+/** Chance a Shiny spawn (or claim) emits a `shiny` taunt. */
+export const TAUNT_SHINY_CHANCE = 0.5;
+
+/** Long ambient cadence: at most one `ambient` taunt per crossing of this gap. */
+export const TAUNT_AMBIENT_INTERVAL_MS = 45_000;
+
+/** Chance an ambient interval crossing emits an `ambient` taunt. */
+export const TAUNT_AMBIENT_CHANCE = 0.4;

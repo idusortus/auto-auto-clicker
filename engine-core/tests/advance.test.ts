@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { advance, applyAction, getEffectiveStats, getEnemyMaxHp } from '../src/index';
+import { advance, applyAction, enemyForStage, getEffectiveStats, getEnemyMaxHp } from '../src/index';
 import { BALANCE, enemyMaxHp, goldReward, isBoss } from '../src/balance';
 import { makeState } from './helpers';
 
@@ -119,8 +119,15 @@ describe('actions — click', () => {
       stage: 1,
       gold: goldReward(1),
       drops: expect.any(Array),
+      enemyId: enemyForStage(1).id,
     });
-    expect(events).toContainEqual({ type: 'stageEntered', stage: 2, isBoss: false, maxHp: enemyMaxHp(2) });
+    expect(events).toContainEqual({
+      type: 'stageEntered',
+      stage: 2,
+      isBoss: false,
+      maxHp: enemyMaxHp(2),
+      enemyId: enemyForStage(2).id,
+    });
   });
 });
 

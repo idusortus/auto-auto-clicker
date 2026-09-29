@@ -1,6 +1,6 @@
 import { expect, test as base } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
-import { ACTIVE_THEME, getMilestoneInfo, isBoss } from '@auto-auto-clicker/engine-core';
+import { ACTIVE_THEME, enemyForStage, getMilestoneInfo, isBoss } from '@auto-auto-clicker/engine-core';
 import type { AnimationCueKey } from '@auto-auto-clicker/engine-core';
 
 // Phase 5 — mobile-viewport smoke test for the /web host.
@@ -629,6 +629,45 @@ test('a stalled player is told a better item is in the bag, and only a tap equip
   expect(consoleErrors).toEqual([]);
 });
 
+test('tapping a flagged bag row equips it, but a non-flagged row does not', async ({
+  page,
+  consoleErrors,
+}) => {
+  // An effectively unkillable enemy keeps the bag frozen, so the two injected
+  // rows stay put and no fresh drop can arrive mid-test.
+  await injectSave(page, {
+    enemyHp: 1e15,
+    weapon: { itemLevel: 34, upgradeLevel: 0 },
+    bag: [
+      { itemLevel: 38, upgradeLevel: 0, definitionId: 'weapon' }, // strictly better
+      { itemLevel: 30, upgradeLevel: 0, definitionId: 'weapon' }, // strictly worse
+    ],
+  });
+  await page.goto('/');
+
+  const equipped = page.getByTestId('equipped');
+  const bagList = page.locator('[data-role="bag-list"]');
+  const flaggedRow = bagList.locator('li[data-upgrade="true"]').first();
+  const weakerRow = bagList.locator('li:not([data-upgrade="true"])').first();
+
+  await expect(flaggedRow).toBeVisible();
+  await expect(weakerRow).toBeVisible();
+  await expect(equipped).toContainText('level 34');
+
+  // NEGATIVE case: tapping a NON-flagged row (the worse item) must NOT equip —
+  // the player's equipped item is unchanged and no worse item is ever pushed.
+  // The `.bag__info` span is the row's text area, well clear of the Equip button.
+  await weakerRow.locator('.bag__info').click();
+  await expect(equipped).toContainText('level 34');
+
+  // POSITIVE case: tapping the FLAGGED row's info area (NOT the Equip button)
+  // equips the strictly better item — mirroring the advisory test's assertion.
+  await flaggedRow.locator('.bag__info').click();
+  await expect(equipped).toContainText('level 38');
+
+  expect(consoleErrors).toEqual([]);
+});
+
 /* ---------------------------------------------------------------------------
  * Theme sprites. The renderer loads art from the theme's `assets` map at
  * `/themes/<theme>/<file>`, drawn with pixelated scaling. These tests assert the
@@ -815,6 +854,88 @@ test('claiming a Shiny paints the claim frame', async ({ page, consoleErrors }) 
   await page.clock.runFor(claimCueDurationMs() * 1.5);
   await expect(shiny).toBeHidden();
   await expect(sprite).toHaveAttribute('src', themeAssetUrl('shiny-cache'));
+
+  expect(consoleErrors).toEqual([]);
+});
+
+/* ---------------------------------------------------------------------------
+ * Enemy display (F2). The engine owns every enemy id/stats; the theme owns the
+ * display NAME and the catchphrase TEXT, keyed by the stable id. Every expected
+ * string is derived from ACTIVE_THEME + enemyForStage, so this stays theme-
+ * agnostic and follows a theme swap.
+ * ------------------------------------------------------------------------- */
+
+test('the arena shows the roster name for the stage’s enemy', async ({ page, consoleErrors }) => {
+  // Stage 19 → a known roster id; an unkillable enemy keeps the stage stable.
+  await injectSave(page, { stage: 19, enemyHp: 1e15 });
+  await page.goto('/');
+
+  const stage = await readStage(page);
+  const expected = ACTIVE_THEME.enemy.roster[enemyForStage(stage).id]?.name;
+  expect(expected, `no roster entry for ${enemyForStage(stage).id}`).toBeDefined();
+  await expect(page.locator('[data-role="enemy-name"]')).toHaveText(expected ?? '');
+  expect(consoleErrors).toEqual([]);
+});
+
+test('an enemy taunt shows a theme catchphrase for the current enemy and kind', async ({
+  page,
+  consoleErrors,
+}) => {
+  // Frozen time so no idle auto-damage kills the enemy before the tap. The WALL
+  // taunt has chance 1.0, so a kill that raises the progression wall at
+  // stage 19 → 20 emits exactly one deterministic taunt (for the NEW enemy).
+  await page.clock.install();
+  await injectSave(page, { stage: 19, enemyHp: 1 });
+  await page.goto('/');
+
+  const taunt = page.getByTestId('enemy-taunt');
+  await expect(taunt).toBeHidden();
+
+  await page.getByTestId('enemy').click();
+
+  const stage = await readStage(page); // 20
+  const enemyId = enemyForStage(stage).id;
+  const wallPhrases = ACTIVE_THEME.enemy.roster[enemyId]?.catchphrases.wall ?? [];
+  expect(wallPhrases.length).toBeGreaterThanOrEqual(4);
+
+  await expect(taunt).toBeVisible();
+  // The engine emits a bounded phraseIndex; the renderer reduces it modulo the
+  // theme's array, so the shown text must be ONE of the theme's wall phrases.
+  expect(wallPhrases).toContain((await taunt.textContent()) ?? '');
+  expect(consoleErrors).toEqual([]);
+});
+
+test('the enemy taunt toast stays readable under prefers-reduced-motion', async ({
+  page,
+  consoleErrors,
+}) => {
+  // A taunt is TEXT (information), not motion: reduced motion suppresses sprite
+  // frames but must still surface the catchphrase.
+  await page.clock.install();
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await injectSave(page, { stage: 19, enemyHp: 1 });
+  await page.goto('/');
+
+  const taunt = page.getByTestId('enemy-taunt');
+  await expect(taunt).toBeHidden();
+
+  await page.getByTestId('enemy').click();
+
+  const stage = await readStage(page); // 20
+  const wallPhrases = ACTIVE_THEME.enemy.roster[enemyForStage(stage).id]?.catchphrases.wall ?? [];
+  await expect(taunt).toBeVisible();
+  expect(wallPhrases).toContain((await taunt.textContent()) ?? '');
+
+  // REGRESSION GUARD: centering must not depend on the pop animation. Under
+  // reduced motion the `shiny-message--in` keyframe (and its translateX(-50%))
+  // is removed, so the BASE transform must center the toast: its box center has
+  // to sit on the viewport's horizontal center within a couple of pixels.
+  const box = await taunt.boundingBox();
+  if (box === null) throw new Error('enemy-taunt has no bounding box');
+  const viewport = page.viewportSize();
+  if (viewport === null) throw new Error('no viewport size to compare against');
+  const toastCenter = box.x + box.width / 2;
+  expect(Math.abs(toastCenter - viewport.width / 2)).toBeLessThanOrEqual(2);
 
   expect(consoleErrors).toEqual([]);
 });

@@ -32,6 +32,14 @@ export {
   SLOT_DROP_WEIGHTS,
   STALL_HINT_MS,
   STALL_NAG_MS,
+  TAUNT_AMBIENT_CHANCE,
+  TAUNT_AMBIENT_INTERVAL_MS,
+  TAUNT_BOSS_DEFEAT_CHANCE,
+  TAUNT_DEFEAT_CHANCE,
+  TAUNT_NOMINAL_PHRASES,
+  TAUNT_SHINY_CHANCE,
+  TAUNT_SPAWN_CHANCE,
+  TAUNT_WALL_CHANCE,
   UPGRADE_MILESTONE_BONUS,
   UPGRADE_MILESTONE_INTERVAL,
   upgradeMilestoneCount,
@@ -39,6 +47,8 @@ export {
 
 export {
   CONTENT,
+  ENEMY_ROSTER,
+  enemyForStage,
   gearDefinitionFor,
   GRUNT_DEFINITION,
   NECKLACE_DEFINITION,
@@ -83,6 +93,7 @@ export { ACTIVE_THEME, fantasy } from './theme';
 export type {
   AchievementCopy,
   AnimationCueKey,
+  EnemyDisplayEntry,
   Theme,
   ThemeAnimation,
   ThemeAnimationCue,
@@ -111,6 +122,7 @@ export type {
   ActiveBoost,
   ActiveShiny,
   EnemyDefinition,
+  EnemyTauntEvent,
   GameEvent,
   GameState,
   GearDefinition,
@@ -119,6 +131,7 @@ export type {
   PendingChoice,
   SaveGame,
   ShinyKind,
+  TauntKind,
 } from './types';
 
 export type { SaveRepository } from '../save/repository';

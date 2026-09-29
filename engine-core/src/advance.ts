@@ -3,11 +3,19 @@
 // Pure and deterministic: same (state, deltaMs) always yields the same
 // (state, events). No clocks or randomness beyond GameState.meta.rngState.
 
-import { SHINY_MIN_GAP_MS, SHINY_WINDOW_MS, shinySpawnDelayMs, shinySpawnRoll } from './balance';
+import {
+  SHINY_MIN_GAP_MS,
+  SHINY_WINDOW_MS,
+  shinySpawnDelayMs,
+  shinySpawnRoll,
+  TAUNT_SHINY_CHANCE,
+} from './balance';
 import { grantAchievements } from './achievements';
 import { applyDamageToEnemy } from './combat';
+import { enemyForStage } from './content';
 import { nextRng } from './rng';
 import { cloneGameState, getEffectiveStats } from './state';
+import { ambientTaunt, makeTaunt } from './taunts';
 import type { GameEvent, GameState } from './types';
 
 /**
@@ -31,6 +39,14 @@ export function advance(state: GameState, deltaMs: number): { state: GameState; 
   const events = applyDamageToEnemy(draft, integerDamage, 'auto');
   resolveGoldenEvents(draft, events);
   grantAchievements(state, draft, events);
+  // Ambient taunt: once per crossed long interval. Reads state only; the roll
+  // uses the derived taunt channel, never `meta.rngState`.
+  const ambient = ambientTaunt(
+    draft,
+    state.meta.totalPlayedMs,
+    enemyForStage(draft.combat.stage).id,
+  );
+  if (ambient) events.push(ambient);
   return { state: draft, events };
 }
 
@@ -85,4 +101,12 @@ function resolveGoldenEvents(draft: GameState, events: GameEvent[]): void {
   // it schedules `delay(1)`, and so on.
   draft.event.nextSpawnAtMs = spawnedAtMs + shinySpawnDelayMs(spawnedBefore + 1);
   events.push({ type: 'eventSpawned', kind });
+  const taunt = makeTaunt(
+    draft,
+    'shiny',
+    enemyForStage(draft.combat.stage).id,
+    draft.combat.stage,
+    TAUNT_SHINY_CHANCE,
+  );
+  if (taunt) events.push(taunt);
 }

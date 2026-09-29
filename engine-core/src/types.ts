@@ -50,6 +50,19 @@ export interface EnemyDefinition {
   bossStageInterval: number;
   bossHpMultiplier: number;
   bossGoldMultiplier: number;
+  /**
+   * Distinct encounter profile (content, never persisted). `hpFactor` /
+   * `goldFactor` are relative-to-canonical leanings, normalised so the
+   * arithmetic mean over one full roster cycle is exactly 1.0. They are a
+   * DERIVED layer: combat's live HP/gold stay on the canonical stage-only curve
+   * (`enemyMaxHp` / `goldReward`), so the pacing proof stays byte-identical.
+   * Applying these factors to the live curve drifts the pacing (measured in
+   * `enemy-roster.test.ts`; see also decisions.md).
+   */
+  hpFactor: number;
+  goldFactor: number;
+  /** Stable archetype label (content identity; never persisted). */
+  archetype: string;
 }
 
 // SOURCE fields only. Battle stats (`dps`, `clickDamage`) are derived from
@@ -145,10 +158,27 @@ export type Action =
   | { type: 'resolveChoice'; choice: 'wait' | 'watchAd' | 'iap' }
   | { type: 'claimEvent' };
 
+/** Semantic taunt trigger classes. The engine emits the kind; the theme owns the text. */
+export type TauntKind = 'spawn' | 'defeat' | 'bossDefeat' | 'wall' | 'shiny' | 'ambient';
+
+/**
+ * A deterministic, engine-emitted enemy catchphrase cue. The engine NEVER emits
+ * display text: it emits the stable `enemyId`, the semantic `kind`, and a
+ * bounded `phraseIndex` into a nominal phrase table; the active theme resolves
+ * the wording. The index comes from a SEPARATE derived RNG channel, so it never
+ * consumes `meta.rngState` and cannot shift the loot stream (see taunts.ts).
+ */
+export interface EnemyTauntEvent {
+  type: 'enemyTaunt';
+  enemyId: string;
+  kind: TauntKind;
+  phraseIndex: number;
+}
+
 export type GameEvent =
-  | { type: 'stageEntered'; stage: number; isBoss: boolean; maxHp: number }
+  | { type: 'stageEntered'; stage: number; isBoss: boolean; maxHp: number; enemyId: string }
   | { type: 'damageDealt'; amount: number; source: 'auto' | 'click' }
-  | { type: 'enemyKilled'; stage: number; gold: number; drops: GearInstance[] }
+  | { type: 'enemyKilled'; stage: number; gold: number; drops: GearInstance[]; enemyId: string }
   | { type: 'gearEquipped'; instanceId: string }
   | { type: 'gearUpgraded'; instanceId: string; upgradeLevel: number; goldCost: number }
   | {
@@ -166,7 +196,8 @@ export type GameEvent =
   | { type: 'eventClaimed'; kind: ShinyKind }
   | { type: 'eventExpired'; kind: ShinyKind }
   | { type: 'boostActivated'; dpsMultiplier: number; expiresAtMs: number }
-  | { type: 'boostExpired' };
+  | { type: 'boostExpired' }
+  | EnemyTauntEvent;
 
 export interface SaveGame {
   version: number;

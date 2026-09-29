@@ -4,9 +4,20 @@
 // pass a state produced by cloneGameState; they then return that draft as the
 // new state. Nothing in this file touches the caller's input.
 
-import { BOSS_TIMER_MS, HARD_WALL_PROJECTED_KILL_MS, enemyMaxHp, isBoss } from './balance';
+import {
+  BOSS_TIMER_MS,
+  HARD_WALL_PROJECTED_KILL_MS,
+  enemyMaxHp,
+  isBoss,
+  TAUNT_BOSS_DEFEAT_CHANCE,
+  TAUNT_DEFEAT_CHANCE,
+  TAUNT_SPAWN_CHANCE,
+  TAUNT_WALL_CHANCE,
+} from './balance';
+import { enemyForStage } from './content';
 import { rollGearDrop } from './loot';
 import { getGoldReward, getProjectedKillMs } from './state';
+import { makeTaunt } from './taunts';
 import type { GameEvent, GameState, GearInstance } from './types';
 
 /**
@@ -19,13 +30,20 @@ export function evaluateStageEntry(draft: GameState): GameEvent[] {
   if (projected === null) return [];
 
   const stage = draft.combat.stage;
+  const enemyId = enemyForStage(stage).id;
   if (projected > HARD_WALL_PROJECTED_KILL_MS) {
     draft.choices.pending = { kind: 'progression-wall', stage, options: ['wait', 'watchAd', 'iap'] };
-    return [{ type: 'progressionWall', stage, projectedKillMs: projected }];
+    const events: GameEvent[] = [{ type: 'progressionWall', stage, projectedKillMs: projected }];
+    const wall = makeTaunt(draft, 'wall', enemyId, stage, TAUNT_WALL_CHANCE);
+    if (wall) events.push(wall);
+    return events;
   }
   if (isBoss(stage) && projected > BOSS_TIMER_MS) {
     draft.choices.pending = { kind: 'boss-check', stage, options: ['wait', 'watchAd', 'iap'] };
-    return [{ type: 'bossCheckFailed', stage, projectedKillMs: projected }];
+    const events: GameEvent[] = [{ type: 'bossCheckFailed', stage, projectedKillMs: projected }];
+    const wall = makeTaunt(draft, 'wall', enemyId, stage, TAUNT_WALL_CHANCE);
+    if (wall) events.push(wall);
+    return events;
   }
   return [];
 }
@@ -33,10 +51,16 @@ export function evaluateStageEntry(draft: GameState): GameEvent[] {
 /**
  * Resolve exactly one kill on the current stage: award gold, roll a drop,
  * advance the stage, spawn the next enemy, and run stage-entry checks.
+ *
+ * The enemy's distinct profile does NOT scale the live HP/gold: both stay on the
+ * canonical stage-only curve (`enemyMaxHp` / `goldReward`), so the pacing proof
+ * is byte-identical. The roster supplies IDENTITY only (`enemyId`), which is a
+ * pure function of the stage and therefore already reconstructable from a save.
  */
 export function killCurrentEnemy(draft: GameState): GameEvent[] {
   const events: GameEvent[] = [];
   const killedStage = draft.combat.stage;
+  const killedEnemyId = enemyForStage(killedStage).id;
   const gold = getGoldReward(draft, killedStage);
 
   draft.player.gold += gold;
@@ -45,9 +69,16 @@ export function killCurrentEnemy(draft: GameState): GameEvent[] {
   const drops: GearInstance[] = [];
   const drop = rollGearDrop(draft, killedStage);
   if (drop) drops.push(drop);
-  events.push({ type: 'enemyKilled', stage: killedStage, gold, drops });
+  events.push({
+    type: 'enemyKilled',
+    stage: killedStage,
+    gold,
+    drops,
+    enemyId: killedEnemyId,
+  });
 
   const nextStage = killedStage + 1;
+  const nextEnemyId = enemyForStage(nextStage).id;
   const maxHp = enemyMaxHp(nextStage);
   draft.combat.stage = nextStage;
   draft.combat.enemyHp = maxHp;
@@ -56,7 +87,18 @@ export function killCurrentEnemy(draft: GameState): GameEvent[] {
     stage: nextStage,
     isBoss: isBoss(nextStage),
     maxHp,
+    enemyId: nextEnemyId,
   });
+
+  // Boss-aware defeat cue for the enemy just killed, then the spawn cue for the
+  // one just entered. Both read the state; neither touches `meta.rngState`.
+  const defeat = isBoss(killedStage)
+    ? makeTaunt(draft, 'bossDefeat', killedEnemyId, killedStage, TAUNT_BOSS_DEFEAT_CHANCE)
+    : makeTaunt(draft, 'defeat', killedEnemyId, killedStage, TAUNT_DEFEAT_CHANCE);
+  if (defeat) events.push(defeat);
+
+  const spawn = makeTaunt(draft, 'spawn', nextEnemyId, nextStage, TAUNT_SPAWN_CHANCE);
+  if (spawn) events.push(spawn);
 
   events.push(...evaluateStageEntry(draft));
   return events;

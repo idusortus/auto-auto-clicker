@@ -958,6 +958,10 @@ p {
 .shiny-flourish {
   position: fixed;
   left: 50%;
+  /* Base centering. The `shiny-message--in` keyframe ALSO ends at
+     translateX(-50%), but reduced motion sets `animation: none`, so the base
+     transform is what keeps the toast centered when no animation runs. */
+  transform: translateX(-50%);
   z-index: 70;
   max-width: min(92vw, 420px);
   padding: 10px 16px;
@@ -993,6 +997,9 @@ p {
 .milestone-flourish {
   position: fixed;
   left: 50%;
+  /* Base centering (see `.shiny-toast`): survives `animation: none` under
+     reduced motion, where the pop keyframe's translateX(-50%) never applies. */
+  transform: translateX(-50%);
   bottom: calc(140px + env(safe-area-inset-bottom));
   z-index: 75;
   max-width: min(92vw, 420px);
@@ -1022,6 +1029,37 @@ p {
     opacity: 1;
     transform: translateX(-50%) translateY(0) scale(1);
   }
+}
+
+/*
+ * The enemy taunt toast: the current enemy's theme catchphrase for a spawn /
+ * defeat / bossDefeat / wall / shiny / ambient moment. Unlike the other
+ * transient messages this one is INFORMATION, so it still appears under
+ * prefers-reduced-motion (the pop is neutralised, the text is not). It sits
+ * ABOVE the milestone flourish (196px vs 140/84/24px) so the four transient
+ * messages form a fixed column with no overlap, and it is pointer-events:none
+ * so it can never block a tap. Only existing tokens are used.
+ */
+.enemy-taunt {
+  position: fixed;
+  left: 50%;
+  /* Base centering. This toast still shows under reduced motion (the pop is
+     neutralised), where the `shiny-message--in` keyframe's translateX(-50%)
+     never applies — without this the toast sat in the right half. */
+  transform: translateX(-50%);
+  bottom: calc(196px + env(safe-area-inset-bottom));
+  z-index: 72;
+  max-width: min(92vw, 420px);
+  padding: 10px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--ink-800) 96%, transparent);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  font-style: italic;
+  text-align: center;
+  pointer-events: none;
+  box-shadow: var(--shadow-modal);
 }
 
 /* ==========================================================================
@@ -1121,9 +1159,31 @@ p {
   color: var(--ember);
 }
 
-/* The corresponding tag on the better bag item itself. */
+/*
+ * The corresponding tag on the better bag item itself. A FLAGGED row is also an
+ * ADDITIONAL pointer/touch target: tapping the row equips it, so the player does
+ * not have to aim for the small Equip button. The button stays the keyboard/tab
+ * control — the row is deliberately NOT focusable (no tabindex/role=button,
+ * which would nest interactive elements) — so tappability is communicated
+ * visually: a pointer cursor, an ember press cue on `:active`, and the same cue
+ * while the row's own button holds keyboard focus (`:has(:focus-visible)`, so a
+ * mouse/touch focus does not leave a sticky highlight).
+ */
 .bag__item--upgrade {
   border-color: var(--ember-edge);
+  cursor: pointer;
+  transition: transform var(--t-fast) var(--ease), border-color var(--t-fast) linear,
+    box-shadow var(--t-fast) linear;
+}
+
+.bag__item--upgrade:active {
+  transform: scale(0.985);
+  border-color: var(--ember);
+}
+
+.bag__item--upgrade:has(:focus-visible) {
+  border-color: var(--ember);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ember) 28%, transparent);
 }
 
 .bag__tag {
@@ -1206,6 +1266,12 @@ p {
 
   .btn--primary:active {
     filter: brightness(0.92);
+  }
+
+  /* A flagged bag row keeps its press cue without the scale movement. */
+  .bag__item--upgrade:active {
+    transform: none;
+    border-color: var(--ember);
   }
 }
 

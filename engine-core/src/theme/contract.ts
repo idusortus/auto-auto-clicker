@@ -29,9 +29,9 @@
 // measured facts in. `npm run theme:check` runs both.
 
 import { GEAR_SLOTS } from '../balance';
-import { CONTENT } from '../content';
+import { CONTENT, ENEMY_ROSTER } from '../content';
 import { ACHIEVEMENTS } from '../achievements';
-import type { ShinyKind } from '../types';
+import type { ShinyKind, TauntKind } from '../types';
 import type { Theme } from './types';
 
 // ---------------------------------------------------------------------------
@@ -48,7 +48,8 @@ export type LimitGroup =
   | 'achievement-title'
   | 'achievement-description'
   | 'prose'
-  | 'color';
+  | 'color'
+  | 'catchphrase';
 
 export interface LimitRule {
   /** Maximum rendered characters allowed for a slot in this group. */
@@ -107,6 +108,13 @@ export const LIMITS: Record<LimitGroup, LimitRule> = {
       'allows the widest legal forms the validator accepts (8-digit hex, rgb()/rgba()/' +
       'hsl()/hsla()) with room for embedded whitespace, while still catching a value ' +
       'that is really a paragraph.',
+  },
+  catchphrase: {
+    max: 140,
+    rationale:
+      'A single enemy taunt toast line (the arena catchphrase). Longest current catchphrase ' +
+      'is 69 chars ("Two-day shipping. It has been two days. It is not here. Not my fault."); ' +
+      '140 leaves roughly 2x headroom for a longer joke while still catching a pasted paragraph.',
   },
 };
 
@@ -394,6 +402,39 @@ const ENEMY_TOKENS = new Set(ENEMY_TOKEN_VALUES);
 const ACHIEVEMENT_ID_SET = new Set(ACHIEVEMENT_IDS);
 
 /**
+ * Enemy ids the engine roster requires display copy for (stable, code-owned).
+ * `enemy.roster` must carry exactly this id set — the renderer throws on a
+ * missing id, so the validator refuses to let one ship.
+ */
+const ENEMY_ROSTER_IDS: readonly string[] = ENEMY_ROSTER.map((enemy) => enemy.id);
+const ENEMY_ROSTER_ID_SET = new Set(ENEMY_ROSTER_IDS);
+
+/**
+ * Every `TauntKind`. The mirror is annotated `Record<TauntKind, true>`, so
+ * adding a kind to the union is a COMPILE error here until this is updated (the
+ * same exhaustiveness pattern as `SHINY_KIND_MIRROR`). The roster completeness
+ * check requires a non-empty phrase list for every key below.
+ */
+const TAUNT_KIND_MIRROR: Record<TauntKind, true> = {
+  spawn: true,
+  defeat: true,
+  bossDefeat: true,
+  wall: true,
+  shiny: true,
+  ambient: true,
+};
+const TAUNT_KINDS: readonly TauntKind[] = Object.keys(TAUNT_KIND_MIRROR) as TauntKind[];
+const TAUNT_KIND_SET: ReadonlySet<string> = new Set<string>(Object.keys(TAUNT_KIND_MIRROR));
+
+/**
+ * Minimum catchphrases required per taunt kind. The product requirement is "at
+ * least 4"; both shipped themes ship exactly 4, so the validator enforces the
+ * stated floor (a theme shipping fewer fails loudly in the authoring gate
+ * rather than silently thinning the taunt pool).
+ */
+export const MIN_CATCHPHRASES_PER_KIND = 4;
+
+/**
  * The only parent paths where an identity token may legitimately appear as a
  * property KEY (it is copy keyed by id/slot — not a rename). Anywhere else a
  * token key means the theme is trying to RENAME identity.
@@ -438,7 +479,12 @@ export type ThemeProblemKind =
   | 'missing-achievement'
   | 'extra-achievement'
   | 'bad-filename'
-  | 'bad-color';
+  | 'bad-color'
+  // Enemy roster completeness (mirrors the achievement catalog kinds):
+  | 'missing-enemy' // a stable engine enemy id has no roster entry
+  | 'extra-enemy' // a roster key is not a known engine enemy id (typo/bogus)
+  | 'too-few-phrases' // a taunt kind has fewer than the required phrases
+  | 'empty-string'; // a non-empty string slot (name / phrase) is blank
 
 export interface ThemeProblem {
   /** Dotted path, e.g. `ui.choice.note` or `achievements.catalog.hoarder`. */
@@ -537,12 +583,24 @@ function buildAllowedChildren(): Map<string, Set<string>> {
     addPath(key);
   }
   for (const key of ['title', 'catalog', 'shelf']) add('achievements', key);
+  // Enemy display entries are copy keyed by the stable engine enemy id (see
+  // `types.ts` `enemy.roster`). Registered like the achievement catalog so the
+  // generic unknown-key walk accepts the section; because its keys ARE enemy
+  // ids, the walk skips the subtree (see DYNAMIC_CONTAINERS) and `collect()`
+  // runs a DEDICATED completeness pass instead (exact id set, non-empty name,
+  // one >= 4-phrase list per TauntKind).
+  add('enemy', 'roster');
   for (const spec of THEME_FIELDS) addPath(spec.path);
   return allowed;
 }
 
 const ALLOWED_CHILDREN = buildAllowedChildren();
-const DYNAMIC_CONTAINERS = new Set(['achievements.catalog', 'assets']);
+// Sections whose keys are stable IDs (copy keyed by id, not a rename). The walk
+// skips their subtrees so an id-as-key never trips the identity-key check. The
+// skipped sections are NOT unchecked: `achievements.catalog` and `enemy.roster`
+// each get a dedicated completeness pass in `collect()`; `assets` is checked by
+// the assets section pass.
+const DYNAMIC_CONTAINERS = new Set(['achievements.catalog', 'assets', 'enemy.roster']);
 
 interface Collected {
   measured: MeasuredString[];
@@ -664,6 +722,131 @@ function validateAchievementCopy(
   }
 }
 
+/**
+ * Validate one `enemy.roster` entry: a plain object with a non-empty `name` and
+ * a `catchphrases` object holding a >= `MIN_CATCHPHRASES_PER_KIND` array of
+ * non-empty strings for EVERY `TauntKind`. Mirrors `validateAchievementCopy`
+ * (reports every problem, measures strings for the limits pass) — the roster is
+ * a `DYNAMIC_CONTAINER`, so this dedicated pass is its only content check.
+ */
+function validateEnemyRosterEntry(
+  id: string,
+  entry: unknown,
+  measured: MeasuredString[],
+  problems: ThemeProblem[],
+): void {
+  const path = `enemy.roster.${id}`;
+  if (!isPlainObject(entry)) {
+    problems.push({
+      path,
+      kind: 'wrong-type',
+      message: `expected { name, catchphrases } at "${path}", found ${describeValue(entry)}`,
+    });
+    return;
+  }
+  for (const key of Object.keys(entry)) {
+    if (key !== 'name' && key !== 'catchphrases') {
+      problems.push({
+        path: `${path}.${key}`,
+        kind: 'bad-key',
+        message: `unexpected key "${key}" in enemy display copy; only "name" and "catchphrases" are allowed`,
+      });
+    }
+  }
+
+  const name = entry['name'];
+  if (name === undefined) {
+    problems.push({ path: `${path}.name`, kind: 'missing', message: `missing enemy name at "${path}.name"` });
+  } else if (typeof name !== 'string') {
+    problems.push({
+      path: `${path}.name`,
+      kind: 'wrong-type',
+      message: `expected a string name at "${path}.name", found ${describeValue(name)}`,
+    });
+  } else if (name.trim().length === 0) {
+    problems.push({
+      path: `${path}.name`,
+      kind: 'empty-string',
+      message: `enemy name at "${path}.name" must not be empty`,
+    });
+  } else {
+    measured.push({ path: `${path}.name`, group: 'label', length: name.length });
+  }
+
+  const catchphrases = entry['catchphrases'];
+  if (catchphrases === undefined) {
+    problems.push({
+      path: `${path}.catchphrases`,
+      kind: 'missing',
+      message: `missing "catchphrases" at "${path}.catchphrases" (one list of >= ${MIN_CATCHPHRASES_PER_KIND} phrases per taunt kind)`,
+    });
+    return;
+  }
+  if (!isPlainObject(catchphrases)) {
+    problems.push({
+      path: `${path}.catchphrases`,
+      kind: 'wrong-type',
+      message: `expected an object at "${path}.catchphrases", found ${describeValue(catchphrases)}`,
+    });
+    return;
+  }
+
+  // An enemy id (or any other key) nested here is a typo, not a rename: the
+  // roster keys are the only sanctioned enemy-id location.
+  for (const key of Object.keys(catchphrases)) {
+    if (!TAUNT_KIND_SET.has(key)) {
+      problems.push({
+        path: `${path}.catchphrases.${key}`,
+        kind: 'bad-key',
+        message: `unknown taunt kind "${key}"; expected one of ${TAUNT_KINDS.join(', ')}`,
+      });
+    }
+  }
+
+  for (const kind of TAUNT_KINDS) {
+    const phrases = catchphrases[kind];
+    const kindPath = `${path}.catchphrases.${kind}`;
+    if (phrases === undefined) {
+      problems.push({ path: kindPath, kind: 'missing', message: `missing catchphrases for taunt kind "${kind}"` });
+      continue;
+    }
+    if (!Array.isArray(phrases)) {
+      problems.push({
+        path: kindPath,
+        kind: 'wrong-type',
+        message: `expected an array of phrases at "${kindPath}", found ${describeValue(phrases)}`,
+      });
+      continue;
+    }
+    if (phrases.length < MIN_CATCHPHRASES_PER_KIND) {
+      problems.push({
+        path: kindPath,
+        kind: 'too-few-phrases',
+        message: `"${kindPath}" has ${phrases.length} phrase(s); at least ${MIN_CATCHPHRASES_PER_KIND} are required`,
+      });
+    }
+    for (let index = 0; index < phrases.length; index += 1) {
+      const phrase = phrases[index];
+      const phrasePath = `${kindPath}.${index}`;
+      if (typeof phrase !== 'string') {
+        problems.push({
+          path: phrasePath,
+          kind: 'wrong-type',
+          message: `expected a string phrase at "${phrasePath}", found ${describeValue(phrase)}`,
+        });
+      } else if (phrase.trim().length === 0) {
+        problems.push({
+          path: phrasePath,
+          kind: 'empty-string',
+          message: `phrase at "${phrasePath}" must not be empty`,
+        });
+      } else {
+        measured.push({ path: phrasePath, group: 'catchphrase', length: phrase.length });
+      }
+    }
+  }
+}
+
 function collect(theme: Theme): Collected {
   const measured: MeasuredString[] = [];
   const problems: ThemeProblem[] = [];
@@ -761,6 +944,46 @@ function collect(theme: Theme): Collected {
     }
   }
 
+  // d. Enemy roster completeness (exact id set, both directions, plus shape).
+  // The roster is a DYNAMIC_CONTAINER (its keys are enemy ids), so this pass is
+  // its only content check — exactly like the achievement catalog above.
+  const roster = readPath(root, 'enemy.roster');
+  if (roster === undefined) {
+    problems.push({
+      path: 'enemy.roster',
+      kind: 'missing',
+      message: 'missing "enemy.roster" (display copy must be keyed by every enemy id)',
+    });
+  } else if (!isPlainObject(roster)) {
+    problems.push({
+      path: 'enemy.roster',
+      kind: 'wrong-type',
+      message: `expected an object at "enemy.roster", found ${describeValue(roster)}`,
+    });
+  } else {
+    for (const key of Object.keys(roster)) {
+      if (!ENEMY_ROSTER_ID_SET.has(key)) {
+        problems.push({
+          path: `enemy.roster.${key}`,
+          kind: 'extra-enemy',
+          message: `unknown enemy id "${key}" — a typo here would ship as missing display copy for the real id`,
+        });
+      }
+    }
+    for (const id of ENEMY_ROSTER_IDS) {
+      const entry = roster[id];
+      if (entry === undefined) {
+        problems.push({
+          path: `enemy.roster.${id}`,
+          kind: 'missing-enemy',
+          message: `missing display copy for enemy id "${id}" (the renderer throws on a missing roster entry)`,
+        });
+      } else {
+        validateEnemyRosterEntry(id, entry, measured, problems);
+      }
+    }
+  }
+
   // e. Assets section well-formed. On-disk existence + pixel dimensions are
   // checked by the CLI via `validateAssetMeasurements` (this module stays pure).
   const assets = readPath(root, 'assets');
@@ -831,6 +1054,7 @@ function emptyGroupRecord(): Record<LimitGroup, number> {
     'achievement-description': 0,
     prose: 0,
     color: 0,
+    catchphrase: 0,
   };
 }
 

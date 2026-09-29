@@ -12,7 +12,9 @@
 // duration) and keeps at most ONE live frame per actor plus ONE drain timer; it
 // never blocks the tick loop and never mutates engine state. Reduced-motion
 // users get no frame at all — with reduced motion a sprite `src` never leaves
-// idle.
+// idle. Enemy TAUNTS are the one exception to the reduced-motion gate: a taunt
+// is theme TEXT (information, like the achievement splash), not motion, so
+// `handleEvents` still shows the taunt toast while it suppresses sprite frames.
 //
 // The existing flourishes are NOT driven by that event list yet: achievement
 // splashes are driven by diffing the unlocked-id list across renders, and the
@@ -25,6 +27,7 @@
 import {
   ACTIVE_THEME,
   ACHIEVEMENTS,
+  enemyForStage,
   gearDefinitionFor,
   getActiveBoost,
   getActiveEvent,
@@ -45,6 +48,8 @@ import {
 import type {
   AchievementDefinition,
   AnimationCueKey,
+  EnemyDisplayEntry,
+  EnemyTauntEvent,
   GameEvent,
   GameState,
   GearInstance,
@@ -152,6 +157,12 @@ const SPLASH_DURATION_MS = 2600;
 const SHINY_MESSAGE_MS = 2200;
 /** How long the milestone step-change flourish stays up. */
 const MILESTONE_MESSAGE_MS = 2400;
+/**
+ * How long the enemy taunt toast stays up. A taunt is INFORMATION (the theme's
+ * catchphrase for the current enemy and moment), not motion, so this toast is
+ * the ONE transient message that also appears under reduced motion.
+ */
+const ENEMY_TAUNT_MESSAGE_MS = 2600;
 const MS_PER_SECOND = 1000;
 /** Upper bound on simultaneously live transient frames (one per actor + slack). */
 const MAX_ACTIVE_EFFECTS = 8;
@@ -220,6 +231,7 @@ interface Refs {
   shinyToast: HTMLElement;
   shinyFlourish: HTMLElement;
   milestoneFlourish: HTMLElement;
+  enemyTaunt: HTMLElement;
   spawnPopup: HTMLElement;
   spawnPopupSprite: HTMLImageElement;
   advisory: HTMLElement;
@@ -351,6 +363,7 @@ const SKELETON = `
     <div class="shiny-toast" data-testid="shiny-toast" data-role="shiny-toast" hidden aria-live="polite"></div>
     <div class="shiny-flourish" data-testid="shiny-flourish" data-role="shiny-flourish" hidden aria-live="polite"></div>
     <div class="milestone-flourish" data-testid="milestone-flourish" data-role="milestone-flourish" hidden aria-live="polite"></div>
+    <div class="enemy-taunt" data-testid="enemy-taunt" data-role="enemy-taunt" hidden aria-live="polite"></div>
 
     <section class="panel" aria-labelledby="equipped-title">
       <div class="panel__header">
@@ -490,6 +503,8 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
   let lastShinySpriteSlot = 'shiny-idle';
   let pendingClaim = false;
   let shinyMessageTimer: number | null = null;
+  /** The enemy taunt toast's own auto-dismiss timer (independent of the Shiny's). */
+  let enemyTauntTimer: number | null = null;
 
   // Milestone step-change presentation: the achieved-milestone count per slot as
   // of the last render (null until the first render seeds it, so a save restored
@@ -586,7 +601,11 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     refs.dps.textContent = formatInt(stats.autoDps);
 
     const boss = isBoss(state.combat.stage);
-    refs.enemyName.textContent = boss ? theme.enemy.boss : theme.enemy.label;
+    // The arena NAME comes from the roster entry for the engine enemy id (a pure
+    // function of the saved stage). A missing entry is a theme bug and fails
+    // loudly, mirroring the achievement-catalog pattern. The boss badge
+    // (theme.enemy.boss) still flags a boss stage on its own.
+    refs.enemyName.textContent = enemyDisplay(enemyForStage(state.combat.stage).id).name;
     refs.bossBadge.hidden = !boss;
     // Idle art wins by default. A live cue frame (attack / hit / death) wins
     // while it is live; the drain's re-render returns each sprite to idle
@@ -676,16 +695,23 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
    * engine state or block the tick loop.
    */
   function handleEvents(events: readonly GameEvent[]): void {
-    // Reduced motion: no sprite may ever leave its idle frame, so the whole
-    // batch is dropped. Clearing is defensive — the media-query listener below
-    // normally clears the moment the preference flips.
+    const state = latestState;
+    if (state === null) return;
+
+    // Taunt TEXT is INFORMATION, not motion: resolve and show every taunt in the
+    // batch even under reduced motion (text appearing is not an animation). The
+    // sprite-frame part below stays gated on reduced motion.
+    for (const event of events) {
+      if (event.type === 'enemyTaunt') showEnemyTaunt(event);
+    }
+
+    // Reduced motion: no sprite may ever leave its idle frame, so the cue part of
+    // the batch is dropped. Clearing is defensive — the media-query listener
+    // below normally clears the moment the preference flips.
     if (reducedMotion) {
       clearEffects();
       return;
     }
-
-    const state = latestState;
-    if (state === null) return;
 
     // Event → cue mapping, scanned LEFT-TO-RIGHT. `currentStage` starts from the
     // freshly-rendered state and is updated by `stageEntered`, so a stage change
@@ -713,6 +739,10 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
           break;
         case 'eventClaimed':
           cues.push({ target: 'shiny', cue: 'shinyClaim' });
+          break;
+        case 'enemyTaunt':
+          // Handled above as toast TEXT; it drives NO sprite frame (the enemy
+          // keeps its existing idle/hit/death frames — no new art exists).
           break;
         default:
           // Every other event type drives NO sprite cue in this phase.
@@ -1166,6 +1196,30 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     }, SHINY_MESSAGE_MS);
   }
 
+  /**
+   * Show the enemy's catchphrase for a taunt event as a transient toast. The
+   * engine emits only (enemyId, kind, phraseIndex) — the theme owns the wording —
+   * and `phraseIndex` is bounded but may exceed a theme's array length, so it is
+   * reduced modulo the array length. It reuses the shared transient-message
+   * vocabulary (the `shiny-message--in` class) but owns its own timer and
+   * duration, so it never cancels a Shiny or milestone message.
+   */
+  function showEnemyTaunt(event: EnemyTauntEvent): void {
+    const phrases = enemyDisplay(event.enemyId).catchphrases[event.kind];
+    if (phrases.length === 0) return;
+    refs.enemyTaunt.textContent = phrases[event.phraseIndex % phrases.length] ?? '';
+    refs.enemyTaunt.hidden = false;
+    refs.enemyTaunt.classList.remove('shiny-message--in');
+    void refs.enemyTaunt.offsetWidth;
+    refs.enemyTaunt.classList.add('shiny-message--in');
+    if (enemyTauntTimer !== null) window.clearTimeout(enemyTauntTimer);
+    enemyTauntTimer = window.setTimeout(() => {
+      refs.enemyTaunt.hidden = true;
+      refs.enemyTaunt.classList.remove('shiny-message--in');
+      enemyTauntTimer = null;
+    }, ENEMY_TAUNT_MESSAGE_MS);
+  }
+
   return { render, showOfflineSummary };
 }
 
@@ -1192,6 +1246,22 @@ function shinySpriteSlot(kind: ShinyKind): string {
 function setSprite(image: HTMLImageElement, slot: string): void {
   const src = assetUrl(slot);
   if (image.getAttribute('src') !== src) image.setAttribute('src', src);
+}
+
+/**
+ * The theme's display entry for a stable engine enemy id, or a THROWN error.
+ * This is the single fail-loud point shared by the arena name and the taunt
+ * toast: the roster is COMPLETE by test, so a miss is a theme authoring bug and
+ * must never render as a blank name or an empty taunt.
+ */
+function enemyDisplay(enemyId: string): EnemyDisplayEntry {
+  const entry = theme.enemy.roster[enemyId];
+  if (entry === undefined) {
+    throw new Error(
+      `[aac] theme "${theme.name}" has no enemy roster entry for id "${enemyId}"`,
+    );
+  }
+  return entry;
 }
 
 /** Every occupiable gear slot, in display order. */
@@ -1299,6 +1369,7 @@ function collectRefs(root: HTMLElement): Refs {
     shinyToast: req(root, '[data-testid="shiny-toast"]'),
     shinyFlourish: req(root, '[data-testid="shiny-flourish"]'),
     milestoneFlourish: req(root, '[data-testid="milestone-flourish"]'),
+    enemyTaunt: req(root, '[data-testid="enemy-taunt"]'),
     spawnPopup: req(root, '[data-testid="spawn-popup"]'),
     spawnPopupSprite: req(root, '[data-role="spawn-popup-sprite"]'),
     advisory: req(root, '[data-role="upgrade-advisory"]'),
@@ -1350,13 +1421,30 @@ function wireHandlers(refs: Refs, handlers: RendererHandlers): void {
     if (instanceId !== null) handlers.onEquip(instanceId);
   });
 
-  // Event delegation keeps equip buttons working across bag re-renders.
+  // Event delegation keeps equip working across bag re-renders. One tap must
+  // dispatch EXACTLY ONE equip action, so the two branches are mutually
+  // exclusive: the Equip-button branch RETURNS before the row branch is reached.
   refs.bagList.addEventListener('click', (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
-    const button = target.closest<HTMLButtonElement>('[data-instance-id]');
-    if (!button) return;
-    const instanceId = button.getAttribute('data-instance-id');
+
+    // The explicit Equip button keeps its existing behaviour: it equips its own
+    // item and stays the row's keyboard/tab control. Returning here guarantees a
+    // button tap never also fires the row branch below (no double-equip).
+    const button = target.closest<HTMLButtonElement>('[data-testid="equip-btn"]');
+    if (button) {
+      const instanceId = button.getAttribute('data-instance-id');
+      if (instanceId !== null) handlers.onEquip(instanceId);
+      return;
+    }
+
+    // A tap anywhere else on a FLAGGED ("strictly better") row equips it — an
+    // ADDITIONAL pointer/touch target, not a nested focusable control. A
+    // non-flagged row has no `data-upgrade`, so tapping it does nothing: the
+    // player's explicit choice is preserved and no worse item is ever pushed.
+    const row = target.closest<HTMLElement>('.bag__item[data-upgrade="true"]');
+    if (!row) return;
+    const instanceId = row.getAttribute('data-instance-id');
     if (instanceId !== null) handlers.onEquip(instanceId);
   });
 }
@@ -1521,6 +1609,9 @@ function bagItemNode(item: GearInstance, isUpgrade: boolean): Node {
   li.className = `bag__item${isUpgrade ? ' bag__item--upgrade' : ''}`;
   const slot = gearDefinitionFor(item.definitionId)?.slot ?? 'weapon';
   li.setAttribute('data-slot', slot);
+  // The row carries its item id so a tap anywhere on a FLAGGED row can equip it
+  // (see wireHandlers); the Equip button keeps its own copy for its testid path.
+  li.setAttribute('data-instance-id', item.id);
   if (isUpgrade) li.setAttribute('data-upgrade', 'true');
 
   const info = document.createElement('span');
