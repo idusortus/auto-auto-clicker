@@ -4,11 +4,11 @@
 
 ## Status
 **The 12-enemy roster with PER-ENEMY HP/gold curves landed (replacing the factor/canonical-curve
-approach), `ACTIVE_THEME` is now the `lucky` dog theme, and T6 animation + enemy taunts + F1
+approach), `ACTIVE_THEME` is now the `fantasy` RPG theme, and T6 animation + enemy taunts + F1
 tap-to-equip all shipped — every gate is green.**
 
-- **`ACTIVE_THEME` is `lucky`** (the golden retriever × husky dog theme). `THEMES = [fantasy, lucky]`
-  and the unit suite validates BOTH; `fantasy` is the original "Standard Fantasy RPG" theme.
+- **`ACTIVE_THEME` is `fantasy`** (the original "Standard Fantasy RPG" theme). `THEMES = [fantasy, lucky]`
+  and the unit suite validates BOTH; `lucky` is the golden retriever × husky dog theme.
 - **12 distinct enemies** live in `engine-core/src/content.ts` `ENEMY_ROSTER` (grunt, goblin, wolf,
   bat, slime, bandit, spider, wraith, ogre, harpy, golem, dragonling). `enemyForStage(stage) =
   roster[(stage − 1) % 12]` is pure, ZERO RNG, no persisted state (save schema stays **v4**). Each
@@ -45,12 +45,12 @@ Gates (current, verified this session):
   equips 43–48, upgrades 100–125, milestones 21–27, per-item peak level 8–10; free-path 0.3–0.5%;
   eq/stage 0.88–0.98; Shiny boost uptime 1.4–1.9%.
 - `npm run build` → exit 0 (23 modules). `npm run smoke` → **28 passed, exit 0**.
-- `npm run theme:check` → green for `lucky`: 32/32 files exact size; observed max per limit group
-  label 18 / chrome 85 / achievement-title 35 / achievement-description 105 / prose 141 / color 7 /
-  catchphrase 69 (limits 48/120/64/200/240/64/140).
+- `npm run theme:check` → green for `fantasy`: 32/32 files exact size; observed max per limit group
+  label 22 / chrome 85 / achievement-title 35 / achievement-description 80 / prose 139 / color 7 /
+  catchphrase 66 (limits 48/120/64/200/240/64/140).
 
 The one-line switch is `export const ACTIVE_THEME: Theme = <name>;` in
-`engine-core/src/theme/index.ts` (committed value: `lucky`).
+`engine-core/src/theme/index.ts` (committed value: `fantasy`).
 
 *The `Prior:` sections below are historical session logs. Their gate counts and pacing/peak
 measurements are snapshots from that session, not current — the current gates are in **Status**

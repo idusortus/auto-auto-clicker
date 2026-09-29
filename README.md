@@ -101,6 +101,7 @@ auto-auto-clicker/
 ├── STATE.md                     # current status / blockers / next
 ├── decisions.md                 # locked architectural decisions (reverse chronological)
 ├── NOTES.md                     # parking lot: out-of-scope ideas, honest build notes
+├── ENGINE-LEARNINGS.md          # accumulated engine gotchas / lessons
 ├── histories/                   # per-agent accumulated memory
 │
 ├── engine-core/                 # ▶ PERMANENT ARTIFACT — pure simulation, zero runtime deps
@@ -112,8 +113,8 @@ auto-auto-clicker/
 │   │   ├── achievements.ts      # static achievement catalog + pure evaluator (ids/predicates; copy from theme)
 │   │   ├── theme/                # ALL user-facing TEXT + COLOURS (display) — see Theming
 │   │   │   ├── types.ts          # `Theme` contract incl. `palette` (leaf: imports nothing)
-│   │   │   ├── fantasy.ts        # "Standard Fantasy RPG" theme (wording + dark ember palette)
-│   │   │   ├── lucky.ts          # Lucky the dog — the COMMITTED DEFAULT (light sunlit palette, dog copy)
+│   │   │   ├── fantasy.ts        # "Standard Fantasy RPG" theme — the COMMITTED DEFAULT (wording + dark ember palette)
+│   │   │   ├── lucky.ts          # Lucky the dog (light sunlit palette, dog copy)
 │   │   │   ├── contract.ts       # limits/slots + `validateTheme` + pure `validateAssetMeasurements`
 │   │   │   └── index.ts          # `ACTIVE_THEME` + `THEMES` — the ONE-LINE theme switch
 │   │   ├── gear-stats.ts        # leaf: derived gear reads + the shared powerScore metric
@@ -207,7 +208,7 @@ the renderer nor the achievement catalog holds display copy any more. Swapping t
 
 ```ts
 // engine-core/src/theme/index.ts
-export const ACTIVE_THEME: Theme = lucky;
+export const ACTIVE_THEME: Theme = fantasy;
 ```
 
 - **Identity stays in code; display moves to the theme.** Achievement `id`s, gear
@@ -280,10 +281,10 @@ export const ACTIVE_THEME: Theme = lucky;
   `theme/contract.ts` but only a four-line allow-list registration exists, so `npm run theme:check`
   does **not** validate animation cues — the unit suite does. (`theme:check` *does* validate the enemy
   roster's **shape** — every id present, ≥4 non-empty phrases per taunt kind — via `validateTheme`.)
-- **Two themes ship, and the second one proves the seam.** `lucky` (the committed default — a
+- **Two themes ship, and the second one proves the seam.** `fantasy` (the committed default —
+  the "Standard Fantasy RPG" original) and `lucky` (a
   golden retriever × husky: `Lucky` is the player, gear slots become the Jaw / two dog
-  tags / a bandana, the enemy is the mail carrier, and the Golden Event is a squirrel) and
-  `fantasy` (the "Standard Fantasy RPG" original). The
+  tags / a bandana, the enemy is the mail carrier, and the Golden Event is a squirrel). The
   test suite validates **every** entry in `THEMES` (not just the active one), asserts both
   themes carry the **same** achievement-id and asset-slot sets, and asserts they genuinely
   differ — so a newly added theme is self-checking in CI and the second theme can never
@@ -332,7 +333,7 @@ A theme is one `Theme` object plus one folder of art. The whole recipe:
    (the folder `README.md` says how).
 4. **Flip the one line** in `engine-core/src/theme/index.ts`:
    ```ts
-   export const ACTIVE_THEME: Theme = <name>;   // currently: lucky
+   export const ACTIVE_THEME: Theme = <name>;   // currently: fantasy
    ```
 5. **Validate it** from the repo root:
    ```sh

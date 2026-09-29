@@ -33,7 +33,7 @@ vite, vitest, tsx, playwright, npm workspaces (no UI framework)
   number pass — report measured failure instead.
 
 ## Current shape (2026-09-28)
-- `ACTIVE_THEME` is **`lucky`** (golden retriever × husky); `fantasy` also ships. The theme
+- `ACTIVE_THEME` is **`fantasy`** (the "Standard Fantasy RPG" original); `lucky` (golden retriever × husky) also ships. The theme
   switch is one line in `engine-core/src/theme/index.ts`.
 - **12 enemies** (`ENEMY_ROSTER`), selected deterministically from the stage
   (`enemyForStage(stage) = roster[(stage-1) % 12]`, zero RNG, no persisted state). Each enemy

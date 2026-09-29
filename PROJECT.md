@@ -34,7 +34,8 @@ npm run typecheck  # typecheck engine-core + web
 None declared.
 
 ## Current shape (2026-09-28)
-- **Themes:** two ship — `lucky` (golden retriever × husky, the committed default) and `fantasy`.
+- **Themes:** two ship — `fantasy` (the "Standard Fantasy RPG" original, the committed default)
+  and `lucky` (golden retriever × husky).
   A theme owns DISPLAY only: copy, a 19-token palette, 32 declared art slots, animation cues, and
   the enemy roster's names/catchphrases. Identity (achievement ids, gear/enemy ids, `GearSlot`s,
   `ShinyKind`s, save schema) is NEVER theme-controlled.

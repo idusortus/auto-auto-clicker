@@ -30,11 +30,12 @@ export const THEMES: readonly Theme[] = [fantasy, lucky];
  * The theme every consumer renders through.
  *
  * ── TO SWITCH THEMES, EDIT THE NEXT LINE ────────────────────────────────────
- * Replace `fantasy` with any other theme from `./<name>` (e.g. `lucky`):
+ * Point it at another theme from `./<name>` (e.g. `lucky`); `fantasy` is the
+ * committed default:
  *
- *     export const ACTIVE_THEME: Theme = lucky;
+ *     export const ACTIVE_THEME: Theme = fantasy;
  *
  * That one assignment swaps ALL text, colours, and declared pixel art; it is
- * the entire theme switch. Leave `fantasy` here as the committed default.
+ * the entire theme switch.
  */
-export const ACTIVE_THEME: Theme = lucky;
+export const ACTIVE_THEME: Theme = fantasy;

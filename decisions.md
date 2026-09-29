@@ -12,6 +12,22 @@
 
 ---
 
+## 2026-09-29 — Active theme switched to `fantasy`; a dedicated "D&D fighter" theme deferred; a new ENGINE-LEARNINGS.md
+
+**Context:** Two requests. (1) Summarize the project's engine-design learnings into a document reusable when building future games. (2) "Switch the game theme to fantasy D&D fighter and relaunch so I can preview in browser." There is no `fighter` theme — the build ships exactly two (`fantasy`, `lucky`).
+
+**Choice:**
+1. **Created `ENGINE-LEARNINGS.md` at the repo root** — a durable, transferable lessons document (engine/host boundary & purity, identity-vs-display, derived-state doctrine, RNG channels, the pacing proof as a hard gate, economy design, roster/content design, theming as a proven seam, verification doctrine, save-schema discipline, process lessons, known gaps, and a next-game checklist), each lesson grounded in a concrete repo decision/measurement rather than restated as history.
+2. **Reused the existing `fantasy` theme and made it the committed `ACTIVE_THEME`** — the one-line assignment in `engine-core/src/theme/index.ts`. The user was explicitly asked and chose "reuse existing fantasy" over authoring a new theme. The "current default = `lucky`" statements in `README.md`/`STATE.md`/`PROJECT.md`/`AGENTS.md` were reconciled to `fantasy`; historical records (`decisions.md` older entries, `histories/`, `agent-diary.md`, historical `NOTES.md` notes) were deliberately left untouched. No identity, balance, save-schema, or test change.
+
+**Trade-offs:** The user's phrase "fantasy D&D fighter" is served by the existing `fantasy` ("Standard Fantasy RPG") theme, whose voice is quirky-modern ("Finger Guns") rather than a true Fighter-class reskin. A bespoke `fighter` theme was offered and NOT built — it remains a documented follow-up, not a delivered artifact.
+
+**Revisit:** If a true D&D Fighter-class theme is wanted, author `engine-core/src/theme/<name>.ts` (copy `fantasy.ts`, rewrite copy + the 19-token palette), register it in `THEMES`, run `npm run theme:assets -- <name>`, then flip the one line — see README "Adding a theme" and `ENGINE-LEARNINGS.md` §9. Never move identity values into a theme.
+
+**Evidence:** `npm run theme:check` green for `fantasy` (32/32 files present at the exact size; limits 22/48 · 85/120 · 35/64 · 80/200 · 139/240 · 7/64 · 66/140); `npm run typecheck` clean (3 workspaces); `npm run test` **236/236**; `npm run smoke` **28/28** against the already-running Vite dev server (the suite is theme-agnostic, deriving every expected string/sprite from `ACTIVE_THEME`, so a green run exercises the fiction that is actually active). Working-tree diff limited to `engine-core/src/theme/index.ts` (+ its doc comment) and the four reconciled docs. Independent review: **PASS WITH NOTES**; the three prose nits it found in `ENGINE-LEARNINGS.md` (stale measured catchphrase constant 69→66, "Halving"→"Lowering" for `dropChance` 0.95→0.8, and a `goldFactor`→`baseGold` attribution) were fixed.
+
+---
+
 ## 2026-09-28 — F1/F2/F3: tap-to-equip, a 12-enemy roster, and deterministic engine-emitted taunts
 
 > **PARTIALLY SUPERSEDED (2026-09-28).** Items 1 (F1 tap-to-equip), 3 (theme display roster), 4 (taunt RNG channel), 5 (schema v4) and 7 (reduced-motion toast fix) still describe the shipped code. **Item 2 and the "(a) the 12 enemies are cosmetic" trade-off are SUPERSEDED** — the per-enemy stats are now LIVE, `hpFactor`/`goldFactor` are deleted, and the roster is a genuine single source of truth. See "Per-enemy curves replace the factor approach" below. Item 6's validator pass still stands.
