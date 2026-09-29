@@ -7,6 +7,7 @@ import {
   getGlobalBonuses,
   getGoldReward,
   getUpgradeCost,
+  goldReward,
 } from '../src/index';
 import {
   BALANCE,
@@ -15,7 +16,6 @@ import {
   CRIT_MULTIPLIER_CAP,
   gearBaseDps,
   GOLD_MULTIPLIER_CAP,
-  goldReward,
   POWER_MULTIPLIER_CAP,
   upgradeCost,
 } from '../src/balance';
@@ -239,6 +239,9 @@ describe('gear — necklace (gold/power)', () => {
     const { goldMultiplier } = getGlobalBonuses(state);
     expect(goldMultiplier).toBe(GOLD_MULTIPLIER_CAP);
 
+    // `goldReward` is the LIVE per-enemy stage curve. Stage 5 is a slime
+    // (baseGold 5, goldGrowth 1.0), so it pays 5; the capped +25% necklace bonus
+    // is then visible in the floored award (floor(5 × 1.25) = 6 > 5).
     expect(getGoldReward(state, 5)).toBe(Math.floor(goldReward(5) * (1 + goldMultiplier)));
     expect(getGoldReward(state, 5)).toBeGreaterThan(goldReward(5));
 

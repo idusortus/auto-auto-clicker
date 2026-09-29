@@ -5,8 +5,7 @@
 // weapon changes it. Keeping this exact stops the documented behaviour drifting.
 
 import { describe, expect, it } from 'vitest';
-import { applyAction, getProjectedKillMs, isUnarmed } from '../src/index';
-import { enemyMaxHp } from '../src/balance';
+import { applyAction, enemyMaxHp, getProjectedKillMs, isUnarmed } from '../src/index';
 import { sustainedActiveDps } from '../src/gear-stats';
 import { makeGear, makeNecklace, makeRing, makeState } from './helpers';
 
@@ -29,7 +28,8 @@ describe('projection — unarmed degeneracy', () => {
 
     const projected = getProjectedKillMs(bare);
     // With no weapon the sustained DPS is the constant base active DPS, so the
-    // projection is exactly `enemyMaxHp(stage) / sustainedActiveDps`.
+    // projection is exactly `enemyMaxHp(stage) / sustainedActiveDps`, where
+    // `enemyMaxHp` is the LIVE curve (the standing enemy's own curve).
     expect(projected).toBe(Math.ceil((enemyMaxHp(stage) / sustainedActiveDps(bare)) * 1000));
     // Gold, achievements, and non-weapon inventory do not move it.
     expect(getProjectedKillMs(cluttered)).toBe(projected);

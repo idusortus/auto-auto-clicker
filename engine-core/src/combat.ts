@@ -7,14 +7,13 @@
 import {
   BOSS_TIMER_MS,
   HARD_WALL_PROJECTED_KILL_MS,
-  enemyMaxHp,
   isBoss,
   TAUNT_BOSS_DEFEAT_CHANCE,
   TAUNT_DEFEAT_CHANCE,
   TAUNT_SPAWN_CHANCE,
   TAUNT_WALL_CHANCE,
 } from './balance';
-import { enemyForStage } from './content';
+import { enemyForStage, enemyMaxHp } from './content';
 import { rollGearDrop } from './loot';
 import { getGoldReward, getProjectedKillMs } from './state';
 import { makeTaunt } from './taunts';
@@ -52,10 +51,11 @@ export function evaluateStageEntry(draft: GameState): GameEvent[] {
  * Resolve exactly one kill on the current stage: award gold, roll a drop,
  * advance the stage, spawn the next enemy, and run stage-entry checks.
  *
- * The enemy's distinct profile does NOT scale the live HP/gold: both stay on the
- * canonical stage-only curve (`enemyMaxHp` / `goldReward`), so the pacing proof
- * is byte-identical. The roster supplies IDENTITY only (`enemyId`), which is a
- * pure function of the stage and therefore already reconstructable from a save.
+ * The live HP and kill gold come from `content.ts` (`enemyMaxHp` / `goldReward`),
+ * which evaluate the standing enemy's OWN curve (and its own boss multipliers on
+ * a boss stage). The roster therefore supplies both the IDENTITY (`enemyId`) and
+ * the live stats, all as a pure function of the stage and so reconstructable
+ * from a save with no persisted field.
  */
 export function killCurrentEnemy(draft: GameState): GameEvent[] {
   const events: GameEvent[] = [];

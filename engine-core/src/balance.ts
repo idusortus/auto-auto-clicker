@@ -325,32 +325,39 @@ export function shinySpawnRoll(roll: number): { spawns: boolean; kind: ShinyKind
   return { spawns, kind };
 }
 
-// Drops-primary tuning: enemy HP grows 1.42×/stage while the equipped weapon's
-// stat grows ≈gearGrowth (1.283×) per item level. Because drops track the stage
-// and almost every kill drops, player power grows ≈1.28×/stage and the
-// designed fall-behind ratio (≈1.11) makes the stage-30 boss the soft check and
-// the stage-50 boss the hard wall. Gold upgrades add a small multiplicative
-// smoothing on top (1.01× per level, flat-ish costs) and are reset by each equip;
-// because `gearGrowth` (1.283) still dwarfs `upgradeStatMultiplier` (1.01), a
-// newer drop beats any affordable upgrade stack, so the weapon keeps tracking
-// the stage and gold stays a minor (non-compounding) lever.
+// Drops-primary tuning: the LIVE enemy HP curve is now PER-ENEMY (see
+// `EnemyDefinition` / `ENEMY_ROSTER` in content.ts) and grows ≈1.43×/stage,
+// while the equipped weapon's stat grows ≈`gearGrowth` (1.2832×) per item level.
+// Because drops track the stage and almost every kill drops, player power grows
+// ≈1.28×/stage and the designed fall-behind ratio makes the stage-30 boss the
+// soft check and the stage-50 boss the hard wall (ten-stage bosses; both measured
+// by `npm run sim`). Gold upgrades add a small
+// multiplicative smoothing on top (1.01× per level, flat-ish costs) and are reset
+// by each equip; because `gearGrowth` (1.2832) still dwarfs
+// `upgradeStatMultiplier` (1.01), a newer drop beats any affordable upgrade
+// stack, so the weapon keeps tracking the stage and gold stays a minor
+// (non-compounding) lever.
+//
+// `baseHp` / `hpGrowth` / `baseGold` / `goldGrowth` ARE TUNING ANCHORS ONLY: they
+// record the authored centre of the roster (a mid-roster enemy's shape) for
+// human reference. The live curve does NOT read them — every enemy carries its
+// own curve in content.ts. `bossStageInterval` IS live: `isBoss(stage)` uses it
+// for the global boss cadence.
 export const BALANCE = {
-  baseHp: 30,
-  hpGrowth: 1.42,
+  baseHp: 28,
+  hpGrowth: 1.431,
   baseGold: 5,
   // Flat gold: upgrades are a minor lever, not a competing exponential, so gold
   // income must not outpace the (level-indexed) upgrade costs.
   goldGrowth: 1.0,
   bossStageInterval: 10,
-  bossHpMultiplier: 2.25,
-  bossGoldMultiplier: 4,
   baseAutoDps: 2,
   baseClickDamage: 2,
   gear: {
     slot: 'weapon' as const,
     dpsFactor: 2,
     clickFactor: 8,
-    gearGrowth: 1.283,
+    gearGrowth: 1.2832,
     // OPTION A RETUNE (2026-09-27): a LEGIBLE, flat-ish curve.
     //
     // Before: base 10 / growth 6 / stat 1.05. A whole 50-stage run earns ~305
@@ -396,7 +403,12 @@ export const BALANCE = {
   },
 } as const;
 
-/** Boss stages occur every `bossStageInterval` stages (stage 1 is not a boss). */
+/**
+ * GLOBAL boss cadence: boss stages occur every `BALANCE.bossStageInterval`
+ * stages (stage 1 is not a boss). This is the only boss knob that stays global;
+ * the SIZE of the boss bump is per-enemy (`bossHpMultiplier` /
+ * `bossGoldMultiplier` on `EnemyDefinition`, applied by content.ts).
+ */
 export function isBoss(stage: number): boolean {
   return stage % BALANCE.bossStageInterval === 0;
 }
@@ -419,16 +431,6 @@ export function pickWeightedSlot(roll: number): GearSlot {
     if (threshold < 0) return slot;
   }
   return slots[slots.length - 1] ?? 'weapon';
-}
-
-export function enemyMaxHp(stage: number): number {
-  const bossMultiplier = isBoss(stage) ? BALANCE.bossHpMultiplier : 1;
-  return Math.floor(BALANCE.baseHp * Math.pow(BALANCE.hpGrowth, stage - 1) * bossMultiplier);
-}
-
-export function goldReward(stage: number): number {
-  const bossMultiplier = isBoss(stage) ? BALANCE.bossGoldMultiplier : 1;
-  return Math.floor(BALANCE.baseGold * Math.pow(BALANCE.goldGrowth, stage - 1) * bossMultiplier);
 }
 
 /** Base weapon DPS at `itemLevel`, before any upgrade levels (exponential). */

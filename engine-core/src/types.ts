@@ -43,25 +43,26 @@ export interface GearDefinition {
 
 export interface EnemyDefinition {
   id: string;
+  /**
+   * LIVE per-enemy HP curve (content, never persisted). The enemy is the single
+   * source of truth for its own HP:
+   *   `maxHp(stage) = floor(baseHp * hpGrowth^(stage - 1) * bossHpMultiplier)`
+   * on a boss stage, and without the boss term otherwise (see `enemyMaxHpFor` in
+   * content.ts). There is no global/canonical curve and no factor scaling it.
+   */
   baseHp: number;
   hpGrowth: number;
+  /** LIVE per-enemy gold curve, exactly mirroring `baseHp`/`hpGrowth`. */
   baseGold: number;
   goldGrowth: number;
-  bossStageInterval: number;
+  /**
+   * LIVE per-enemy boss multipliers (content, never persisted): applied only on
+   * a boss stage (`isBoss(stage)` from balance.ts). Boss CADENCE is global
+   * (`BALANCE.bossStageInterval`); the SIZE of the boss bump is per-enemy.
+   */
   bossHpMultiplier: number;
   bossGoldMultiplier: number;
-  /**
-   * Distinct encounter profile (content, never persisted). `hpFactor` /
-   * `goldFactor` are relative-to-canonical leanings, normalised so the
-   * arithmetic mean over one full roster cycle is exactly 1.0. They are a
-   * DERIVED layer: combat's live HP/gold stay on the canonical stage-only curve
-   * (`enemyMaxHp` / `goldReward`), so the pacing proof stays byte-identical.
-   * Applying these factors to the live curve drifts the pacing (measured in
-   * `enemy-roster.test.ts`; see also decisions.md).
-   */
-  hpFactor: number;
-  goldFactor: number;
-  /** Stable archetype label (content identity; never persisted). */
+  /** Stable archetype label (content identity; never persisted; not read by any live path). */
   archetype: string;
 }
 

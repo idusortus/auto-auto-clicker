@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { advance, applyAction, enemyForStage, getEffectiveStats, getEnemyMaxHp } from '../src/index';
-import { BALANCE, enemyMaxHp, goldReward, isBoss } from '../src/balance';
+import { enemyMaxHp, goldReward } from '../src/content';
+import { BALANCE, isBoss } from '../src/balance';
 import { makeState } from './helpers';
 
 // Base auto/click stats are now BALANCE constants (source fields removed from
 // GameState). Behaviour is still exercised with controlled numbers by driving
-// the real `advance`/`applyAction` paths and expressing expectations through
-// `BALANCE` / `enemyMaxHp`, never hard-coded balance values.
+// the real `advance`/`applyAction` paths and expressing expectations through the
+// LIVE enemy curve (`enemyMaxHp` / `goldReward` from content.ts), never
+// hard-coded balance values.
 
 describe('advance — auto damage', () => {
   it('applies integer auto-damage proportional to deltaMs', () => {
@@ -136,13 +138,17 @@ describe('boss stages', () => {
     expect(isBoss(1)).toBe(false);
     expect(isBoss(10)).toBe(true);
 
+    // The boss term is the standing enemy's OWN multiplier on its OWN curve.
+    const bossEnemy = enemyForStage(10);
     const bossHp = enemyMaxHp(10);
-    expect(bossHp).toBe(Math.floor(BALANCE.baseHp * Math.pow(BALANCE.hpGrowth, 9) * BALANCE.bossHpMultiplier));
+    expect(bossHp).toBe(
+      Math.floor(bossEnemy.baseHp * Math.pow(bossEnemy.hpGrowth, 9) * bossEnemy.bossHpMultiplier),
+    );
     expect(bossHp).toBeGreaterThan(enemyMaxHp(9) * 2);
 
     const bossGold = goldReward(10);
     expect(bossGold).toBe(
-      Math.floor(BALANCE.baseGold * Math.pow(BALANCE.goldGrowth, 9) * BALANCE.bossGoldMultiplier),
+      Math.floor(bossEnemy.baseGold * Math.pow(bossEnemy.goldGrowth, 9) * bossEnemy.bossGoldMultiplier),
     );
     expect(bossGold).toBeGreaterThan(goldReward(9) * 2);
   });

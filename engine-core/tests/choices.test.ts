@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { advance, applyAction, getEffectiveStats, getProjectedKillMs } from '../src/index';
+import {
+  advance,
+  applyAction,
+  enemyMaxHp,
+  getEffectiveStats,
+  getProjectedKillMs,
+  goldReward,
+} from '../src/index';
 import {
   ACTIVE_CLICKS_PER_SECOND,
   BOSS_TIMER_MS,
-  enemyMaxHp,
-  goldReward,
   HARD_WALL_PROJECTED_KILL_MS,
   isBoss,
   SHINY_FRENZY_MULTIPLIER,
@@ -50,7 +55,7 @@ function grantFor(currentUpgradeLevel: number, levels: number): number {
 
 describe('stage-entry pacing checks', () => {
   it('entering a boss stage over the boss timer emits bossCheckFailed and sets pending', () => {
-    const { state, events } = enterStage(10); // unarmed stage-10 boss: ~264 s, over timer, under wall
+    const { state, events } = enterStage(10); // unarmed stage-10 boss: ~244 s, over timer, under wall
 
     expect(isBoss(10)).toBe(true);
     expect(state.combat.stage).toBe(10);

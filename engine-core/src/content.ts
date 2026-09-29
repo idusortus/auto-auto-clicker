@@ -1,9 +1,18 @@
 // content.ts — static game catalog.
 //
 // Definitions describe what gear and enemies exist; they are never persisted.
-// BALANCE supplies the numbers so tuning stays in one place.
+// Gear numbers come from BALANCE so gear tuning stays in one place.
+//
+// ENEMY HP/GOLD IS SINGLE-SOURCE-OF-TRUTH: each `EnemyDefinition` carries its own
+// LIVE curve (`baseHp`/`hpGrowth`/`baseGold`/`goldGrowth`) and its own LIVE boss
+// multipliers. `enemyMaxHpFor`/`goldRewardFor` below apply them directly; there is
+// no global/canonical curve and no `hpFactor`/`goldFactor` scaling it. Boss
+// CADENCE stays global (`isBoss(stage)` from balance.ts).
+//
+// `balance.ts` must NOT import this file (that would be an import cycle): the
+// only dependency is this -> balance.
 
-import { BALANCE } from './balance';
+import { BALANCE, isBoss } from './balance';
 import type { EnemyDefinition, GearDefinition } from './types';
 
 export const WEAPON_DEFINITION: GearDefinition = {
@@ -72,190 +81,58 @@ export const NECKLACE_DEFINITION: GearDefinition = {
 };
 
 // ---------------------------------------------------------------------------
-// Enemy roster (F2).
+// Enemy roster (F2 / M3a).
 //
 // Twelve distinct enemies with STABLE lowercase ids (identity, chosen once and
 // never renamed). IDENTITY IS DERIVABLE FROM SAVED STATE: the roster is a pure
 // function of `combat.stage` (`enemyForStage`), so a reloaded save reconstructs
 // the same enemy with no new persisted field and no schema bump (stays v4).
 //
-// Each entry has genuinely distinct stat numbers: `baseHp`/`hpGrowth`/
-// `baseGold`/`goldGrowth` describe its own shape, and `hpFactor`/`goldFactor`
-// express its relative lean, NORMALISED so the arithmetic mean over one full
-// roster cycle is exactly 1.0 (asserted in enemy-roster.test.ts).
+// SINGLE SOURCE OF TRUTH: each enemy owns its REAL HP/gold curve
+// (`baseHp`/`hpGrowth`/`baseGold`/`goldGrowth`) and its REAL boss multipliers
+// (`bossHpMultiplier`/`bossGoldMultiplier`). These are LOAD-BEARING, not
+// descriptive: `enemyMaxHp(stage)` / `goldReward(stage)` compute directly from
+// them. There are no global factors and no canonical stage-only curve. Every one
+// of the 12 `hpGrowth` values was measured INDIVIDUALLY by the search — nothing
+// is derived from `archetype` at runtime.
 //
-// PACING NEUTRALITY (measured, see decisions.md): the live blocking curve —
-// `enemyMaxHp(stage)` for HP and `goldReward(stage)` for gold — stays EXACTLY
-// the canonical stage-only curve. The per-enemy profile is a DERIVED layer:
-// multiplying the canonical curve by the normalised factors (even with a cycle
-// mean of 1) moves the pacing proof, because the stage sequence traverses
-// individual enemies, not cycle averages. So combat uses the canonical curve and
-// the profile is exposed for identity/presentation. Applying the profile to the
-// live curve is the documented experiment that proved the tension.
+// WHY THE GROWTH BAND IS TIGHT (the key design constraint, measured): with
+// per-enemy curves the aggregate stage curve is the round-robin product of the
+// roster's `hpGrowth` values, so WIDER divergence makes the stage sequence
+// zig-zag and the pacing proof drift outside its window. The band is therefore
+// deliberately narrow — 1.4273..1.4336 (span 0.0063, a stage-50 divergence of
+// just 1.24x) — and that tightness is what keeps the proof valid. This set came
+// from a ~4,415-candidate search that landed canonical soft ~6.22 min and hard
+// ~55.52 min with all five seeds inside tolerance ("PACING OK").
+//
+// `archetype` IS INERT: a descriptive label chosen for flavour only. No live path
+// reads it — no formula, no selection, no persistence. The measured curve numbers
+// above are the truth; the label merely names that enemy's curve lean.
+//
+// BOSS CADENCE IS GLOBAL: `isBoss(stage)` (balance.ts, every 10th stage) decides
+// WHEN a boss appears; each enemy's own `bossHpMultiplier`/`bossGoldMultiplier`
+// decides HOW big that boss is. The multipliers are applied exactly once inside
+// `enemyMaxHpFor`/`goldRewardFor`.
 // ---------------------------------------------------------------------------
 
 export const ENEMY_ROSTER: readonly EnemyDefinition[] = [
-  {
-    id: 'grunt',
-    archetype: 'balanced',
-    baseHp: 30,
-    hpGrowth: 1.42,
-    baseGold: 5,
-    goldGrowth: 1.0,
-    bossStageInterval: BALANCE.bossStageInterval,
-    bossHpMultiplier: BALANCE.bossHpMultiplier,
-    bossGoldMultiplier: BALANCE.bossGoldMultiplier,
-    hpFactor: 1.0,
-    goldFactor: 1.0,
-  },
-  {
-    id: 'goblin',
-    archetype: 'skirmisher',
-    baseHp: 26,
-    hpGrowth: 1.4,
-    baseGold: 6,
-    goldGrowth: 1.0,
-    bossStageInterval: BALANCE.bossStageInterval,
-    bossHpMultiplier: BALANCE.bossHpMultiplier,
-    bossGoldMultiplier: BALANCE.bossGoldMultiplier,
-    hpFactor: 0.9,
-    goldFactor: 1.1,
-  },
-  {
-    id: 'wolf',
-    archetype: 'glass-cannon',
-    baseHp: 28,
-    hpGrowth: 1.41,
-    baseGold: 5,
-    goldGrowth: 1.0,
-    bossStageInterval: BALANCE.bossStageInterval,
-    bossHpMultiplier: BALANCE.bossHpMultiplier,
-    bossGoldMultiplier: BALANCE.bossGoldMultiplier,
-    hpFactor: 0.95,
-    goldFactor: 0.95,
-  },
-  {
-    id: 'bat',
-    archetype: 'swarm',
-    baseHp: 23,
-    hpGrowth: 1.39,
-    baseGold: 5,
-    goldGrowth: 1.0,
-    bossStageInterval: BALANCE.bossStageInterval,
-    bossHpMultiplier: BALANCE.bossHpMultiplier,
-    bossGoldMultiplier: BALANCE.bossGoldMultiplier,
-    hpFactor: 0.85,
-    goldFactor: 1.05,
-  },
-  {
-    id: 'slime',
-    archetype: 'tank',
-    baseHp: 32,
-    hpGrowth: 1.44,
-    baseGold: 4,
-    goldGrowth: 1.0,
-    bossStageInterval: BALANCE.bossStageInterval,
-    bossHpMultiplier: BALANCE.bossHpMultiplier,
-    bossGoldMultiplier: BALANCE.bossGoldMultiplier,
-    hpFactor: 1.05,
-    goldFactor: 0.9,
-  },
-  {
-    id: 'bandit',
-    archetype: 'racketeer',
-    baseHp: 30,
-    hpGrowth: 1.42,
-    baseGold: 7,
-    goldGrowth: 1.0,
-    bossStageInterval: BALANCE.bossStageInterval,
-    bossHpMultiplier: BALANCE.bossHpMultiplier,
-    bossGoldMultiplier: BALANCE.bossGoldMultiplier,
-    hpFactor: 1.0,
-    goldFactor: 1.2,
-  },
-  {
-    id: 'spider',
-    archetype: 'ambusher',
-    baseHp: 25,
-    hpGrowth: 1.4,
-    baseGold: 5,
-    goldGrowth: 1.0,
-    bossStageInterval: BALANCE.bossStageInterval,
-    bossHpMultiplier: BALANCE.bossHpMultiplier,
-    bossGoldMultiplier: BALANCE.bossGoldMultiplier,
-    hpFactor: 0.9,
-    goldFactor: 1.0,
-  },
-  {
-    id: 'wraith',
-    archetype: 'revenant',
-    baseHp: 34,
-    hpGrowth: 1.43,
-    baseGold: 5,
-    goldGrowth: 1.0,
-    bossStageInterval: BALANCE.bossStageInterval,
-    bossHpMultiplier: BALANCE.bossHpMultiplier,
-    bossGoldMultiplier: BALANCE.bossGoldMultiplier,
-    hpFactor: 1.1,
-    goldFactor: 0.95,
-  },
-  {
-    id: 'ogre',
-    archetype: 'bruiser',
-    baseHp: 37,
-    hpGrowth: 1.45,
-    baseGold: 5,
-    goldGrowth: 1.0,
-    bossStageInterval: BALANCE.bossStageInterval,
-    bossHpMultiplier: BALANCE.bossHpMultiplier,
-    bossGoldMultiplier: BALANCE.bossGoldMultiplier,
-    hpFactor: 1.1,
-    goldFactor: 0.95,
-  },
-  {
-    id: 'harpy',
-    archetype: 'harrier',
-    baseHp: 27,
-    hpGrowth: 1.41,
-    baseGold: 6,
-    goldGrowth: 1.0,
-    bossStageInterval: BALANCE.bossStageInterval,
-    bossHpMultiplier: BALANCE.bossHpMultiplier,
-    bossGoldMultiplier: BALANCE.bossGoldMultiplier,
-    hpFactor: 0.95,
-    goldFactor: 1.1,
-  },
-  {
-    id: 'golem',
-    archetype: 'bulwark',
-    baseHp: 40,
-    hpGrowth: 1.46,
-    baseGold: 3,
-    goldGrowth: 1.0,
-    bossStageInterval: BALANCE.bossStageInterval,
-    bossHpMultiplier: BALANCE.bossHpMultiplier,
-    bossGoldMultiplier: BALANCE.bossGoldMultiplier,
-    hpFactor: 1.15,
-    goldFactor: 0.7,
-  },
-  {
-    id: 'dragonling',
-    archetype: 'elite',
-    baseHp: 33,
-    hpGrowth: 1.43,
-    baseGold: 6,
-    goldGrowth: 1.0,
-    bossStageInterval: BALANCE.bossStageInterval,
-    bossHpMultiplier: BALANCE.bossHpMultiplier,
-    bossGoldMultiplier: BALANCE.bossGoldMultiplier,
-    hpFactor: 1.05,
-    goldFactor: 1.1,
-  },
+  { id: 'grunt',      archetype: 'balanced',     baseHp: 27, hpGrowth: 1.4284, baseGold: 5, goldGrowth: 1.0, bossHpMultiplier: 2.514, bossGoldMultiplier: 4.36 },
+  { id: 'goblin',     archetype: 'skirmisher',   baseHp: 24, hpGrowth: 1.4280, baseGold: 5, goldGrowth: 1.0, bossHpMultiplier: 2.286, bossGoldMultiplier: 3.95 },
+  { id: 'wolf',       archetype: 'harrier',      baseHp: 28, hpGrowth: 1.4283, baseGold: 4, goldGrowth: 1.0, bossHpMultiplier: 2.482, bossGoldMultiplier: 3.79 },
+  { id: 'bat',        archetype: 'ambusher',     baseHp: 26, hpGrowth: 1.4273, baseGold: 5, goldGrowth: 1.0, bossHpMultiplier: 2.314, bossGoldMultiplier: 4.36 },
+  { id: 'slime',      archetype: 'tank',         baseHp: 28, hpGrowth: 1.4329, baseGold: 5, goldGrowth: 1.0, bossHpMultiplier: 2.212, bossGoldMultiplier: 3.62 },
+  { id: 'bandit',     archetype: 'racketeer',    baseHp: 28, hpGrowth: 1.4317, baseGold: 6, goldGrowth: 1.0, bossHpMultiplier: 2.072, bossGoldMultiplier: 4.05 },
+  { id: 'spider',     archetype: 'swarm',        baseHp: 25, hpGrowth: 1.4288, baseGold: 5, goldGrowth: 1.0, bossHpMultiplier: 2.319, bossGoldMultiplier: 3.64 },
+  { id: 'wraith',     archetype: 'revenant',     baseHp: 25, hpGrowth: 1.4311, baseGold: 7, goldGrowth: 1.0, bossHpMultiplier: 2.033, bossGoldMultiplier: 4.38 },
+  { id: 'ogre',       archetype: 'bruiser',      baseHp: 27, hpGrowth: 1.4327, baseGold: 5, goldGrowth: 1.0, bossHpMultiplier: 2.171, bossGoldMultiplier: 3.69 },
+  { id: 'harpy',      archetype: 'glass-cannon', baseHp: 24, hpGrowth: 1.4278, baseGold: 5, goldGrowth: 1.0, bossHpMultiplier: 2.476, bossGoldMultiplier: 3.68 },
+  { id: 'golem',      archetype: 'bulwark',      baseHp: 29, hpGrowth: 1.4336, baseGold: 6, goldGrowth: 1.0, bossHpMultiplier: 2.235, bossGoldMultiplier: 3.84 },
+  { id: 'dragonling', archetype: 'elite',        baseHp: 26, hpGrowth: 1.4281, baseGold: 5, goldGrowth: 1.0, bossHpMultiplier: 2.471, bossGoldMultiplier: 4.36 },
 ];
 
 /**
  * The first roster entry, kept as an exported name for backward compatibility.
- * It is the canonical balanced enemy; nothing is special-cased to it.
+ * It is the roster's balanced first enemy; nothing is special-cased to it.
  */
 export const GRUNT_DEFINITION: EnemyDefinition = ENEMY_ROSTER[0]!;
 
@@ -268,6 +145,44 @@ export function enemyForStage(stage: number): EnemyDefinition {
   const size = ENEMY_ROSTER.length;
   const index = ((Math.trunc(stage) - 1) % size + size) % size;
   return ENEMY_ROSTER[index] ?? GRUNT_DEFINITION;
+}
+
+/**
+ * Live max HP at `stage`: the standing enemy's own curve at that stage. Identity
+ * and stats are both pure functions of `stage`, so this reconstructs from a save
+ * with no persisted field.
+ */
+export function enemyMaxHp(stage: number): number {
+  return enemyMaxHpFor(enemyForStage(stage), stage);
+}
+
+/**
+ * Live kill gold at `stage`: the standing enemy's own curve at that stage.
+ */
+export function goldReward(stage: number): number {
+  return goldRewardFor(enemyForStage(stage), stage);
+}
+
+/**
+ * Live max HP for an EXPLICIT `enemy` at `stage`. The boss term is the enemy's
+ * own `bossHpMultiplier`, applied only when `isBoss(stage)` (global cadence).
+ */
+export function enemyMaxHpFor(enemy: EnemyDefinition, stage: number): number {
+  const s = Math.trunc(stage);
+  if (!Number.isFinite(s) || s <= 0) return 0;
+  const boss = isBoss(s) ? enemy.bossHpMultiplier : 1;
+  return Math.floor(enemy.baseHp * Math.pow(enemy.hpGrowth, s - 1) * boss);
+}
+
+/**
+ * Live kill gold for an EXPLICIT `enemy` at `stage`. Mirrors `enemyMaxHpFor`
+ * with the enemy's own gold curve and `bossGoldMultiplier`.
+ */
+export function goldRewardFor(enemy: EnemyDefinition, stage: number): number {
+  const s = Math.trunc(stage);
+  if (!Number.isFinite(s) || s <= 0) return 0;
+  const boss = isBoss(s) ? enemy.bossGoldMultiplier : 1;
+  return Math.floor(enemy.baseGold * Math.pow(enemy.goldGrowth, s - 1) * boss);
 }
 
 const ENEMY_DEFINITIONS: Record<string, EnemyDefinition> = Object.fromEntries(

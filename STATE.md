@@ -3,8 +3,62 @@
 > Cross-session memory for all agents. Update on exit; read on entry.
 
 ## Status
-**T5 — a SECOND theme (`lucky`, a golden retriever × husky) proves the theme seam and is green on
-every gate, with `ACTIVE_THEME` left at the default `fantasy`.** `engine-core/src/theme/lucky.ts` is a
+**The 12-enemy roster with PER-ENEMY HP/gold curves landed (replacing the factor/canonical-curve
+approach), `ACTIVE_THEME` is now the `lucky` dog theme, and T6 animation + enemy taunts + F1
+tap-to-equip all shipped — every gate is green.**
+
+- **`ACTIVE_THEME` is `lucky`** (the golden retriever × husky dog theme). `THEMES = [fantasy, lucky]`
+  and the unit suite validates BOTH; `fantasy` is the original "Standard Fantasy RPG" theme.
+- **12 distinct enemies** live in `engine-core/src/content.ts` `ENEMY_ROSTER` (grunt, goblin, wolf,
+  bat, slime, bandit, spider, wraith, ogre, harpy, golem, dragonling). `enemyForStage(stage) =
+  roster[(stage − 1) % 12]` is pure, ZERO RNG, no persisted state (save schema stays **v4**). Each
+  enemy owns its OWN live HP/gold curve (`baseHp`/`hpGrowth`/`baseGold`/`goldGrowth`) and its OWN boss
+  multipliers — `enemyMaxHp(stage)`/`goldReward(stage)` compute straight from them; there are NO
+  `hpFactor`/`goldFactor` factors and NO global canonical curve. Boss CADENCE stays global
+  (`isBoss`, every 10th stage); boss SIZE is per-enemy. `archetype` is an inert label. The per-enemy
+  `hpGrowth` values sit in a deliberately tight band (1.4273–1.4336) so the pacing proof holds; the
+  set came from a ~4,415-candidate measured search. `BALANCE.baseHp`/`hpGrowth`/`baseGold`/`goldGrowth`
+  remain documentation anchors only; `BALANCE.bossHpMultiplier`/`bossGoldMultiplier` were DELETED.
+  `gear.gearGrowth` is now **1.2832**.
+- **Enemy taunts are engine-emitted and theme-worded.** `{type:'enemyTaunt', enemyId, kind,
+  phraseIndex}` on kinds spawn/defeat/bossDefeat/wall/shiny/ambient; deterministic via a SEPARATE
+  derived RNG channel (`seed ^ totalPlayedMs ^ discriminator`) that NEVER touches `meta.rngState`, so
+  taunts cannot perturb the loot stream. Each theme ships 12 enemies × 6 kinds × 4 phrases = **288
+  lines**. No taunt fires for a boot/offline kill (offline events are deliberately dropped).
+- **T6 animation shipped.** `Theme.animation` has 8 semantic cue keys mapping to declared asset slots +
+  display-only durations; `handleEvents` runs a bounded transient-effect queue
+  (`MAX_ACTIVE_EFFECTS = 8`, same-target replace, one re-armed drain timer) with per-actor cue priority
+  (deaths win) and a `prefers-reduced-motion` gate that suppresses JS sprite frame-swaps while still
+  showing text. Honest caveat: the `animation` cues are registered in `theme/contract.ts` but only a
+  4-line allow-list registration exists, so `npm run theme:check` does NOT validate animation cues —
+  the unit tests do. (`theme:check` DOES validate the enemy roster's shape — every id, ≥4 non-empty
+  phrases per kind — via `validateTheme`.)
+- **F1 tap-to-equip.** Tapping a FLAGGED ("strictly better") bag row equips it, reusing the existing
+  `equip` action; only flagged rows are row-tappable, the `equip-btn` remains the keyboard control,
+  and one tap = exactly one dispatch.
+
+Gates (current, verified this session):
+- `npm run typecheck` → clean for all three workspaces.
+- `npm run test` → **236 passed (16 files), exit 0**.
+- `npm run sim` → **PACING OK (exit 0).** Canonical soft 6.22 / hard 55.52 (deltas +3.8% / +2.8%);
+  sweep soft 5.63–6.22, hard 50.60–55.52; drops-primary net 97.3–98.6% / gross 90.4–90.9%; per-seed
+  equips 43–48, upgrades 100–125, milestones 21–27, per-item peak level 8–10; free-path 0.3–0.5%;
+  eq/stage 0.88–0.98; Shiny boost uptime 1.4–1.9%.
+- `npm run build` → exit 0 (23 modules). `npm run smoke` → **28 passed, exit 0**.
+- `npm run theme:check` → green for `lucky`: 32/32 files exact size; observed max per limit group
+  label 18 / chrome 85 / achievement-title 35 / achievement-description 105 / prose 141 / color 7 /
+  catchphrase 69 (limits 48/120/64/200/240/64/140).
+
+The one-line switch is `export const ACTIVE_THEME: Theme = <name>;` in
+`engine-core/src/theme/index.ts` (committed value: `lucky`).
+
+*The `Prior:` sections below are historical session logs. Their gate counts and pacing/peak
+measurements are snapshots from that session, not current — the current gates are in **Status**
+above.*
+
+### Prior: T5 — a second theme (`lucky`) proves the theme seam (kept)
+**`lucky` (a golden retriever × husky) was added to prove the theme seam; it is now the committed
+`ACTIVE_THEME`.** `engine-core/src/theme/lucky.ts` is a
 complete `Theme`: player = Lucky; `weapon` → the Jaw, `ring1/2` → dog tags, `necklace` → bandana;
 enemy → the mail carrier (boss = the Truck); Shiny → a squirrel; gold → kibble. Its palette is a
 deliberately **light "sunlit lawn"** scheme, which exposed real seam gaps now fixed: the **browser
@@ -18,7 +72,8 @@ sets, and asserts they genuinely differ. Added a committed dependency-free place
 "Adding a theme" guide. Known residual gap: `color-scheme` is not a palette token (fixed `dark`), so a
 light theme leaves UA scrollbar/form chrome dark.
 
-Gates (this session, green on BOTH themes — fantasy default and a temporary `lucky` switch):
+Gates (that session — historical snapshot, green on BOTH themes; at the time `fantasy` was the default
+and `lucky` was a temporary switch):
 - `npm run typecheck` → clean for all three workspaces.
 - `npm run test` → **191 passed (14 files), exit 0** (+10 theme tests: every theme validates, same
   id/slot sets, themes differ).
@@ -28,9 +83,6 @@ Gates (this session, green on BOTH themes — fantasy default and a temporary `l
   `32/32 files present at the exact size`.
 - Browser-verified in real Chromium: `lucky` body bg `rgb(244,249,234)` + dog copy + `/themes/lucky/`
   sprites; `fantasy` unchanged (`rgb(8,9,12)`, ember, fantasy sprites).
-
-The one-line switch is `export const ACTIVE_THEME: Theme = <name>;` in
-`engine-core/src/theme/index.ts` (committed value: `fantasy`).
 
 ### Prior: Soft-lock fix — surface a better bag item, the player decides (kept)
 **The game SURFACES a better bag item and escalates guidance, but the PLAYER is the
@@ -46,7 +98,7 @@ stays v4**, `DEFAULT_SAVE_KEY` unchanged. `/web` shows a quiet badge (any upgrad
 prominent inline "Bag check" callout whose single button dispatches the EXISTING `equip` action.
 Nothing is ever auto-equipped.
 
-Gates (this session):
+Gates (that session — historical snapshot):
 - `npm run typecheck` → clean for all three workspaces (`engine-core`, `web`, `sim`).
 - `npm run test` → **141 passed (12 files), exit 0** (new `advisory.test.ts`, 12 tests).
 - `npm run sim` → **PACING OK (exit 0).** Canonical sections **byte-identical** to pre-change
@@ -64,7 +116,7 @@ affords a steady stream of cheap levels on the weapon's per-stage lifetime (meas
 `gearGrowth` (1.283) still dwarfs `upgradeStatMultiplier` (1.01): a newer drop beats any affordable
 upgrade stack, so the weapon keeps tracking the stage and most upgrade power is reset by each equip.
 
-Gates (this session):
+Gates (that session — historical snapshot):
 - `npm run typecheck` → clean for all three workspaces (`engine-core`, `web`, `sim`).
 - `npm run test` → **126 passed (10 files), exit 0** (no test edited; no balance value was hard-coded).
 - `npm run sim` → **PACING OK (exit 0).** Canonical soft 6.21 / hard 50.25 (inside comfortable);
@@ -82,7 +134,7 @@ non-blocking flourish + `★ ×N` card badge. The bonus is **derived from `upgra
 the save schema stays **v4**. The sim's economy policy is slot-aware (buys the affordable upgrade
 across all four slots with the largest real power gain, skips zero-gain upgrades).
 
-Gates (this session):
+Gates (that session — historical snapshot):
 - `npm run typecheck` → clean for all three workspaces (`engine-core`, `web`, `sim`).
 - `npm run test` → **126 passed (10 files), exit 0**.
 - `npm run sim` → **PACING OK (exit 0).** Canonical soft 6.18 / hard 49.54 (inside comfortable);
@@ -140,19 +192,19 @@ the canonical comfortable ranges / the drops-primary gate.
   intentional ("use the existing capped stats"); making milestones meaningful past the caps needs a
   new non-multiplicative channel, not a bigger number.
 - **The milestone interval is 3 and now actually fires.** With the Option A curve the per-item
-  `upgradeLevel` peaks at 8–12 across the sweep seeds, so interval 3 crosses 2–4 times per item
+  `upgradeLevel` peaks at 8–10 across the sweep seeds, so interval 3 crosses 2–3 times per item
   lifetime; interval 5 would still be a stretch. Milestones are still bounded by the caps (below).
 - **The weapon still absorbs most upgrades; the per-slot split is genuine, not a policy bug.**
-  Measured per-slot upgrades are w86–101 / r0–13 / n0–7. The weapon wins the greedy comparison
+  Measured per-slot upgrades are w91–112 / r0–9 / n0–7. The weapon wins the greedy comparison
   because it is the only *unbounded* lever and its next level is always cheap (it resets to 0 each
   equip); rings/necklaces reach their caps early (crit multiplier saturates by item level ~4, single
   ring crit chance by ~15) so an upgrade there often scores exactly zero gain and is skipped. Seeds
-  that get a ring drop early with cap headroom DO invest in it (max ring level up to 12, r4
+  that get a ring drop early with cap headroom DO invest in it (max ring level up to 9, r3
   milestones); seeds whose only ring drops late get zero ring upgrades. This is the designed
   ceiling, not a tuning miss.
 - **The Shiny reward is bounded by the hard window.** The per-claim frenzy wall budget is
-  `D × (M−1) = 12 s` (test-pinned); the 151 s cadence exists to lift the canonical hard baseline to
-  ~51.9 min and leave the ~2.4–3.9 min of slack the mix consumes. A longer/bigger frenzy or a larger
+  `D × (M−1) = 12 s` (test-pinned); the 151 s cadence keeps the bounded rewards inside the canonical
+  hard window's slack. A longer/bigger frenzy or a larger
   cache (×3+) breaches the canonical floor — do not raise either without a structural change.
 - **The `drop` reward is ring-only on purpose.** Weapons are the unbounded exponential lever; a
   guaranteed same-stage weapon drop leapfrogs the equipped weapon and moved the wall stage 50 → 59.
@@ -169,20 +221,23 @@ the canonical comfortable ranges / the drops-primary gate.
 - **No player HP / armor / dodge / enemy attacks** — explicitly deferred (see `NOTES.md`).
 
 ## Recent Decisions
-See `decisions.md`. Most recent: 2026-09-28 "Soft-lock fix: surface a better bag item, let the
-PLAYER decide (never auto-equip)". Also authoritative: 2026-09-28 "Audit corrections: sim
-policy-sensitivity diagnostic + documented unarmed projection degeneracy", 2026-09-27 "Phase C — gold
-becomes an allocation decision: per-slot upgrade controls + derived milestone steps", "Option 3:
-Shinies felt but WALL-NEUTRAL — tempo + gold + a guaranteed ring drop", "Fix a real wall-projection
-bug" (the leak fix, kept), the Phase 3 sim-policy/caps and /web splash entries, "Break the
-`state ↔ achievements` import cycle via a `gear-stats.ts` leaf", "Golden Events (Shinies):
-spawn/claim/boost engine slice, save v4", "Save schema v3", and the 2026-09-26 economy reversal.
+See `decisions.md` for the locked entries. The current session landed **per-enemy enemy curves (the
+12-enemy roster in `content.ts`, replacing the factor/canonical-curve approach), T6 themeable
+animation, engine-emitted enemy taunts on a separate RNG channel, and F1 tap-to-equip** — on top of
+the previously authoritative 2026-09-28 "Soft-lock fix: surface a better bag item, let the PLAYER
+decide (never auto-equip)" and "Audit corrections: sim policy-sensitivity diagnostic + documented
+unarmed projection degeneracy", the 2026-09-27 "Phase C — gold becomes an allocation decision",
+"Option 3: Shinies felt but WALL-NEUTRAL", and "Fix a real wall-projection bug" (the leak fix, kept),
+the Phase 3 sim-policy/caps and /web splash entries, "Break the `state ↔ achievements` import cycle
+via a `gear-stats.ts` leaf", "Golden Events (Shinies): spawn/claim/boost engine slice, save v4",
+"Save schema v3", and the 2026-09-26 economy reversal.
 
 ## Next
 1. Build the Expo/RN port by supplying a renderer + a `SaveRepository` and a host clock driving
    `advance()` — see README "Porting to Expo".
-3. Optional polish: compact numeral formatting, tap/feedback cosmetics, bag sorting
-   (would need a new engine action first).
+2. Optional polish: compact numeral formatting (large late-game values print as full integers),
+   tap/feedback cosmetics, and a bulk-sell action (a real engine action, not yet built — bag
+   *ordering* already ships strongest-first).
 
 ---
 

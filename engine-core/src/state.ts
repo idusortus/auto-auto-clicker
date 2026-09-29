@@ -16,9 +16,7 @@ import {
   BALANCE,
   choiceGoldGrant,
   CURRENT_SAVE_VERSION,
-  enemyMaxHp,
   GEAR_SLOTS,
-  goldReward,
   projectedKillMs,
   SHINY_CACHE_GOLD_MULTIPLE,
   shinySpawnDelayMs,
@@ -27,7 +25,7 @@ import {
   upgradeCost,
   upgradeMilestoneCount,
 } from './balance';
-import { gearDefinitionFor } from './content';
+import { enemyMaxHp, gearDefinitionFor, goldReward } from './content';
 import { ACHIEVEMENTS } from './achievements';
 import { getCritStats, getGearStats, getGlobalBonuses, sustainedActiveDps } from './gear-stats';
 import { ACTIVE_THEME } from './theme';

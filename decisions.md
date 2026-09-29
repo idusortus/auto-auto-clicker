@@ -14,6 +14,8 @@
 
 ## 2026-09-28 — F1/F2/F3: tap-to-equip, a 12-enemy roster, and deterministic engine-emitted taunts
 
+> **PARTIALLY SUPERSEDED (2026-09-28).** Items 1 (F1 tap-to-equip), 3 (theme display roster), 4 (taunt RNG channel), 5 (schema v4) and 7 (reduced-motion toast fix) still describe the shipped code. **Item 2 and the "(a) the 12 enemies are cosmetic" trade-off are SUPERSEDED** — the per-enemy stats are now LIVE, `hpFactor`/`goldFactor` are deleted, and the roster is a genuine single source of truth. See "Per-enemy curves replace the factor approach" below. Item 6's validator pass still stands.
+
 **Context:** Three requests. (F1) When the advisory flags a bag item as strictly better, tapping that item should equip it rather than making the player scroll to a separate button. (F2) Themes should carry a list of enemies with catchphrases. (F3) Catchphrases should be emitted by the engine, deterministically. The user explicitly chose **real combat enemies with distinct stats** over cosmetic dressing, and **deterministic-from-stage** selection over RNG-drawn, and authorised a save-schema bump. I resolved the schema as *not needed* (see below) and held the authorisation in reserve rather than spending it on a change the design does not require.
 
 **Choice:**
@@ -29,9 +31,69 @@
 
 **Evidence:** `npm run typecheck` 0 (3 workspaces); `npm run test` **228 passed (16 files)** (was 196 before this session's three features); `npm run sim` **PACING OK** with `diff` against the pre-feature baseline **EMPTY** — canonical soft **6.21** / hard **50.25**, all 5 seeds PASS, drops-primary unchanged; `npm run build` 0 (23 modules); `npm run smoke` **28 passed** (was 24); `npm run theme:check` green for both themes (`catchphrase 69 / 140 · 288 slots`). Independent review probe: the validator now reports all 6 injected roster breaks with exact paths; `enemyForStage` is total (negatives/NaN handled); 19 files / 82 edges / **0 cycles**; `meta.rngState` byte-identical under taunt hammering; smart smoke tests proven non-vacuous and theme-agnostic.
 
-**Revisit:** **The open question this phase did not settle: does the user want pacing re-proven so enemies become MECHANICALLY distinct?** If yes, wire the per-enemy profile into the live curve, accept canonical hard moving to ~49.0 (measured), re-tune, and rewrite the pacing section — the ±20% gates still pass, so this is a plausible path, not a violation. Never silently scale the canonical curve and never widen tolerance to hide the drift. If enemies should also LOOK different, add per-enemy asset slots (the 32-slot contract is fixed; that is a deliberate new decision). Never let a theme control enemy identity or stats, and never let a taunt draw from `meta.rngState`.
+**Revisit:** A future option (now SUPERSEDED — see "Per-enemy curves replace the factor approach" below) was whether the user wanted pacing re-proven so enemies became MECHANICALLY distinct. Never silently scale the canonical curve and never widen tolerance to hide drift. Never let a theme control enemy identity or stats, and never let a taunt draw from `meta.rngState`.
 
 ---
+
+## 2026-09-28 — Per-enemy curves replace the factor approach (single source of truth; roster is fully mechanical)
+
+> **This entry supersedes the factor design** described in the two entries above. The M3b plan text further down was written by the planning agent and describes the design as *proposed*; THIS entry records what actually shipped and its measured evidence.
+
+**Context:** The roster had a DUAL representation: descriptive per-enemy curves (`baseHp`/`hpGrowth`/`baseGold`/`goldGrowth`) PLUS live factors (`hpFactor`/`goldFactor`) scaling a global canonical curve. The user mandated one source of truth — each enemy must have a real per-enemy HP/gold curve, and the factors must be deleted. Boss cadence stays global (every 10th stage); the open question was whether boss SIZE should become per-enemy too.
+
+**Choice:**
+1. **One source of truth: real per-enemy curves.** `EnemyDefinition` now carries LIVE `baseHp`/`hpGrowth`/`baseGold`/`goldGrowth` and LIVE `bossHpMultiplier`/`bossGoldMultiplier`. `hpFactor`, `goldFactor` and `bossStageInterval` are **DELETED**. The live formula in `content.ts`:
+   `enemyMaxHpFor(enemy, stage) = floor(enemy.baseHp × enemy.hpGrowth^(stage-1) × (isBoss(stage) ? enemy.bossHpMultiplier : 1))`, mirrored for gold. `enemyMaxHp(stage)`/`goldReward(stage)` pick the standing enemy and call it.
+2. **Boss cadence stays GLOBAL, boss SIZE became per-enemy.** `isBoss(stage)` still uses `BALANCE.bossStageInterval = 10`; the multiplier applied is the standing enemy's own value. Per-enemy cadence was rejected because boss-ness must remain derivable from stage alone or projection/wall logic becomes enemy-dependent.
+3. **`balance.ts` lost its canonical curve.** The canonical `enemyMaxHp`/`goldReward` helpers and `BALANCE.bossHpMultiplier`/`bossGoldMultiplier` are DELETED. `BALANCE.baseHp`/`hpGrowth`/`baseGold`/`goldGrowth` remain as documented tuning ANCHORS (**NOT** read by the live curve). `gear.gearGrowth` moved 1.283 → **1.2832** (the one global knob the curve still reads).
+4. **The wrappers stay in `content.ts`, not `balance.ts`** — `content.ts` imports `balance.ts`, so the reverse would be a cycle. Verified acyclic (0 cycles; `balance.ts` imports only `./types`).
+5. **`archetype` is inert metadata** — 12 distinct descriptive labels, read by no live path. Kept deliberately (it names each enemy's curve lean); a test pins that all 12 are distinct.
+6. **Save schema stays v4.** Identity and max HP remain pure functions of `combat.stage`; nothing new is persisted.
+
+**The re-tune (required, measured, and robust).** Deleting the cycle-mean-1 normalisation removed what had protected pacing, so a throwaway ~4,415-candidate multi-seed search (`/tmp/opencode/aac-roster-curves/`, archived) found the roster values. Final measured result: canonical soft **6.22** / hard **55.52** (targets 6/54 ±20%, deltas +3.8%/+2.8%); sweep soft **5.63–6.22**, hard **50.60–55.52**; all 5 seeds PASS; drops-primary net 97.3–98.6%. **The independent reviewer extended this to 70 seeds — all PASS**, with the worst margin 6.47 min above the hard floor. The solution is robust, not knife-edge.
+
+**Trade-offs / honest scope:**
+- **The tight growth band is LOAD-BEARING.** With per-enemy curves the aggregate stage curve is the round-robin product of the roster's `hpGrowth` values, so wide divergence makes the stage sequence zig-zag and drifts the proof. The band is therefore deliberately narrow — **1.4273–1.4336** (span 0.0063; stage-50 divergence just 1.24×). The *original* descriptive metadata (1.39–1.46) diverges ~30× by stage 50 and would not hold pacing; that is why it never worked as authored.
+- **Distinctness lives in `baseHp` (24–29), `baseGold` (4–7) and the boss multipliers (HP 2.033–2.514, gold 3.62–4.38)** rather than in a wide growth spread.
+- **Gold distinctness is still coarse:** `goldGrowth = 1.0` for all 12, so 8/12 enemies pay exactly 5 at non-boss stages. Boss gold is non-monotonic across boss stages. Making gold feel distinct needs the flat gold curve addressed — a separate economy decision.
+- **Per-enemy boss multipliers make the boss bump uneven:** the boss/previous-stage HP ratio ranges ~2.01×–3.30×. Never smaller than a normal transition and never absurd, but a low-multiplier boss after a heavy enemy can look muted.
+- **Four dead anchor constants remain in `BALANCE`** (`baseHp`/`hpGrowth`/`baseGold`/`goldGrowth`) — read by no live path. Labelled as anchors, but they are the same class of footgun the change removed. Deleting them is the obvious next cleanup.
+- **Pre-change v4 saves are briefly inconsistent** (accepted, self-healing): an old save persisted `enemyHp` on the old curve, which can now exceed the new per-enemy max. The renderer clamps the bar and HUD so nothing displays wrongly; the next kill respawns at the new max.
+
+**Evidence:** `npm run sim` → **PACING OK** (canonical soft **6.22** / hard **55.52**; sweep soft 5.63–6.22, hard 50.60–55.52; all DROPS-PRIMARY 97.3–98.6%). `npm run test` **236 passed (16 files)**; `npm run typecheck` clean (3 workspaces); `npm run build` 23 modules; `npm run smoke` **28 passed**; `npm run theme:check` green for `lucky`. Independent review re-ran 70 seeds (all PASS), verified zero live readers of the deleted symbols, 0 import cycles, save v4 intact, `getProjectedKillMs` uses the live curve, and that the search-report arithmetic `(1.4336/1.4273)^49 = 1.2409` is correct. Review fix round: restored a strictly-weakened archetype assertion (data fixed, not the assertion), corrected wrong stage numbers in a live `balance.ts` comment (stage-30 soft / stage-50 hard), and corrected the roster comment block.
+
+**Revisit:** Delete the four dead `BALANCE` anchors (move their two test fixtures local). Address the flat gold curve if gold distinctness matters. If a per-enemy SHAPE spread wider than ±0.003 is wanted, that is a re-tune with a re-proven pacing section — never widen the ±20% tolerance, never weaken the drops-primary gate, never reintroduce a secondary scaling factor, and never let a theme control enemy identity or stats.
+
+---
+
+
+## 2026-09-28 — F2 RESOLVED: the enemy profile is LIVE (enemies are mechanically real; accept drift, no re-tune needed)
+
+**Context:** The entry above left the 12-enemy roster COSMETIC — `hpFactor`/`goldFactor` existed but no live path read them, because applying them was measured to move the pacing proof. The user explicitly chose "real variable HP, accept drift + re-tune" over keeping them cosmetic. This entry SUPERSEDES the "cosmetic / openly question" parts of the entry above (the identity/copy design and the taunt RNG channel are unchanged and still correct).
+
+**Choice:**
+1. **The profile is applied as a multiplicative factor on the canonical curve, and it now genuinely drives combat.** `engine-core/src/content.ts` exports LIVE `enemyMaxHp(stage) = floor(canonicalEnemyMaxHp(stage) × enemyForStage(stage).hpFactor)` and `goldReward(stage) = floor(canonicalGoldReward(stage) × enemyForStage(stage).goldFactor)`, plus `enemyMaxHpFor`/`goldRewardFor`. `combat.ts` and `state.ts` import the LIVE versions from `./content`; `index.ts` re-exports them with UNCHANGED single-arg signatures.
+2. **The wrappers live in `content.ts`, NOT `balance.ts` — a cycle constraint.** `content.ts` already imports `BALANCE` from `balance.ts`; putting `enemyForStage` into `balance.ts` would create a `balance ↔ content` import cycle. Verified acyclic after the change (19 files / 0 cycles; `balance.ts` still imports only `./types`). A factor on the canonical curve was chosen over 12 independent per-enemy curves because it preserves the canonical exponential SHAPE and keeps the search space tractable.
+3. **Boss multipliers are NOT double-applied** (they live inside the canonical helpers). Verified: stage-10 ratio is exactly the enemy's factor.
+4. **`getProjectedKillMs` now measures the LIVE max HP**, so wall/boss checks are calibrated to what the player actually fights. `evaluateStageEntry` reads the live max for new enemies.
+5. **Save schema stays v4.** Identity and max HP remain pure functions of `combat.stage`; no new persisted field. Round-trip verified 0 mismatches over 60 stages.
+6. **Six tests were REPOINTED, not weakened:** `choices.test.ts` (×3), `gear.test.ts` (×2 incl. a latent second failure), `projection.test.ts`, `save.test.ts` moved their expected values from the canonical helpers to the LIVE curve. Every comparator and exact-equality was preserved; the independent reviewer verified no `toBeCloseTo`/`toBeGreaterThan` loosening anywhere. `enemy-roster.test.ts` was rewritten from a "pacing neutrality" assertion into a "mechanical reality" assertion (a strengthening).
+
+**Trade-offs / honest scope — what "distinct stats" actually means now:**
+- **Live: exactly two fields — `hpFactor` and `goldFactor`.** HP distinctness is rich (21 distinct live/canonical ratios across one 24-stage cycle; grunt 1.000, bat 0.847, golem 1.150).
+- **Inert: the other eight `EnemyDefinition` fields** (`baseHp`, `hpGrowth`, `baseGold`, `goldGrowth`, `bossStageInterval`, `bossHpMultiplier`, `bossGoldMultiplier`, `archetype`). They are descriptive metadata; no live path reads them. A future editor changing `enemyForStage(10).bossHpMultiplier` would see NO effect (the live curve reads `BALANCE`).
+- **Gold distinctness is coarser than HP's**, because canonical gold is FLAT (`goldGrowth 1.0`) and floored: the six authored `goldFactor`s collapse to four observable payouts (3/4/5/6 non-boss), so 1.0/1.05/1.1 are indistinguishable in play, and boss gold is non-monotonic across boss stages.
+- **Pre-change v4 saves are briefly inconsistent** (accepted, self-healing): a save written by the previous build persisted `enemyHp = canonical(stage)`, which can now exceed the new live max by up to ~18% on `hpFactor < 1` stages. The renderer clamps both the HP bar and the HUD text so nothing lies on screen; the effect is only that the current enemy absorbs a little extra damage until the next kill. New saves round-trip exactly.
+- **A same-named dual-semantics footgun remains:** `content.enemyMaxHp`/`goldReward` (LIVE) and `balance.enemyMaxHp`/`goldReward` (CANONICAL) coexist. Package consumers get LIVE (via `index.ts`); importing `…/balance` directly silently gets canonical. Documented, not renamed — renaming `balance.ts` exports was judged churn.
+- **The documented pacing numbers in older records (and the `sim` baseline captures) are stale.** The sim output is the source of truth.
+
+**Evidence:** `npm run sim` **PACING OK** — canonical soft **6.17** / hard **49.15** (baseline 6.21 / 50.25 → drift −0.6% / −2.2%, both well inside ±20%), all 5 sweep seeds PASS (hard 45.60–49.15), all 5 DROPS-PRIMARY (net 97.5–98.9%); no seed fell out. `npm run test` **229 passed (16 files)**; `npm run typecheck` clean (3 workspaces); `npm run build` 0 (23 modules); `npm run smoke` **28/28**; `npm run theme:check` green. Independent probe: live/canonical HP ratio non-constant over stages 1..24 (21 distinct values) and equal to the standing enemy's `hpFactor`; exhaustive stages 1..600 → 0 mismatches; no `Math.random`/DOM/timer/fs in `engine-core/src`; 0 import cycles; no live path bypasses the factors.
+
+**Revisit:** **NO RE-TUNE WAS NEEDED** — the cycle-mean-1 factors (±15%) kept the aggregate inside ±20%, so `balance.ts` was NOT touched. If enemies should differ in SHAPE (per-enemy HP/gold curves) rather than a single multiplier, or should drop different gear, that is a new balance-design task requiring a measured multi-seed search and a rewritten pacing section. If gold distinctness must be observable, fix the flat gold curve first (a separate economy decision). To remove the dual-semantics footgun, rename the `balance.ts` baselines to `canonical*`. Never widen the ±20% tolerance, never weaken the drops-primary gate, and never let a theme control enemy identity or stats.
+
+---
+
+
 
 
 
@@ -439,3 +501,32 @@
 **Trade-offs:** Upgrades are now cheaper and stronger, which inflates late-game stats; sweep seeds still spread over ~13–37 min hard wall because drop RNG couples non-linearly with the greedy policy. Canonical is the only hard assertion, so this is reported as a warning.
 **Revisit:** Only if tolerance policy or sweep robustness requirements change.
 **Superseded by:** "Deterministic power core: bounded RNG, bounded free grants, DPS-based swap" (Phase 3b).
+
+---
+
+## 2026-09-28 — Roster becomes ONE source of truth: real per-enemy HP/gold curves, per-enemy boss multipliers, deletion of hpFactor/goldFactor
+
+**Context:** The 12-enemy roster had a dual representation: descriptive per-enemy curves (`baseHp`, `hpGrowth`, `baseGold`, `goldGrowth`) plus live factors (`hpFactor`, `goldFactor`) that scaled a global canonical curve. The user mandated a single source of truth: each enemy must have a real per-enemy HP/gold curve, and `hpFactor`/`goldFactor` must be deleted. Boss cadence must stay global (every 10th stage via `isBoss(stage)`), but the disposition of `bossHpMultiplier`/`bossGoldMultiplier` and `archetype` had to be decided. Save schema stays v4, engine-core stays pure/acyclic, and `balance.ts` must not import `content.ts`.
+
+**Choice:**
+1. **Per-enemy curves are the live source of truth.** `engine-core/src/content.ts` exports:
+   - `enemyMaxHpFor(enemy, stage) = floor(enemy.baseHp * enemy.hpGrowth^(stage-1) * bossMult(stage))`
+   - `goldRewardFor(enemy, stage) = floor(enemy.baseGold * enemy.goldGrowth^(stage-1) * bossMult(stage))`
+   where `bossMult(stage) = isBoss(stage) ? enemy.bossHpMultiplier : 1` (or `enemy.bossGoldMultiplier` for gold).
+   The stage wrappers are `enemyMaxHp(stage) = enemyMaxHpFor(enemyForStage(stage), stage)` and `goldReward(stage) = goldRewardFor(enemyForStage(stage), stage)`. This removes the old `canonicalEnemyMaxHp`/`canonicalGoldReward` dependency from `content.ts`; the canonical helpers in `balance.ts` are deleted because they are no longer a source of truth.
+2. **Boss multipliers are per-enemy (option b).** The boss cadence remains global (`BALANCE.bossStageInterval` + `isBoss(stage)`), but the multiplier applied on a boss stage is the standing enemy's own `bossHpMultiplier`/`bossGoldMultiplier`. This makes those fields live rather than inert copies of `BALANCE`. Invariant: `isBoss(stage)` is global; `enemyMaxHp(stage) / enemyMaxHp(stage-1)` on a boss boundary equals `hpGrowth_i * bossHpMultiplier_i / hpGrowth_prev` (where `i` is the enemy at `stage`), so bosses genuinely differ per enemy while the cadence is preserved.
+3. **`bossStageInterval` is deleted from `EnemyDefinition`.** It is redundant with `BALANCE.bossStageInterval` and the user explicitly forbade making it per-enemy.
+4. **`hpFactor`/`goldFactor` are deleted from `EnemyDefinition` and every test/doc.** They are replaced by the per-enemy curves.
+5. **`archetype` stays as pure content metadata.** It is not a stat; it is an authoring/theming label. It is loudy justified as inert because it is intentionally not a balance field — like a tag or display note — and no live path reads it. If it is ever used to drive mechanics, it must be promoted to a live field with a new decision.
+6. **A measured multi-seed parameter search is required.** Because per-enemy curves remove the normalization that protected pacing, a throwaway harness under `/tmp/opencode` searches over global `BALANCE.baseHp`, `BALANCE.hpGrowth`, `BALANCE.gear.gearGrowth`, and per-enemy curve values (re-authored via a small number of archetypes to keep the search tractable). Acceptance: all 5 seeds soft ∈ [4.8,7.2] and hard ∈ [43.2,64.8] min; canonical soft ∈ [5.2,6.8], hard ∈ [48,60]; drops-primary net > 50% every seed; no NaN/Infinity; hard stage ≤ 90. The search stops and reports if no sane setting lands it.
+7. **Save schema stays v4; no new persisted field.** Enemy identity and max HP remain pure functions of `combat.stage`. Pre-change v4 saves may briefly have `enemyHp` that exceeds the new per-enemy max; this is self-healing on the next kill and the renderer already clamps the HP bar/HUD.
+
+**Trade-offs / honest scope:**
+- **Pacing will drift and must be re-tuned.** The previous cycle-mean-1 factors kept the aggregate inside ±20% without touching `balance.ts`; real per-enemy curves remove that protection.
+- **Per-enemy boss multipliers can make individual boss stages outliers.** A high `bossHpMultiplier` on a light enemy can still produce a hard spike at that boss stage. The search must verify that projection/wall logic remains coherent.
+- **Gold distinctness may still be coarse if `goldGrowth` is kept near 1.0.** The user may want per-enemy gold curves, but flat growth + integer flooring can collapse distinctness. The search can vary `goldGrowth` per enemy.
+- **The canonical helpers in `balance.ts` are deleted.** Any doc/test that treated them as the "baseline" must be repointed at the live per-enemy curve or removed.
+
+**Evidence required before this plan is considered done:** `npm run sim` PACING OK with the new per-enemy curves; `npm run test` passes (including rewritten `enemy-roster.test.ts`); `npm run typecheck` clean (3 workspaces); 0 import cycles; no live path reads `hpFactor`/`goldFactor`/`bossStageInterval`; `balance.ts` does not import `content.ts`.
+
+**Revisit:** If per-enemy curves cannot be tuned to pass all gates without widening tolerance, report the measured numbers and stop — never weaken a gate. If `archetype` should drive mechanics (e.g., an archetype-based AI or resistances), promote it to a live field with a new decision.

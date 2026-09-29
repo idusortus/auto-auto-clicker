@@ -39,10 +39,10 @@
   Chromium v1243 was already in `~/.cache/ms-playwright`, so no browser download
   was needed. Dependency: `@playwright/test` (see `decisions.md`).
 - **Upgrades barely move the HUD DPS readout — drops do.** With the guaranteed
-  item-level-1 starter weapon and a ×1.05 upgrade multiplier, `autoDps = base(2) +
-  floor(2 * 1.05^u) = 4` for `u = 0..8` (integer flooring); the readout only rises
+  item-level-1 starter weapon and a ×1.01 upgrade multiplier, `autoDps = base(2) +
+  floor(2 * 1.01^u) = 4` for `u = 0..40` (integer flooring); the readout only rises
   once a **newer drop** is equipped (e.g. item level 3 →
-  `floor(2 * 1.283^2) = 3`). This is intended: the economy is drops-primary, so the
+  `floor(2 * 1.2832^2) = 3`). This is intended: the economy is drops-primary, so the
   power jump should come from gear. The smoke test asserts the upgrade **counter**
   increments and gold is spent on the first tap, then taps until a higher-level drop
   is in the bag, equips it, and asserts the DPS readout strictly increases
@@ -91,14 +91,16 @@
   total crit chance is capped at `CRIT_CHANCE_CAP = 0.75`. `getEffectiveStats` still returns
   `{autoDps, clickDamage}` but may now be fractional. 12 achievements initially lived in
   `achievements.ts` (ids persisted in `meta.achievements`) and are evaluated at the
-  `advance`/`applyAction` entry points. Save schema is **v3**: `loadGame` accepts 1/2/3 and a
+  `advance`/`applyAction` entry points — the catalog has since grown to **30**. Save schema is
+  **v3**: `loadGame` accepts 1/2/3 and a
   single parser defaults `ring1`/`ring2`/`necklace` to `null` and `achievements` to `[]`.
   At the time the pacing sim missed its ±20% windows (soft 7.22–7.56 min, hard 47–57 min)
-  because non-weapon drops thinned the weapon stream and the new factors were placeholders;
+  because non-weapon drops thinned the weapon stream and the new factors were placeholders
+  (those factors have since been **deleted** — see the per-enemy-curves note below);
   Phase 2 owned the retune and Phase 3 owned the `/web` splash.
-  **Superseded by the Phase 3 note below** — the catalog is now 24 entries, the sim passes
+  **Superseded by the Phase 3 note below** — the catalog is now 30 entries, the sim passes
   every seed, the ring/necklace totals are capped, and the splash has shipped.
-- **2026-09-27 Phase 3: per-slot sim policy, bounded caps, 24 achievements + /web splash.**
+- **2026-09-27 Phase 3: per-slot sim policy, bounded caps, achievements + /web splash.**
   The sim's economy now equips, for EVERY occupiable slot (weapon/ring1/ring2/necklace), the
   bag item that most raises engine-derived effective power, so rings/necklaces are actually
   exercised by the pacing proof. Their multiplicative crit/power totals are clamped in the
@@ -106,7 +108,7 @@
   `POWER_MULTIPLIER_CAP = 0.02`, `GOLD_MULTIPLIER_CAP = 0.25`), so the realized bounded lever
   saturates at ≈**+16% DPS** (≈10% pacing effect) instead of exploding. `npm run sim` passes
   all 5 seeds (soft 5.91–6.42 min, hard 45.10–49.07 min, all DROPS-PRIMARY). The achievements
-  catalog is now **24** entries, and `/web` adds a brief non-blocking unlock splash
+  catalog was **24** at this phase (now **30**), and `/web` adds a brief non-blocking unlock splash
   (`achievement-splash` / `achievement-splash-title`, `pointer-events: none`, ~2.6 s,
   reduced-motion safe) alongside the shelf.
 - **Armor and dodge are explicitly deferred.** Phase 1 was scoped to rings (crit) and
@@ -125,16 +127,30 @@
 - Floating damage / gold popups and a tap ripple — purely cosmetic; a candidate
   for the Phase 4b visual pass.
 - Offline summary could show a per-stage "furthest stage reached" line.
-- Bag sorting / bulk sell — would need an engine action first; out of scope.
+- Bulk sell — would need a new engine action first; out of scope. (Bag *ordering* already ships:
+  the bag lists items strongest-first by the engine power metric.)
 - Number abbreviation (1.2K / 3.4M) for very large gold values — the renderer
   currently prints full integers so tests stay exact.
 - **2026-09-27 Option A gold retune (drops stay primary; milestones now fire).** Supersedes the
   economy numbers in the entry above: `upgradeCostBase` 10→**3**, `upgradeCostGrowth` 6→**1.25**,
   `upgradeStatMultiplier` 1.05→**1.01** (`goldGrowth` stays 1.0). Flat income and the every-kill
-  weapon replacement (`gearGrowth 1.283` >> the per-level step) still bound gold, but item
-  `upgradeLevel` now peaks at 8–12, so the every-3-levels milestone fires **17–23 times/run**
-  (was 0–2). `npm run sim` PACING OK: canonical soft 6.21 / hard 50.25; all-seed hard 45.01–46.80;
-  drops-primary net 97.4–98.6 % (down from 98.3–99.6 %, still the large majority). The weapon still
-  absorbs most upgrades because it is the only unbounded lever; rings/necklaces saturate their caps
-  early (crit mult by item level ~4), so gold there is frequently zero-gain. Sim now prints per-slot
-  milestone counts and peak levels. Schema stays v4. See `decisions.md` (2026-09-27 Option A entry).
+  weapon replacement (`gearGrowth 1.2832` >> the per-level step) still bound gold, but item
+  `upgradeLevel` peaks at 8–10 per item, so the every-3-levels milestone fires **21–27 times/run**
+  (was 0–2). Current `npm run sim` is PACING OK: canonical soft 6.22 / hard 55.52; all-seed hard
+  50.60–55.52; drops-primary net 97.3–98.6 % (down from 98.3–99.6 %, still the large majority). The
+  weapon still absorbs most upgrades because it is the only unbounded lever; rings/necklaces saturate
+  their caps early (crit mult by item level ~4), so gold there is frequently zero-gain. Sim now prints
+  per-slot milestone counts and peak levels. Schema stays v4. See `decisions.md` (2026-09-27 Option A
+  entry).
+- **Per-enemy HP/gold curves are now the source of truth (supersedes the factor approach).** The 12
+  enemies in `engine-core/src/content.ts` `ENEMY_ROSTER` each carry their OWN live
+  `baseHp`/`hpGrowth`/`baseGold`/`goldGrowth` and `bossHpMultiplier`/`bossGoldMultiplier`;
+  `enemyMaxHp(stage)`/`goldReward(stage)` compute directly from them (the enemy is a pure
+  round-robin of `stage`, `enemyForStage`). The old `hpFactor`/`goldFactor` scheme and any global
+  canonical curve are **gone** — the earlier "the new factors were placeholders" wording in the
+  Phase-1 note above is historical. `BALANCE.baseHp`/`hpGrowth`/`baseGold`/`goldGrowth` survive only
+  as documentation anchors the live curve does not read; `BALANCE.bossHpMultiplier`/
+  `bossGoldMultiplier` were deleted. Every roster `hpGrowth` sits in a deliberately tight
+  1.4273–1.4336 band so the round-robin stage curve keeps the pacing proof inside its window (the set
+  came from a ~4,415-candidate measured search). Boss cadence is still global (`isBoss`, every 10th
+  stage); boss size is per-enemy.

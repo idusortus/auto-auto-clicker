@@ -43,7 +43,8 @@ npm run typecheck    # typecheck all three workspaces (engine-core + web + sim)
   with the observed maximum per group, plus `N/N files present at the exact size`. It exits
   non-zero with an actionable list if a theme is missing a slot, has an over-long string,
   template return value, or colour, references an unknown achievement id, tries to rename
-  an identity key, has a malformed asset section, or points at a missing or mis-sized PNG
+  an identity key, has an enemy-roster gap (missing/extra enemy id, or fewer than four non-empty
+  phrases for a taunt kind), has a malformed asset section, or points at a missing or mis-sized PNG
   (e.g. `player-idle.png is 48x48, expected 64x64`). It runs in CI too, via the engine unit
   suite.
 
@@ -63,7 +64,7 @@ An upgrade is still only a small multiplicative smoothing bonus — but every **
 in one item crosses a **milestone**, a visible step that grants a small extra boost to that slot's
 capped stat (crit for rings, gold for the necklace, overall power for the weapon). A milestone also
 announces itself with a brief, non-blocking **flourish** and a `★ ×N` badge on the item's card; the
-bonus is *derived* from the upgrade level (nothing new is saved). Progress unlocks ~2 dozen snarky
+bonus is *derived* from the upgrade level (nothing new is saved). Progress unlocks 30 snarky
 **achievements** (persisted by id), each
 with a brief over-the-top **splash** (non-blocking — it never pauses the simulation; tap to
 dismiss early) and an **achievements shelf** that shows only your **unlocked** entries by default
@@ -74,12 +75,15 @@ slot sitting in your bag, the game **tells you** — a quiet `↑ Better … in 
 equipped card (plus a `↑ Better` tag on the item itself) appears whenever one exists, and if you make
 **no stage progress for a while** it escalates to a prominent **Bag check** callout that states the
 facts (the stage, how long you've been stuck, the item's level, and roughly how much stronger it is).
-It **never equips anything for you**: you tap the callout's **Equip** button to decide. Occasionally a
+It **never equips anything for you**: you tap the callout's **Equip** button — or tap the flagged row itself — to decide (only strictly-better rows are row-tappable; the `equip-btn` stays the keyboard control and one tap is exactly one dispatch). Occasionally a
 **Stray Goblin** (a "Golden Event") wanders across the arena carrying something shiny — tap it
 within its short window for one of **three** bonus rewards: a short/rare **FRENZY** damage
 multiplier (a visibly faster burst), a guaranteed **ring drop** at your current stage into your
 weaker ring slot, or a lump of **gold**. Missing it costs *nothing* — it simply leaves with a
-snarky toast. Every 10th stage
+snarky toast. Stages cycle through a **roster of 12 enemies** (grunt, goblin, wolf, bat, slime,
+bandit, spider, wraith, ogre, harpy, golem, dragonling, repeating), each with its own HP/gold curve,
+and enemies throw out a **theme catchphrase** (a taunt) at spawn, a normal death, a boss death, a
+wall, a Shiny, or on a long idle stretch. Every 10th stage
 is a boss; if the projected time-to-kill is too slow, or if a stage becomes a progression wall, a
 choice appears. The free `wait` path always works (it grants gold equal to a fixed number of
 upgrade levels); the "watch ad" and "buy" options are visible but disabled placeholders in
@@ -103,13 +107,13 @@ auto-auto-clicker/
 │   ├── src/
 │   │   ├── index.ts             # public API surface (the only entry hosts should import)
 │   │   ├── types.ts             # GameState, Action, GameEvent, SaveGame, content definitions
-│   │   ├── balance.ts           # every gameplay number + economy formula (the one tuner file)
-│   │   ├── content.ts           # GearDefinition / EnemyDefinition catalog (never persisted)
+│   │   ├── balance.ts           # shared gameplay numbers + economy formulas (per-enemy HP/gold curves live in content.ts)
+│   │   ├── content.ts           # gear + 12-enemy roster catalog; per-enemy HP/gold curves (never persisted)
 │   │   ├── achievements.ts      # static achievement catalog + pure evaluator (ids/predicates; copy from theme)
 │   │   ├── theme/                # ALL user-facing TEXT + COLOURS (display) — see Theming
 │   │   │   ├── types.ts          # `Theme` contract incl. `palette` (leaf: imports nothing)
-│   │   │   ├── fantasy.ts        # default "Standard Fantasy RPG" theme (wording + dark ember palette)
-│   │   │   ├── lucky.ts          # second theme: Lucky the dog (light sunlit palette, dog copy)
+│   │   │   ├── fantasy.ts        # "Standard Fantasy RPG" theme (wording + dark ember palette)
+│   │   │   ├── lucky.ts          # Lucky the dog — the COMMITTED DEFAULT (light sunlit palette, dog copy)
 │   │   │   ├── contract.ts       # limits/slots + `validateTheme` + pure `validateAssetMeasurements`
 │   │   │   └── index.ts          # `ACTIVE_THEME` + `THEMES` — the ONE-LINE theme switch
 │   │   ├── gear-stats.ts        # leaf: derived gear reads + the shared powerScore metric
@@ -119,6 +123,7 @@ auto-auto-clicker/
 │   │   ├── actions.ts           # applyAction(state, action) — explicit player commands
 │   │   ├── combat.ts            # damage, kills, stage entry, boss/wall pacing checks
 │   │   ├── loot.ts              # frequent gear drops; item level tracks the killed stage
+│   │   ├── taunts.ts            # deterministic enemy catchphrases on a SEPARATE RNG channel
 │   │   └── rng.ts               # seeded mulberry32 (state lives in GameState.meta.rngState)
 │   ├── scripts/
 │   │   ├── check-theme.ts        # `npm run theme:check` — validate the active theme + its on-disk art
@@ -137,7 +142,7 @@ auto-auto-clicker/
 │   │   └── themes/{fantasy,lucky}/ # 32 placeholder PNGs each + README (swap for real art)
 │   ├── src/
 │   │   ├── main.ts              # owns the clock, fixed 100 ms loop, autosave, action dispatch
-│   │   ├── renderer.ts          # pure state → DOM projection; loads theme sprites; GameEvent[] seam
+│   │   ├── renderer.ts          # pure state → DOM projection; theme sprites + event-driven animation; GameEvent[] seam
 │   │   ├── palette.ts           # applies `theme.palette` as CSS custom properties
 │   │   └── storage.ts           # the only module touching SaveRepository / the save clock
 │   ├── tests/smoke.spec.ts      # Playwright mobile smoke test
@@ -202,7 +207,7 @@ the renderer nor the achievement catalog holds display copy any more. Swapping t
 
 ```ts
 // engine-core/src/theme/index.ts
-export const ACTIVE_THEME: Theme = fantasy;
+export const ACTIVE_THEME: Theme = lucky;
 ```
 
 - **Identity stays in code; display moves to the theme.** Achievement `id`s, gear
@@ -220,7 +225,9 @@ export const ACTIVE_THEME: Theme = fantasy;
   contract; `index.ts` selects the active theme. `engine-core/src` stays acyclic.
 - **A theme must match a declared contract, and the contract is enforced.**
   `engine-core/src/theme/contract.ts` is the *template* every theme must satisfy. It
-  declares per-group character limits, the required achievement catalog id set, the
+  declares per-group character limits (label 48, chrome 120, achievement-title 64,
+  achievement-description 200, prose 240, color 64, and **catchphrase 140**), the required
+  achievement catalog id set, the required **enemy roster** id set, the
   forbidden identity keys, and the required asset slots — and `validateTheme(theme)`
   re-checks all of it **at runtime**, reporting *every* problem at once (each with a
   path, a kind — `missing` / `wrong-type` / `too-long` / `bad-key` / `identity-key` /
@@ -240,7 +247,7 @@ export const ACTIVE_THEME: Theme = fantasy;
   block in `style.css` is kept only as a **documented fallback** (identical to `fantasy`)
   for before-boot / no-JS; the injected theme rule is written as a `<style>` element so
   the `prefers-contrast: more` override (`:root:root`) still wins for high-contrast users.
-  The default theme's palette values are the original colour values (T4 proved the
+  The `fantasy` theme's palette values are the original colour values (T4 proved the
   application byte-identically); T5 then moved a few previously hard-coded surfaces onto
   tokens so a *light* palette also works — see the surface-coverage note below.
 - **Assets are a declared contract, loaded and checked.** The theme's `assets` section maps
@@ -258,21 +265,48 @@ export const ACTIVE_THEME: Theme = fantasy;
   exposed a handful of stylesheet colours that had been hard-coded rather than derived from
   a token (the arena vignette, the boss arena tint, the escape-toast plate, the frenzy pill,
   and the small accent badges). Those now derive from the theme tokens (`color-mix` for the
-  alpha tints), so a light theme renders legibly and the default theme keeps its own values.
+  alpha tints), so a light theme renders legibly and `fantasy` keeps its own values.
   Residual limitation (see `decisions.md`): `color-scheme` is still a fixed `dark` in the
   stylesheet, so a light theme leaves the UA scrollbar/form chrome dark.
-- **Animation is a later phase.** Sprites are **static**; the per-frame `GameEvent[]` seam
-  (`handleEvents`) is plumbed and documented but deliberately a no-op. Only the existing CSS
-  motion runs, and `prefers-reduced-motion` still neutralises it.
-- **Two themes ship, and the second one proves the seam.** `fantasy` (default) and `lucky`
-  (a golden retriever × husky: `Lucky` is the player, gear slots become the Jaw / two dog
-  tags / a bandana, the enemy is the mail carrier, and the Golden Event is a squirrel). The
+- **Animation is themeable and shipped (T6).** `Theme.animation` declares **8 semantic cue keys**
+  (`playerAttack`, `enemyHit`, `enemyDeath`, `bossHit`, `bossDeath`, `stageEntered`, `shinySpawn`,
+  `shinyClaim`), each mapping to one declared asset slot plus a **display-only** duration (0 disables
+  the cue). The renderer's `handleEvents` turns one frame's ordered `GameEvent[]` into bounded
+  transient sprite frames: at most one frame per actor target (same-target cues replace each other),
+  a `MAX_ACTIVE_EFFECTS = 8` cap, per-actor **cue priority** (deaths outrank a spawn popup), and one
+  re-armed drain timer. Durations never reach the engine or the sim. Under `prefers-reduced-motion` a
+  sprite's `src` never changes to an animation frame — but enemy **taunt text** still shows, because a
+  line of text is information, not motion. Honest caveat: the cue keys are *registered* in
+  `theme/contract.ts` but only a four-line allow-list registration exists, so `npm run theme:check`
+  does **not** validate animation cues — the unit suite does. (`theme:check` *does* validate the enemy
+  roster's **shape** — every id present, ≥4 non-empty phrases per taunt kind — via `validateTheme`.)
+- **Two themes ship, and the second one proves the seam.** `lucky` (the committed default — a
+  golden retriever × husky: `Lucky` is the player, gear slots become the Jaw / two dog
+  tags / a bandana, the enemy is the mail carrier, and the Golden Event is a squirrel) and
+  `fantasy` (the "Standard Fantasy RPG" original). The
   test suite validates **every** entry in `THEMES` (not just the active one), asserts both
   themes carry the **same** achievement-id and asset-slot sets, and asserts they genuinely
   differ — so a newly added theme is self-checking in CI and the second theme can never
   silently rot into a copy of the first. The browser smoke suite is **theme-agnostic**: it
   derives every expected display string and sprite URL from the active theme, so a theme
   swap needs no test edit.
+- **Enemy identity is content; enemy display copy is the theme's.** `ENEMY_ROSTER` ships **12
+  enemies** with stable ids (`grunt, goblin, wolf, bat, slime, bandit, spider, wraith, ogre, harpy,
+  golem, dragonling`); `enemyForStage(stage) = roster[(stage − 1) % 12]` is a pure round-robin with
+  **zero RNG and zero persisted state**, so the save schema stays **v4**. Each enemy owns its **own
+  live HP/gold curve** (`baseHp`/`hpGrowth`/`baseGold`/`goldGrowth`) and its own boss multipliers;
+  `enemyMaxHp(stage)`/`goldReward(stage)` compute directly from them — there are no
+  `hpFactor`/`goldFactor` factors and no global canonical curve. Boss **cadence** stays global
+  (`isBoss`, every 10th stage); boss **size** is per-enemy. `archetype` is an inert descriptive
+  label (no live path reads it). The theme supplies each enemy's arena **name** and **catchphrases**
+  keyed by the six taunt kinds (`spawn`, `defeat`, `bossDefeat`, `wall`, `shiny`, `ambient`):
+  12 enemies × 6 kinds × 4 phrases = **288 lines per theme**. The engine emits only
+  `{type:'enemyTaunt', enemyId, kind, phraseIndex}`; the renderer resolves the wording (reducing the
+  bounded index modulo the theme's array length).
+- **Taunts cannot perturb the loot stream.** They ride a **separate derived RNG channel**
+  (`seed ^ totalPlayedMs ^ discriminator`, see `engine-core/src/taunts.ts`) that never reads or writes
+  `meta.rngState`, so adding or tuning them cannot move the pacing proof. A taunt does **not** fire
+  for a boot/offline kill — offline events are deliberately dropped.
 
 ### Adding a theme
 
@@ -298,7 +332,7 @@ A theme is one `Theme` object plus one folder of art. The whole recipe:
    (the folder `README.md` says how).
 4. **Flip the one line** in `engine-core/src/theme/index.ts`:
    ```ts
-   export const ACTIVE_THEME: Theme = <name>;   // default is: fantasy
+   export const ACTIVE_THEME: Theme = <name>;   // currently: lucky
    ```
 5. **Validate it** from the repo root:
    ```sh
@@ -335,9 +369,9 @@ applyAction(state: GameState, action: Action): { state: GameState; events: GameE
   harness drives the identical 100 ms step so its pacing matches live play.
 - **Events are plumbed to the renderer as one ordered batch per frame.** `web/src/main.ts`
   coalesces every fixed step of a frame into a single `GameEvent[]` and passes it to
-  `renderer.render(state, context?, events?)`; the renderer's private `handleEvents(events)` is the
-  documented seam a future theme's animation code consumes (a deliberate no-op today, so the
-  projection stays byte-identical; events are discarded after the call, so no history accumulates).
+  `renderer.render(state, context?, events?)`; the renderer's private `handleEvents(events)` consumes
+  the batch into transient, theme-declared animation frames (see [Theming](#theming)) and **discards
+  it after the call**, so no history accumulates and memory stays bounded by one frame.
   Offline replay and the boot render deliberately drop their events — a multi-hour replay must not
   fire a storm of animations for history the player never watched — so only the resulting state is
   delivered and the existing state-diff cues still cover those cases.
@@ -375,7 +409,9 @@ interface SaveRepository {
 - **Content definitions (`GearDefinition`, `EnemyDefinition`) are kept separate from
   per-player save state.** They describe the game catalog and are never persisted — only
   `GameState` is saved. (`GameState.meta.seed` and `meta.rngState` are persisted so a
-  reload continues the exact deterministic stream.)
+  reload continues the exact deterministic stream.) The standing enemy is a **pure function of
+  `combat.stage`** (`enemyForStage`, a 12-enemy round-robin), so a save reconstructs it with no new
+  field — the schema stays v4.
 - **Version 4 persists source fields only; every derived value is computed on read.**
   `GameState` stores `player.gold`, `combat.{stage,enemyHp,damageCarry}`, each gear instance as
   `{id, definitionId, itemLevel, upgradeLevel}` under a four-slot `equipped` map
@@ -451,35 +487,35 @@ Current observed result (5 sweep seeds, `npm run sim` → exit 0). Every seed is
 window and the canonical seed is inside its stricter comfortable range:
 
 ```
-seed     12345: soft 6.21 min st30  hard 50.25 min st50  dNet 97.4%  dGross 91.3%  [DROPS-PRIMARY]
-seed         1: soft 6.21 min st30  hard 45.27 min st50  dNet 98.6%  dGross 91.2%  [DROPS-PRIMARY]
-seed       999: soft 6.18 min st30  hard 46.80 min st50  dNet 98.6%  dGross 91.2%  [DROPS-PRIMARY]
-seed    424242: soft 6.02 min st30  hard 45.01 min st50  dNet 98.3%  dGross 91.4%  [DROPS-PRIMARY]
-seed  20250925: soft 5.76 min st30  hard 45.81 min st50  dNet 97.5%  dGross 91.0%  [DROPS-PRIMARY]
-soft 6.00 min target ±20% → actual 6.21 min (delta +3.5%)  [PASS]
-hard 54.00 min target ±20% → actual 50.25 min (delta -6.9%)  [PASS]
+seed     12345: soft 6.22 min st30  hard 55.52 min st50  dNet 97.3%  dGross 90.4%  [DROPS-PRIMARY]
+seed         1: soft 6.22 min st30  hard 51.97 min st50  dNet 98.6%  dGross 90.5%  [DROPS-PRIMARY]
+seed       999: soft 5.79 min st30  hard 50.60 min st50  dNet 97.7%  dGross 90.5%  [DROPS-PRIMARY]
+seed    424242: soft 6.05 min st30  hard 51.17 min st50  dNet 97.9%  dGross 90.4%  [DROPS-PRIMARY]
+seed  20250925: soft 5.63 min st30  hard 53.76 min st50  dNet 97.7%  dGross 90.9%  [DROPS-PRIMARY]
+soft 6.00 min target ±20% → actual 6.22 min (delta +3.8%)  [PASS]
+hard 54.00 min target ±20% → actual 55.52 min (delta +2.8%)  [PASS]
 PACING OK
 ```
 
 Raw milestone snapshot (canonical seed):
 
 ```
-soft check   t=6.21min  stage=30  autoDps=1709    clickDamage=6834
-hard wall    t=50.25min stage=50  autoDps=291265  clickDamage=1165054
+soft check   t=6.22min  stage=30  autoDps=1716.62   clickDamage=6862.40
+hard wall    t=55.52min stage=50  autoDps=233225.61 clickDamage=932896.66
 ```
 
 Upgrade milestones now genuinely fire (5 sweep seeds, after the Option A retune):
 
 ```
-seed     12345: upgrades 95 (w86/r9/n0)   milestones 21 (w18/r3/n0)   max item level (w8/r9/n0)
-seed         1: upgrades 114 (w101/r6/n7) milestones 23 (w19/r2/n2)   max item level (w9/r6/n7)
-seed       999: upgrades 96 (w96/r0/n0)   milestones 17 (w17/r0/n0)   max item level (w9/r0/n0)
-seed    424242: upgrades 94 (w94/r0/n0)   milestones 19 (w19/r0/n0)   max item level (w9/r0/n0)
-seed  20250925: upgrades 100 (w87/r13/n0) milestones 20 (w16/r4/n0)   max item level (w8/r12/n0)
+seed     12345: upgrades 105 (w96/r9/n0)   milestones 22 (w19/r3/n0)   max item level (w9/r9/n0)
+seed         1: upgrades 125 (w112/r6/n7)  milestones 27 (w23/r2/n2)   max item level (w9/r6/n7)
+seed       999: upgrades 106 (w97/r9/n0)   milestones 21 (w18/r3/n0)   max item level (w8/r9/n0)
+seed    424242: upgrades 106 (w106/r0/n0)  milestones 23 (w23/r0/n0)   max item level (w10/r0/n0)
+seed  20250925: upgrades 100 (w91/r9/n0)   milestones 21 (w18/r3/n0)   max item level (w8/r9/n0)
 ```
 
 **Drops are the primary power lever.** Gear stats are **exponential in item level**
-(`floor(factor * gearGrowth^(itemLevel - 1))`, `gearGrowth = 1.283`), and `dropChance` is
+(`floor(factor * gearGrowth^(itemLevel - 1))`, `gearGrowth = 1.2832`), and `dropChance` is
 0.95 with `DROP_LEVEL_OFFSET = 0`, so a killed stage reliably yields a piece of gear whose
 item level tracks that stage (`itemLevel = max(1, stage)`). The slot is then drawn from
 `SLOT_DROP_WEIGHTS` (weapon 1.0, each ring 0.04, necklace 0.02), and a **weapon is guaranteed
@@ -489,13 +525,17 @@ thins the weapon stream (the equipped weapon lags the stage and the soft check d
 Rings/necklaces are **bounded** secondary levers: their crit/power totals are clamped
 (`CRIT_CHANCE_CAP`, `CRIT_MULTIPLIER_CAP`, `POWER_MULTIPLIER_CAP`, `GOLD_MULTIPLIER_CAP`) in the
 state getters, so an exponential item remains an exponential *item* without letting the
-multiplicative bonus explode. Equipping each new drop is the power jump. Enemy HP grows faster
-(`hpGrowth = 1.42` vs player power ≈1.28×/stage)
+multiplicative bonus explode. Equipping each new drop is the power jump. Each enemy's own HP curve grows faster
+than player power (the roster's `hpGrowth` values sit in a deliberately tight **1.4273–1.4336**
+band, vs player power ≈1.28×/stage)
 before the bounded crit/necklace multipliers, so the fall-behind — and therefore the walls — is
-designed in. Gold is a **minor smoothing lever** on a **flat, legible curve**:
+designed in. The band is narrow on purpose: with per-enemy curves the aggregate stage curve is the
+round-robin product of the 12 enemies' growth rates, so wider divergence makes the stage sequence
+zig-zag and drifts the pacing proof outside its window. These 12 curves came from a
+~4,415-candidate measured search. Gold is a **minor smoothing lever** on a **flat, legible curve**:
 `upgradeCostBase = 3`, `upgradeCostGrowth = 1.25` (so a run affords a steady stream of levels instead
 of two unaffordable ones), and `upgradeStatMultiplier = 1.01` — a ~1% nudge per level that stays far
-below the ×1.283 item-level drop, so a newer drop still beats any affordable upgrade stack and the
+below the ×1.2832 item-level drop, so a newer drop still beats any affordable upgrade stack and the
 weapon keeps tracking the stage. `goldGrowth = 1.0` stays flat; equipping a new drop resets
 `upgradeLevel` to 0. Free-path choices grant a fixed number of upgrade levels rather than
 stage-scaled gold. **Upgrade milestones** add a visible step every `UPGRADE_MILESTONE_INTERVAL`
@@ -503,7 +543,7 @@ stage-scaled gold. **Upgrade milestones** add a visible step every `UPGRADE_MILE
 rings → crit, necklace → gold). They are **derived from `upgradeLevel` on read** — no new save
 field, so the schema stays at version 4 — and they feed the *same* clamped aggregations as ordinary
 gear, so they can never exceed a cap. The flat curve is what makes the every-3-levels step
-reachable: measured per-item peaks are now **8–12** levels (was 2–7), so ~17–23 milestone events
+reachable: measured per-item peaks are now **8–10** levels (was 2–7), so **21–27** milestone events
 fire per run across the sweep seeds. See `engine-core/src/balance.ts`.
 
 The **power-attribution ledger** in `sim/src/sim.ts` proves the split exactly. The equipped
@@ -518,10 +558,10 @@ equip resets the gold-funded `upgradeLevel` to 0, so the upgrade power bought wi
 destroyed by the swap. Charging that reset loss to the lever it came from
 (`goldNet = goldGross − resetLoss`) keeps gold's **net** contribution small while drops carry
 **≈97–99% of net log-power growth**. The ledger reports both conventions unambiguously: **drops
-97.4–98.6% of NET** log-power growth and **≈91.0–91.4% of GROSS** (drops against raw gold purchased).
-On the sweep seeds `goldNet` is a small positive `+0.169…+0.318` (a steady stream of cheap,
+97.3–98.6% of NET** log-power growth and **≈90.4–90.9% of GROSS** (drops against raw gold purchased).
+On the sweep seeds `goldNet` is a small positive `+0.163…+0.328` (a steady stream of cheap,
 mostly-reset upgrades plus a few persistent ring/necklace levels), and the free `wait` grant is
-≈0.4% — a transient smoothing contribution, not a net power source (the grant is denominated in
+≈0.3–0.5% — a transient smoothing contribution, not a net power source (the grant is denominated in
 upgrade *levels*, so a flatter curve makes the same two free levels worth less gold, not less power).
 
 ### Policy sensitivity (diagnostic)
@@ -534,10 +574,10 @@ at different stages and times, so `npm run sim` prints an explicitly **informati
 
 | policy | soft (stage) | hard (stage) |
 | --- | --- | --- |
-| greedy (canonical) | 5.76–6.21 min (30) | 45.01–50.25 min (50) |
-| equip-only (equips, never upgrades) | 5.79–6.27 min (30) | 45.46–51.98 min (50) |
-| upgrade-lazy (equips first, upgrades last) | 5.67–6.13 min (30) | 44.28–49.47 min (50) |
-| passive (click only, never equips/upgrades) | 4.07–4.45 min (10) | 28.18–28.94 min (15) |
+| greedy (canonical) | 5.63–6.22 min (30) | 50.60–55.52 min (50) |
+| equip-only (equips, never upgrades) | 5.66–6.28 min (30) | 40.05–56.54 min (47–50) |
+| upgrade-lazy (equips first, upgrades last) | 5.53–6.13 min (30) | 50.48–55.53 min (50) |
+| passive (click only, never equips/upgrades) | 3.73–4.11 min (10) | 26.07–26.83 min (15) |
 
 The passive row is the **degenerate** case: with no weapon equipped (the only item-level power
 lever) sustained DPS never grows, so `getProjectedKillMs` collapses to a **pure function of the
@@ -565,18 +605,23 @@ This is a prototype, and the honest edges matter:
   toggle (`achievements-toggle`, `aria-expanded`, `aria-controls`), which flips renderer-local
   presentation state only — never an engine action, never persisted. The count keeps its
   `achievements-count` number and adds `N of TOTAL unlocked`; an empty shelf shows an empty-state
-  hint, and the toggle meets the ≥44px touch target.
-  **Gates: `typecheck` 0, `test` 141/141, `sim` PACING OK (exit 0), `build` 0, `smoke` 17/17.**
+  hint, and the toggle meets the ≥44px touch target. Additionally, a **flagged** (strictly-better)
+  bag row is itself a tap target: tapping it dispatches the existing `equip` action, while the
+  `equip-btn` stays the keyboard control. One tap is exactly one dispatch — the button branch in the
+  delegated click handler returns before the row branch, so a button tap can never also equip via
+  the row.
+  **Gates: `typecheck` 0, `test` 236/236, `sim` PACING OK (exit 0), `build` 0, `smoke` 28/28.**
 
 - **Drops-primary means drop RNG affects pacing.** Because gear drops (not a deterministic
   gold curve) carry the power, a lucky or unlucky drop stream moves the soft/hard timings.
-  `dropChance = 0.95` keeps the 5-seed spread tight (soft 5.7–6.2 min, hard 43.9–49.5
+  `dropChance = 0.95` keeps the 5-seed spread tight (soft 5.63–6.22 min, hard 50.60–55.52
   min), but sampling variance is real: lowering `dropChance` toward 0.8 blows the soft range
   out (observed 2.33–8.75 min). To reduce variance, raise `dropChance` toward 1.0 — never
   widen the ±20% tolerance or re-neuter drops.
 - **Gold is deliberately a small lever.** `goldGrowth = 1.0` makes late-game gold rewards
-  flat, and steep upgrade costs mean only a few upgrade levels are ever affordable. Upgrades
-  smooth rough edges; they are not a second power curve.
+  flat, and each level is only a ~1% nudge; a run buys a steady stream of them (100–125 levels per
+  sweep run), but every equip resets the level, so churned gold power never compounds into a second
+  curve.
 - **Gold is now an *allocation* decision, not a single button.** The Equipped panel renders one
   upgrade control per slot (`upgrade-btn` for the weapon — kept for the smoke test — plus
   `upgrade-btn-ring1`/`ring2`/`necklace`) with a per-slot `upgrade-cost`/`upgrade-level` readout
@@ -592,7 +637,7 @@ This is a prototype, and the honest edges matter:
   **gold only** (no dead power term). A non-weapon upgrade that cannot raise power (e.g. a ring at
   the crit cap) still costs gold — the UI lets the player make that mistake; the sim's policy does
   not (it scores every slot by its real power gain and skips zero-gain upgrades).
-  **Gates: `typecheck` 0, `test` 126/126, `sim` PACING OK (exit 0), `build` 0, `smoke` 13/13.**
+  **Gates: `typecheck` 0, `test` 236/236, `sim` PACING OK (exit 0), `build` 0, `smoke` 28/28.**
 - **A soft-lock is surfaced, never auto-fixed.** If you equip a weak item while a strictly better one
   sits in your bag, the projection can stay finite-but-slow and no wall fires — so the engine reports
   the opportunity instead of acting on it. `getSlotUpgradeAdvisory(state, slot)` compares a slot
@@ -617,13 +662,13 @@ This is a prototype, and the honest edges matter:
   render disabled ("coming soon") so the free `wait` path is always the working one. The
   engine actions exist; only the host integration is missing.
 - **Late-game numerals are large and not abbreviated.** At the hard wall auto-DPS is
-  ≈**3.1e5** (and click damage ≈1.2e6). The HUD prints full integers, so the readout wraps
+  ≈**2.3e5** (and click damage ≈**9.3e5**). The HUD prints full integers, so the readout wraps
   at the widest end of the game. Compact notation (1.2K / 3.4M) is not implemented.
 - **Offline progress is capped and auto-DPS only.** The web host replays at most 8 h of
   away time in 1000 ms steps with no clicks, and backgrounded-tab time beyond the host's
   10-step catch-up clamp is dropped until the next boot. Both are deliberate host
   policies chosen to avoid catch-up spirals and offline windfalls.
-- **Three save schema versions, one migration path.** `loadGame` accepts versions 1, 2, 3, and 4
+- **Four save schema versions, one migration path.** `loadGame` accepts versions 1, 2, 3, and 4
   (all older ones migrated to version 4 through the same source-field parser). Older saves
   gain a four-slot `equipped` map with `ring1`/`ring2`/`necklace` set to `null`,
   `meta.achievements` set to `[]`, and a fresh `event`/`boost` block. There is still no
@@ -636,27 +681,38 @@ This is a prototype, and the honest edges matter:
   wall-clock time to reach the wall. It is bounded by construction — a burst that runs for `D` ms
   at multiplier `M` saves exactly `D × (M − 1)` ms, independent of stage and DPS — so the final
   knobs pin the per-claim wall budget at **6 s × 3 → 12 s** (`shiny.test.ts` asserts the ceiling).
-  The three rewards: a rare **FRENZY** (×3 for 6 s, ~30 % of spawns, measured uptime **0.9–2.2 %**
+  The three rewards: a rare **FRENZY** (×3 for 6 s, ~30 % of spawns, measured uptime **1.4–1.9 %**
   per run — a real, visible burst, not the old 0.1 % blip); a guaranteed **ring drop** at the
   current stage into the weaker ring slot (`drop`, ~30 %), which is a drop on the *designed bounded*
   secondary lever and draws no RNG; and a **gold cache** (~40 %). A same-stage **weapon** drop was
   measured to leapfrog the equipped weapon and push the wall from stage 50 to 59, so the drop kind
-  is ring-only on purpose. Cadence is **151 s** (which lifts the canonical hard baseline to
-  ~51.9 min, leaving the ~2.4–3.9 min of slack the feature consumes). Final sim: **PACING OK** —
-  canonical soft **6.21** / hard **50.25** min (both inside the comfortable ranges), all-seed hard
-  **45.01–46.80**, uptime 0.6–2.0 %, drops-primary net **97.4–98.6 %**, eq/stage 0.80–0.96. No
+  is ring-only on purpose. Cadence is **151 s** (lengthened so the bounded rewards stay inside the
+  canonical hard window's slack rather than eating into it). Final sim: **PACING OK** —
+  canonical soft **6.22** / hard **55.52** min (both inside the comfortable ranges), all-seed hard
+  **50.60–55.52**, uptime 1.4–1.9 %, drops-primary net **97.3–98.6 %**, eq/stage 0.88–0.98. No
   threshold, tolerance, canonical range, or assertion was changed or weakened. (The 2026-09-27
   Option A gold retune later shifted the economy slightly; the Shiny knobs themselves are
   unchanged.)
-  **Gates: `typecheck` 0, `test` 126/126, `sim` PACING OK (exit 0), `build` 0, `smoke` 13/13.**
+  **Gates: `typecheck` 0, `test` 236/236, `sim` PACING OK (exit 0), `build` 0, `smoke` 28/28.**
 - **Rings/necklaces are real but bounded, secondary levers.** The sim now equips them (its
   policy ranks every slot by the engine's own effective stats / global bonuses), the pacing
   proof exercises them, and their crit/power totals are clamped so the multiplicative bonus
   cannot explode late. In the UI a per-item value is labelled **(raw)** — the item's own
   contribution before the engine clamps the aggregate — and an equipped card also shows the
   current **capped** totals (`getCritStats`/`getGlobalBonuses`), so a mid-game ring no longer
-  reads as an impossible `crit 211%`. There is still a single enemy definition and no player
-  HP / armor / dodge.
+  reads as an impossible `crit 211%`. There are now **12 enemies** (a pure stage-driven round-robin,
+  each with its own live HP/gold curve and boss multipliers — see [Theming](#theming)) and still no
+  player HP / armor / dodge.
+- **Enemy identity is stage-derived; enemy copy is theme-owned; taunts are off the loot RNG.** The
+  standing enemy is `enemyForStage(combat.stage)`, a pure 12-enemy round-robin with **zero RNG and
+  zero persisted state** (schema stays **v4**), so a reload reconstructs exactly the same enemy. Each
+  enemy's `baseHp`/`hpGrowth`/`baseGold`/`goldGrowth` and `bossHpMultiplier`/`bossGoldMultiplier` are
+  the **live** values; `BALANCE.baseHp`/`hpGrowth`/`baseGold`/`goldGrowth` are documentation anchors
+  the live curve does **not** read (and `BALANCE.bossHpMultiplier`/`bossGoldMultiplier` no longer
+  exist). `archetype` is inert. Enemy **names** and **catchphrases** come from the theme's
+  `enemy.roster` (288 lines per theme); the engine emits only the semantic taunt cue. Taunts ride a
+  separate derived RNG channel and never touch `meta.rngState`, so they cannot move the pacing proof;
+  a boot/offline kill emits no taunt (offline events are dropped).
 
 ---
 
@@ -731,5 +787,6 @@ unchanged.
 - **Local-only persistence** behind an async `SaveRepository`, shaped for a future
   Supabase adapter. No backend, no auth, no network calls in this phase.
 
-All balance numbers and pacing thresholds live in `engine-core/src/balance.ts` — the
-single file to touch when tuning.
+All shared balance numbers and pacing thresholds live in `engine-core/src/balance.ts`. The
+live per-enemy HP/gold curves are the exception — they live with the roster in
+`engine-core/src/content.ts` (`ENEMY_ROSTER`), since each enemy owns its own curve.

@@ -2,13 +2,14 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   advance,
   createGame,
+  enemyMaxHp,
   getEffectiveStats,
   getEnemyMaxHp,
   getGearStats,
   loadGame,
   saveGame,
 } from '../src/index';
-import { BALANCE, computeGearStats, CURRENT_SAVE_VERSION, enemyMaxHp, shinySpawnDelayMs } from '../src/balance';
+import { BALANCE, computeGearStats, CURRENT_SAVE_VERSION, shinySpawnDelayMs } from '../src/balance';
 import { WEAPON_DEFINITION } from '../src/content';
 import { LocalStorageSaveRepository } from '../save/index';
 import type { SaveGame } from '../src/types';
@@ -89,7 +90,8 @@ describe('save serialization', () => {
     });
 
     // Derived values are computed on read from the CURRENT formula, not the
-    // stale copies the v1 blob carried.
+    // stale copies the v1 blob carried. `enemyMaxHp` is the LIVE stage curve
+    // (the standing enemy's own curve), matching `getEnemyMaxHp`.
     expect(getEnemyMaxHp(loaded)).toBe(enemyMaxHp(5));
     const expectedWeapon = computeGearStats(WEAPON_DEFINITION, 30, 2);
     if (migratedWeapon) expect(getGearStats(migratedWeapon)).toEqual(expectedWeapon);

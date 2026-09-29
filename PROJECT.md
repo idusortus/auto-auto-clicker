@@ -33,6 +33,21 @@ npm run typecheck  # typecheck engine-core + web
 ## Hard Constraints
 None declared.
 
+## Current shape (2026-09-28)
+- **Themes:** two ship — `lucky` (golden retriever × husky, the committed default) and `fantasy`.
+  A theme owns DISPLAY only: copy, a 19-token palette, 32 declared art slots, animation cues, and
+  the enemy roster's names/catchphrases. Identity (achievement ids, gear/enemy ids, `GearSlot`s,
+  `ShinyKind`s, save schema) is NEVER theme-controlled.
+- **Enemy roster:** 12 enemies, selected deterministically from the stage
+  (`enemyForStage(stage) = roster[(stage-1) % 12]` — zero RNG, no persisted state, schema v4).
+  Each enemy owns a REAL HP/gold curve and its own boss multipliers; boss cadence is global
+  (every 10th stage).
+- **Catchphrases:** the engine emits deterministic `enemyTaunt` events on a separate derived RNG
+  channel that never touches `meta.rngState`; themes supply the wording.
+- **Animation:** the `GameEvent[]` seam drives a bounded, themeable transient-frame system with a
+  `prefers-reduced-motion` gate.
+
+
 ## Out of Scope
 _(populate as you discover things this project will NOT do)_
 
