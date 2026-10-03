@@ -1,0 +1,108 @@
+name: Build APK & Create Release
+
+# Tag-only trigger: only a `v*` tag push builds and publishes a release.
+# Branch/PR pushes do NOT trigger this workflow (see "Tag strategy" in README.md).
+on:
+  push:
+    tags:
+      - 'v*'
+
+# softprops/action-gh-release needs to create the Release and upload assets.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history so `git rev-list --count HEAD` is a stable, monotonic
+          # versionCode source (see "Sync app version with tag" below).
+          fetch-depth: 0
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Java 17 (Temurin) for the Gradle build. Exports JAVA_HOME for us; the
+      # build script honours it, so the workflow does not duplicate the export.
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      # Concrete Android SDK provisioning with NO secret. The maintained action
+      # handles the cmdline-tools bootstrap and license acceptance; the explicit
+      # `sdkmanager --install` pins the exact platform/build-tools we build with
+      # (the same set verified on the local user-space toolchain).
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: 13114758
+
+      - name: Install pinned Android SDK components
+        run: |
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+          sdkmanager --licenses <<< "y" || true
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+
+      # Version traceability (task 4.5).
+      #   expo.version       <- the pushed tag, minus its leading `v`
+      #                         (tag v0.5.0-preview -> "0.5.0-preview")
+      #   android.versionCode <- a monotonic integer from git commit count, NOT
+      #                         the semver tag (Android requires a strictly
+      #                         increasing integer; a semver string cannot supply it)
+      - name: Sync app version with tag
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ]; then
+            echo "ERROR: could not derive a version from GITHUB_REF_NAME='$GITHUB_REF_NAME'" >&2
+            exit 1
+          fi
+          VERSION_CODE="$(git rev-list --count HEAD)"
+          if [ -z "$VERSION_CODE" ]; then
+            echo "ERROR: 'git rev-list --count HEAD' returned empty (need fetch-depth: 0)" >&2
+            exit 1
+          fi
+          echo "Tag version:        $VERSION"
+          echo "Commit-count code:  $VERSION_CODE"
+          VERSION="$VERSION" VERSION_CODE="$VERSION_CODE" node -e '
+            const fs = require("fs");
+            const path = "mobile/app.json";
+            const cfg = JSON.parse(fs.readFileSync(path, "utf8"));
+            const versionCode = Number(process.env.VERSION_CODE);
+            if (!Number.isInteger(versionCode) || versionCode <= 0) {
+              throw new Error("invalid android.versionCode: " + process.env.VERSION_CODE);
+            }
+            cfg.expo.version = process.env.VERSION;
+            cfg.expo.android.versionCode = versionCode;
+            fs.writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
+          '
+
+      # Local Gradle path (design D1): expo prebuild + ./gradlew assembleRelease,
+      # signed with the debug keystore. No Expo account and no EXPO_TOKEN.
+      # The script reads JAVA_HOME (set by setup-java) and ANDROID_HOME
+      # (exported above); it writes mobile/dist/auto-auto-clicker.apk.
+      - name: Build APK
+        run: npm run mobile:apk
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: mobile/dist/auto-auto-clicker.apk
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, 'preview') || contains(github.ref_name, 'dev') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') }}

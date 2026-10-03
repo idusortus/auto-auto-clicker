@@ -4,12 +4,24 @@
     "slug": "auto-auto-clicker",
     "version": "0.0.0",
     "orientation": "portrait",
+    "icon": "./assets/icon.png",
     "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1f2a44"
+    },
     "ios": {
       "supportsTablet": true
     },
     "android": {
-      "edgeToEdgeEnabled": true
+      "package": "com.autoautoclicker.app",
+      "versionCode": 1,
+      "edgeToEdgeEnabled": true,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1f2a44"
+      }
     }
   }
 }

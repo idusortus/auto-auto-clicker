@@ -822,6 +822,107 @@ out of scope for this host.
 
 ---
 
+## Building an Android APK & releasing it
+
+The `mobile/` workspace builds an installable Android APK **locally** and can attach it to a
+GitHub Release from a tag push. Two paths exist; the **Gradle path is primary and needs no
+secret at all**.
+
+### Clone → build → tag → install (one place)
+
+```bash
+# 1. Clone and install (npm workspaces)
+git clone <repo-url> auto-auto-clicker && cd auto-auto-clicker
+npm install
+
+# 2. Build the APK locally (needs a JDK 17 + Android SDK; see docs/android-setup-todo.md)
+npm run mobile:apk          # expo prebuild --platform android + gradle assembleRelease
+# → artifact: mobile/dist/auto-auto-clicker.apk
+
+# 3. Tag a release (only a `v*` tag push triggers the GitHub Actions release — see Tag strategy)
+git tag v0.5.0-preview
+git push origin v0.5.0-preview
+
+# 4. Install on a device (sideload)
+adb install -r mobile/dist/auto-auto-clicker.apk
+# or copy the APK to the phone, tap it, and allow "install unknown apps" once
+```
+
+### Release process
+
+1. **Prepare a build host.** A JDK 17 and the Android SDK
+   (`platforms;android-36`, `build-tools;36.0.0`, `platform-tools`) must be available.
+   `docs/android-setup-todo.md` walks through both the no-sudo user-space path (Path A,
+   **verified on this host**) and the system `apt` path (Path B). The build script reads
+   `JAVA_HOME` and `ANDROID_HOME` (with documented user-space fallbacks).
+2. **Build locally** with `npm run mobile:apk` (root wrapper → `mobile/scripts/build-apk.sh`).
+   It runs `expo prebuild --platform android`, then Gradle `assembleRelease`, and copies the
+   APK to `mobile/dist/auto-auto-clicker.apk`. It is **debug-key signed** for testing (see
+   the keystore note below).
+3. **Tag the release.** Push a tag matching `v*` (e.g. `v0.5.0` or `v0.5.0-preview`). Only a
+   **tag push** triggers the workflow; a branch/PR push never does.
+4. **GitHub Actions builds and publishes.** `.github/workflows/build-apk.yml` checks out the
+   tag, installs Node 24 + Java 17 (Temurin) + a pinned Android SDK, syncs the tag into the
+   app version, runs the same local Gradle build, and attaches
+   `mobile/dist/auto-auto-clicker.apk` to a GitHub Release for that tag with
+   `generate_release_notes: true`. Tags containing `preview`, `dev`, `alpha`, or `beta` create
+   a **pre-release**.
+5. **Testers sideload the APK** from the Release assets.
+
+> **CI is unverified until the first tag push actually runs it.** The local build script
+> (`npm run mobile:apk`) is the verified path — it produced a real APK on this host. The
+> GitHub Actions workflow is written to run that same script in CI but has **not** been
+> executed by a tag push yet; treat it as unproven until it runs green once.
+
+#### Required secrets per path
+
+| Build path | Required secrets | Notes |
+| --- | --- | --- |
+| **Gradle — primary** (local `npm run mobile:apk`, and the CI workflow) | **None** | No Expo account, no `EXPO_TOKEN`. The workflow provisions and pins its own Android SDK. |
+| **EAS — optional** (`mobile/eas.json`) | `EXPO_TOKEN` **and** an Expo account **and** a `projectId` | A token alone is insufficient: `eas build --local` fails without `extra.eas.projectId`. Not the primary path. |
+
+#### Versioning (`expo.version` vs `android.versionCode`)
+
+The CI workflow syncs the pushed tag into the app config at build time:
+
+- **`expo.version`** ← the tag, minus its leading `v` (`GITHUB_REF_NAME#v`, so tag
+  `v0.5.0-preview` → `"0.5.0-preview"`).
+- **`android.versionCode`** ← a **monotonic integer from git commit count**
+  (`git rev-list --count HEAD`), **not** the semver tag. Android requires a strictly
+  increasing integer, which a semver string cannot supply. The workflow checks out full
+  history (`fetch-depth: 0`) so the count is stable. Because every release commit increases
+  the commit count, `versionCode` increases on every tag; this is the scheme chosen so no
+  manual integer bump is needed.
+
+To confirm after a release: unzip the Release APK's `AndroidManifest.xml`
+(`aapt2 dump badging <apk>` or `apkanalyzer manifest print`) and check `versionName` matches
+the tag-derived version and `versionCode` is a non-empty integer that increases between tags.
+
+#### Tester install steps (sideload)
+
+- On Android, allow installing from this source once: **Settings → Apps → Special access →
+  Install unknown apps** (wording varies), then tap the downloaded APK.
+- With `adb`: `adb install -r mobile/dist/auto-auto-clicker.apk`.
+- **Uninstall first if the signing key changed.** A release APK signed with a different
+  keystore **cannot overwrite** an existing install. These test APKs are **debug-key signed**;
+  if a build regenerates the debug keystore (e.g. `expo prebuild --clean` produces a new
+  SHA-1), uninstall the old app before installing the new build. Android may also warn that
+  the app is from an "unknown developer" — expected for a sideloaded debug-signed build.
+
+### Tag strategy
+
+- Tags are **semver with an optional pre-release suffix**: `v1.4.0`, or `v1.4.0-preview`,
+  `v1.4.0-dev`, `v1.4.0-alpha`, `v1.4.0-beta`. Any tag containing `preview`, `dev`, `alpha`,
+  or `beta` is published as a **pre-release**; anything else is a normal release.
+- **Tags are immutable — bump, never force-push.** Cutting a new version means creating a
+  **new** tag (e.g. `v0.5.1`); do **not** move or force-push an existing tag, because the
+  release artifact and its version are keyed to that tag and testers may already have it.
+- **Only tag pushes trigger a release.** The workflow's trigger is exactly `push: tags: v*`;
+  there is no `branches`, `pull_request`, or `workflow_dispatch` trigger, so committing to a
+  branch never builds or publishes an APK.
+
+---
+
 ## Porting to Expo (React Native)
 
 `engine-core` assumes **nothing** about its host: no DOM, no clock, no storage, no

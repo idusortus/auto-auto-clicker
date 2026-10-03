@@ -1,0 +1,19 @@
+# Expo / React Native — generated native projects (Expo CNG: continuous native
+# generation). `expo prebuild` regenerates `android/` and `ios/` from `app.json`,
+# so they are build outputs, not source, and must never be committed. Committing
+# them would drift from `app.json` and could re-introduce a debug keystore.
+android/
+ios/
+
+# Keystores are signing material — never tracked.
+*.keystore
+*.jks
+
+# Expo local build/cache state.
+.expo/
+
+# Local APK build output (mobile/dist/auto-auto-clicker.apk is a build artifact).
+dist/
+
+# Jest / tsc build state.
+coverage/

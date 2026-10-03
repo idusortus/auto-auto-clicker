@@ -13,21 +13,22 @@ module.exports = {
     '<rootDir>/tests/**/*.test.tsx',
   ],
   setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
-  // `react-native` 0.87 dropped `@react-native/assets-registry` (replaced by
-  // `@react-native/asset-utils`), but the `jest-expo@57` preset still resolves
-  // the old path during setup. Map it to a shim so the preset can install its
-  // mock. The preset's own mappings are repeated here because config
-  // moduleNameMapper entries are merged key-by-key and ours must not shadow them.
   moduleNameMapper: {
     // `mobile` pins react@19.2.3 but npm hoists react@19.3.0 to the root for the
     // rest of the tree (react-native, jest-expo, @testing-library). Force a
     // single React so hooks and the test renderer share one instance.
+    // (No `@react-native/assets-registry` shim is needed on the SDK-57 paired
+    // `react-native` 0.86.3: that package exists again, so `jest-expo`'s preset
+    // resolves the real path.)
     '^react$': '<rootDir>/node_modules/react',
     '^react/jsx-runtime$': '<rootDir>/node_modules/react/jsx-runtime',
     '^react/jsx-dev-runtime$': '<rootDir>/node_modules/react/jsx-dev-runtime',
-    '^@react-native/assets-registry/registry$':
-      '<rootDir>/tests/stubs/assets-registry-registry.js',
-    '^react-native($|/.*)$': '<rootDir>/../node_modules/react-native/$1',
+    // MUST target the WORKSPACE-LOCAL copy (`mobile/node_modules/react-native`,
+    // npm-installed as the SDK-57 paired react-native@0.86.3), NOT the hoisted
+    // root copy (`../node_modules/react-native` = 0.87.1). Jest must validate the
+    // SAME RN minor that `expo prebuild`/Gradle ship in the APK; resolving the
+    // root hoist would silently test a different RN and mask SDK-57 fallout.
+    '^react-native($|/.*)$': '<rootDir>/node_modules/react-native/$1',
     '^react-native-vector-icons$': '@expo/vector-icons',
     '^react-native-vector-icons/(.*)$': '@expo/vector-icons/$1',
   },
