@@ -889,6 +889,35 @@ adb install -r mobile/dist/auto-auto-clicker.apk
 | **Gradle — primary** (local `npm run mobile:apk`, and the CI workflow) | **None** | No Expo account, no `EXPO_TOKEN`. The workflow provisions and pins its own Android SDK. |
 | **EAS — optional** (`mobile/eas.json`) | `EXPO_TOKEN` **and** an Expo account **and** a `projectId` | A token alone is insufficient: `eas build --local` fails without `extra.eas.projectId`. Not the primary path. |
 
+#### Version source of truth
+
+The app version is declared in exactly one place: **`mobile/package.json` `version`**.
+Every other version-bearing file is **derived** from it:
+
+| File | Field | Role |
+| --- | --- | --- |
+| `mobile/package.json` | `version` | **Single source of truth** — edit this (or `version:bump`). |
+| `mobile/app.json` | `expo.version` | Derived (synced). |
+| `package.json` (root) | `version` | Derived (synced, for repo tidiness). |
+| `mobile/app.json` | `expo.android.versionCode` | **Not** derived from the version string — see below. |
+
+```bash
+npm run version:sync                 # propagate mobile/package.json -> derived files
+npm run version:bump -- 0.2.0        # set a new source version, then propagate
+npm run version:check                # fail if a derived file drifted, or a tag disagrees
+```
+
+`version:check` fails when `mobile/app.json` `expo.version` or the root `version`
+disagrees with `mobile/package.json`, and when the checked-out commit carries a `v*` tag
+whose version differs from the declared one. On an untagged local HEAD it skips only the
+**tag** check (development stays green); in CI a missing/`non-v*` tag is a **failure**
+(fail-closed), so a misconfigured run can never silently pass. The release workflow runs
+this check before building.
+
+> **No PR-time gate.** The check runs locally and in the release workflow on tag push.
+> There is no branch/PR CI workflow, so version drift on a branch is caught only when a
+> `v*` tag is pushed or when someone runs `npm run version:check` locally.
+
 #### Versioning (`expo.version` vs `android.versionCode`)
 
 The CI workflow syncs the pushed tag into the app config at build time:
@@ -928,6 +957,32 @@ the tag-derived version and `versionCode` is a non-empty integer that increases 
 - **Only tag pushes trigger a release.** The workflow's trigger is exactly `push: tags: v*`;
   there is no `branches`, `pull_request`, or `workflow_dispatch` trigger, so committing to a
   branch never builds or publishes an APK.
+
+### Cutting a release
+
+The tag must equal the declared version, so bump the version **before** tagging:
+
+1. **Update `CHANGELOG.md`** — move items from `## [Unreleased]` into a new dated
+   `## [<version>] - <YYYY-MM-DD>` section (Added / Changed / Fixed).
+2. **Bump the version** — `npm run version:bump -- 0.2.0` (sets `mobile/package.json` and
+   syncs `mobile/app.json` + root `package.json`). The next version must be **strictly
+   newer** than the last tag; bump, never move a tag.
+3. **Commit** the changelog + version changes.
+4. **Sanity-check** — `npm run version:check` should pass.
+5. **Tag and push** — `git tag v0.2.0 && git push origin v0.2.0`. The tag must match the
+   declared version (`v` + `mobile/package.json` `version`); the workflow verifies this and
+   **fails before building** if they disagree.
+6. **GitHub Actions** builds the APK and publishes a GitHub Release (pre-release when the
+   tag contains `preview`/`dev`/`alpha`/`beta`).
+
+To confirm after a release, check the Release APK's `versionName` matches the tag and its
+`versionCode` is a larger integer than the previous release (see above).
+
+> **Historical note.** Version tracking was introduced *after* the `v0.1.2-preview` tag was
+> cut; that tag's commit predates the reconciliation, so its tree still reads `0.0.0` and
+> `npm run version:check` would fail if you literally `git checkout v0.1.2-preview`. That is
+> expected — the guard is forward-looking. From the next tag onward, the tagged tree and the
+> declared version agree by construction.
 
 ---
 

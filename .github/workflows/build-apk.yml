@@ -24,6 +24,17 @@ jobs:
           # versionCode source (see "Sync app version with tag" below).
           fetch-depth: 0
 
+      # Fail-fast + fail-closed version guard (change: version-tracking).
+      # Runs immediately after checkout and BEFORE `npm ci`/SDK/build so a tag
+      # that disagrees with the declared `mobile/package.json` version cannot
+      # spend build minutes or publish a conflicting release. The script reads
+      # `GITHUB_REF_NAME` directly and uses only Node built-ins, so it needs no
+      # `node_modules`. If the ref is empty or does not resolve to a `v*` tag,
+      # the check FAILS CLOSED rather than skipping (see design D3) — a
+      # tag-less or misconfigured CI run must not silently pass.
+      - name: Validate version against tag
+        run: node scripts/version.mjs check
+
       - name: Setup Node 24
         uses: actions/setup-node@v4
         with:
