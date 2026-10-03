@@ -152,21 +152,40 @@ auto-auto-clicker/
 │
 └── sim/                         # ▶ headless pacing harness (no rendering, no UI)
     └── src/sim.ts               # `npm run sim` — fixed-step sweep, hard assertions, power attribution
+
+└── mobile/                      # ▶ SECOND HOST — Expo / React Native (consumes engine-core unchanged)
+    ├── package.json             # @auto-auto-clicker/mobile; scripts start/test/typecheck
+    ├── app.json                 # Expo config (new architecture enabled)
+    ├── babel.config.js          # babel-preset-expo
+    ├── tsconfig.json            # extends ../tsconfig.base.json (strict, react-jsx)
+    ├── index.ts                 # registerRootComponent(App)
+    ├── App.tsx                  # composition root → <GameScreen />
+    └── src/
+        ├── saveRepository.ts    # AsyncStorageSaveRepository (SaveRepository adapter)
+        ├── storage.ts           # loadSave / persistState / hydrate / offlineElapsedMs (8 h cap)
+        ├── offline.ts           # pure replayOffline() — 1000 ms steps, stops at a choice
+        ├── useGameHost.ts       # clock + fixed 100 ms loop, autosave, AppState flush
+        ├── theme.ts             # 19 palette tokens → RN styles + asset-slot resolution
+        └── components/          # RN view surface: HUD, Arena, gear panels, overlays, shelf
 ```
 
 ---
 
 ## Architecture
 
-Three npm workspaces with a strict one-way dependency direction:
+Four npm workspaces with a strict one-way dependency direction:
 
 ```
         sim ─────────┐
                      ▼
-        web ───► engine-core
-                     │
-        (never the reverse: engine-core imports nothing from sim or web)
+        web ───► engine-core ◄─── mobile
+                     ▲              │
+                     └──────────────┘
+        (never the reverse: engine-core imports nothing from sim, web, or mobile)
 ```
+
+`mobile` is a **second host** consuming the engine unchanged, exactly like `web` — it holds no
+rules or balance numbers of its own.
 
 - **`engine-core`** — pure TypeScript. Its public entry is `engine-core/src/index.ts`
   (plus the `engine-core/save` subpath). It exports a tick-based simulation (`state in →
@@ -729,11 +748,77 @@ Every dependency, and why it earns its place:
 | `tsx` | `sim` (dev) | Runs the TypeScript pacing harness directly with no build step; transpile-only (it does not typecheck). |
 | `@playwright/test` | `web` (dev) | The only dependency that provides real mobile-viewport + touch emulation for the smoke test. |
 | `@types/node` | `engine-core` (dev) | Types for `node:fs`, used solely by the boundary test that scans engine-core's source for forbidden imports. |
+| `expo` + `react-native` + `react` | `mobile` | The Expo SDK 57 managed-workflow runtime for the second host; `react`/`react-native` are pinned to the SDK-compatible pair (19.2.3 / 0.87.1). |
+| `@react-native-async-storage/async-storage` | `mobile` | Backs the `AsyncStorage` `SaveRepository` adapter — the RN analogue of `localStorage`. |
+| `jest-expo` + `@testing-library/react-native` | `mobile` (dev) | Headless RN test preset + renderer helpers; Playwright cannot drive a native RN runtime. |
+| `babel-preset-expo`, `@types/react`, `@types/jest` | `mobile` (dev) | Babel transform for Metro/Jest plus the TypeScript types the RN workspace needs. |
 
 **`engine-core` has zero runtime dependencies.** The only runtime `dependencies` entry
 anywhere is `web`/`sim` depending on the local `@auto-auto-clicker/engine-core`
 workspace itself. `@types/node` is a devDependency used by a test, never imported by the
 engine's runtime code.
+
+---
+
+## Second host: Expo / React Native
+
+A second host lives in `mobile/` (`@auto-auto-clicker/mobile`) and proves the host contract
+on a genuinely different runtime. It is an **Expo SDK 57 / React Native** app that consumes
+`engine-core` **unchanged** — same `advance` / `applyAction` API, same `SaveRepository`
+interface, same save schema (v4). [Porting to Expo (React Native)](#porting-to-expo-react-native)
+documents the general contract; this section documents the concrete workspace.
+
+The host is **implemented**, not scaffolded:
+
+- **`src/saveRepository.ts`** — `AsyncStorageSaveRepository implements SaveRepository`: the RN
+  analogue of `LocalStorageSaveRepository`, resolving `null` on missing/corrupt data with the
+  storage backend injectable for tests.
+- **`src/storage.ts`** — persistence + offline-time helpers: `loadSave`, `persistState`
+  (wraps state with `saveGame`), `hydrate` (unwraps with `loadGame`), and `offlineElapsedMs`,
+  capped at 8 h.
+- **`src/offline.ts`** — pure `replayOffline(state, elapsedMs)`: replays elapsed wall-clock time
+  through the **same** `advance()` in bounded 1000 ms steps, stops at a pending choice, breaks on
+  an unchanged state, and discards replay events. Auto-DPS only (no simulated clicks) — parity
+  with the web host's offline policy.
+- **`src/useGameHost.ts`** — the container: boots by hydrate + offline replay with a fresh-game
+  fallback, runs a **fixed 100 ms interval loop** with a `MAX_CATCHUP_STEPS = 10` bound (a
+  backgrounded app drops backlog instead of spiralling), freezes while a choice is pending,
+  autosaves on a 5 s cadence, and **flushes on `AppState` change** — the RN replacement for the
+  web host's `visibilitychange`/`pagehide` handlers.
+- **`src/theme.ts`** — the theme→RN bridge: maps the active theme's 19 palette tokens to RN
+  style objects and resolves asset slots from `theme.name` + `theme.assets`, with no hard-coded
+  colours or file names (the RN analogue of `web/src/palette.ts` plus the renderer's asset-url
+  helper).
+- **`src/components/`** — the RN component surface (`View`/`Text`/`Pressable`/
+  `ScrollView`/`Modal`): HUD, tappable enemy + HP bar, equipped/bag panels, four per-slot upgrade
+  controls, the pending-choice overlay, the offline summary, and the achievements shelf, plus the
+  `GameScreen` composition root rendered by `App.tsx`. Asset slots currently render through a
+  placeholder `View` (no art parity; see Non-Goals).
+- **Tests** — `jest-expo` + `@testing-library/react-native` cover boot hydration, offline replay,
+  action dispatch, autosave/`AppState` flush, theme-driven rendering, and the stage anchor.
+
+**The contract it proves: two things plus a clock.** The host supplies a renderer (the RN
+components), a `SaveRepository` (`AsyncStorageSaveRepository`), and a host clock (the 100 ms
+interval loop + offline replay). Nothing else changed: `engine-core` is consumed unchanged and
+the save schema stays **v4**.
+
+Commands (from the repo root):
+
+```bash
+npm install                # installs the mobile workspace too
+npm run mobile:start       # `expo start` — Metro dev server / dev client
+npm run mobile:typecheck   # `tsc --noEmit` for the mobile workspace
+npm run mobile:test        # `jest` (jest-expo) — the RN host + component suite
+```
+
+`@auto-auto-clicker/engine-core` resolves to its TypeScript source through the npm-workspace
+symlink, so Metro loads it with no build step — exactly how `/web` consumes it.
+
+**Key overlays, not full parity.** This host implements the gameplay-critical surfaces (arena,
+HUD, gear, choices, achievements, offline summary) but does **not** port the web host's full
+animation-cue pipeline or art pipeline: transitions are simplified, and asset slots render
+through a placeholder component rather than the theme's PNG animation frames. Those remain
+out of scope for this host.
 
 ---
 
@@ -781,7 +866,7 @@ unchanged.
 ## Tech stack
 
 - **TypeScript** (strict, `noUncheckedIndexedAccess`, ES2022, `moduleResolution: Bundler`)
-- **npm workspaces** — `engine-core`, `web`, `sim`
+- **npm workspaces** — `engine-core`, `web`, `sim`, `mobile`
 - **Vite + vanilla DOM** for the browser host (no UI framework)
 - **Vitest** for engine unit tests · **tsx** for the headless sim · **Playwright** for the
   mobile smoke test

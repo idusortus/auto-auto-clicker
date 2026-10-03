@@ -6,7 +6,8 @@
   "workspaces": [
     "engine-core",
     "web",
-    "sim"
+    "sim",
+    "mobile"
   ],
   "scripts": {
     "dev": "npm run dev -w web",
@@ -16,6 +17,9 @@
     "smoke": "npm run smoke -w web",
     "theme:check": "npm run theme:check -w engine-core",
     "theme:assets": "npm run theme:assets -w engine-core --",
+    "mobile:start": "npm run start -w mobile",
+    "mobile:test": "npm run test -w mobile",
+    "mobile:typecheck": "npm run typecheck -w mobile",
     "typecheck": "npm run typecheck -w engine-core && npm run typecheck -w web && npm run typecheck -w sim"
   },
   "devDependencies": {

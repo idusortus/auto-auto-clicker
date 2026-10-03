@@ -12,6 +12,23 @@
 
 ---
 
+## 2026-10-02 — `mobile/` Expo host: real SDK-57-compatible versions, CommonJS package, mobile kept out of the root typecheck chain
+
+**Context:** The `expo-transition` change adds a second host (`mobile/`, Expo + React Native) that consumes `engine-core` unchanged. `design.md` assumed "Expo SDK 57, React Native 0.86, React 19.2.3" but flagged those as "to be confirmed at implementation"; the `mobile` workspace also had to slot into the existing root scripts without perturbing the engine/web/sim gates.
+
+**Choice:**
+1. **Resolve real SDK-57-compatible versions from the registry rather than trusting `design.md`.** Implemented Expo `~57.0.26`, React `19.2.3` (exact), React Native `0.87.1` (exact), `@react-native-async-storage/async-storage ^3.1.1`, `jest-expo ~57.0.5`, `@testing-library/react-native ^14.0.1`, `babel-preset-expo ~57.0.13`, `@types/react ^19.3.0`, `@types/jest ^30.0.0`. The assumed RN **0.86** was wrong: RN 0.87.1's peer is `react ^19.2.3`, and jest-expo 57 pins `react-test-renderer 19.2.3` / `@react-native/jest-preset ^0.86.3`. React stays 19.2.3 exactly (a caret would pull 19.3.0 and break the RN peer).
+2. **`mobile/package.json` omits `"type": "module"`** (Expo/Metro default is CommonJS) — unlike every other workspace. `babel.config.js` uses `module.exports` and `app.json`/`index.ts` follow Expo conventions.
+3. **`mobile` is deliberately NOT added to the root `typecheck` chain.** Root `typecheck` still covers exactly engine-core + web + sim. Mobile is verified through the new `mobile:typecheck` script (and `-w mobile` directly); the `expo-transition` verification task (8.3) runs mobile separately. This keeps the existing gates byte-for-byte unchanged while mobile iterates.
+
+**Trade-offs:** The `mobile` workspace typechecks separately, so a broken mobile app cannot fail the legacy root `typecheck` — intended while the host is being built; task 8.3 is the gate for mobile. No `metro.config.js` was added yet (the default workspace symlink resolution is sufficient for the Phase-1 smoke import; revisit if Metro cannot resolve the source-only engine export).
+
+**Revisit:** When the RN host lands, decide whether to fold `mobile` into the root `typecheck`. If Metro fails to resolve `@auto-auto-clicker/engine-core`, add a minimal `mobile/metro.config.js` `watchFolders` entry rather than touching the engine.
+
+**Evidence:** `npm install` from root succeeded first try (845 packages, no `--legacy-peer-deps`); `npm run typecheck -w mobile` exit 0; root `npm run typecheck` (engine+web+sim) still exit 0; workspace resolution proven by a deliberate bad named import yielding `TS2305`; `git status` shows no `engine-core`/`web`/`sim` changes.
+
+---
+
 ## 2026-09-29 — Active theme switched to `fantasy`; a dedicated "D&D fighter" theme deferred; a new ENGINE-LEARNINGS.md
 
 **Context:** Two requests. (1) Summarize the project's engine-design learnings into a document reusable when building future games. (2) "Switch the game theme to fantasy D&D fighter and relaunch so I can preview in browser." There is no `fighter` theme — the build ships exactly two (`fantasy`, `lucky`).
@@ -564,3 +581,27 @@
 **Choice:** Keep the hooks enabled (they are the deterministic tier-routing path the add-on exists to provide) and record the egress plus its off-switch (`CLI_FIVE_JEVR_HOOKS=0`) in `STATE.md`/`agent-diary.md`. Classify it explicitly as dev tooling, separate from the app's local-only guarantee.
 **Trade-offs:** Prompt text leaves the machine while a credential is present unless the team opts out; the docs now say so rather than leaving it implicit.
 **Revisit:** If the "local-only" constraint is meant to cover dev tooling too, set `CLI_FIVE_JEVR_HOOKS=0` (and/or remove the add-on).
+
+## 2026-10-02 — Expo transition scoped as a "host-contract proof" (OpenSpec change `expo-transition`)
+**Context:** The project's central promise is that `engine-core` can be lifted into Expo/RN by supplying a renderer, a `SaveRepository`, and a clock — but only the browser host in `/web` had ever exercised that claim. The user asked to spec out the transition; "full app parity" and "boundary-only spec" were the alternatives.
+**Choice:** Spec a new `mobile/` workspace (`@auto-auto-clicker/mobile`) that consumes `engine-core` **unchanged** and proves the host contract: an AsyncStorage `SaveRepository`, a fixed-100 ms host clock + bounded offline replay, RN components for the core loop + key overlays (incl. choice, stall advisory, Golden-Event/Stray claim, offline summary, achievements shelf), theme palette/asset reuse, iOS+Android via Expo, and Jest + React Native Testing Library for tests. Explicitly out of scope: full animation/visual parity, navigation, remote persistence/auth, and any `engine-core` edit. User-selected.
+**Trade-offs:** Not full parity — some `/web` behavior (full animation cues, visual polish) is intentionally not reproduced or gated; the RN tests, not a device matrix, are the automated acceptance. This keeps the change bounded and the engine provably untouched.
+**Revisit:** When a full mobile app is wanted, a follow-up change builds out parity (animations, navigation, art) on top of this proof; the boundary stays the same.
+
+## 2026-10-02 — Expo change introduces one new capability `expo-host`; save schema stays v4
+**Context:** OpenSpec `spec-driven` needs each real behavior change declared as a capability delta; the repo had no specs yet.
+**Choice:** The `expo-transition` change adds a single capability, `expo-host`, with 8 ADDED requirements describing host behavior (save hydration, offline replay, fixed-step loop, action dispatch, autosave/lifecycle, theme presentation, host-owned stall anchor, engine-consumed-unchanged). No `skip_specs`; no existing capability modified. Engine and save schema (v4) are untouched by design.
+**Trade-offs:** Requirement text describes the host, not the engine, so it must stay in sync with `web/src/main.ts`/`storage.ts` as the reference host evolves.
+**Revisit:** If the RN host intentionally diverges from the web host's timing/offline semantics, amend the `expo-host` spec in a new change.
+
+## 2026-10-02 — Mobile host pins RN 0.87.1 / React 19.2.3 and stays out of the root `typecheck`
+**Context:** The `expo-transition` design *assumed* "Expo SDK 57 / React Native 0.86 / React 19.2.3" and flagged those versions as to-be-confirmed at implementation. Installing the real SDK 57 stack resolved to **RN 0.87.1** (its peer is `react ^19.2.3`), contradicting the assumed 0.86. Separately, the root `typecheck`/`test` scripts cover engine-core + web + sim only.
+**Choice:** Pin the registry-resolved compatible set — `expo ~57.0.26`, `react-native 0.87.1`, `react 19.2.3` (exact, no caret) — rather than the assumed 0.86, and keep `mobile` OUT of the root `typecheck`/`test` scripts, verifying it separately via `npm run mobile:typecheck` / `mobile:test` (root `typecheck` = engine-core + web + sim). Also added `babel-preset-expo`, `@types/react`, `@types/jest` to `mobile` devDeps (required by `jest-expo`/`babel.config.js`/TS).
+**Trade-offs:** Root `npm run typecheck` does not cover the mobile workspace, so a mobile type error is invisible unless the `mobile:*` scripts (or task 8.3) run. Pinning `react` exactly prevents a hoisted 19.3.0 from creating a second React copy.
+**Revisit:** When the mobile workspace stabilises, fold it into the root `typecheck`/`test` scripts (or a CI job) so it cannot rot unnoticed.
+
+## 2026-10-02 — Mobile host tests use an injectable scheduler instead of Jest fake timers
+**Context:** Task 3.3 specified `jest.useFakeTimers()` to test the fixed-step loop. Under `jest-expo@57` + RN 0.87.1 + React 19, async `act()` deadlocks or OOMs with fake timers, and faking `setImmediate`/microtasks is unsafe.
+**Choice:** Add a small `HostScheduler` seam to `useGameHost` (defaulting to the real `setInterval`/`clearInterval`) plus an injected `now`, driven in tests by a `ManualScheduler` that records the registered interval. The observable contract is still asserted exactly (whole 100 ms steps, `MAX_CATCHUP_STEPS` bound/backlog drop, pending-choice freeze, 5 s autosave cadence, no overlapping saves, `AppState` flush/resume) and the interval value is now asserted too.
+**Trade-offs:** Tests exercise a seam rather than the real timer implementation; a bug in the default `setInterval` wiring itself would not be caught (the seam bypasses it).
+**Revisit:** If a future jest-expo/React combo makes fake timers viable, switch back — or add one integration test that uses the real scheduler.

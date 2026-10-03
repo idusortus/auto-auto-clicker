@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "Auto Auto Clicker",
+    "slug": "auto-auto-clicker",
+    "version": "0.0.0",
+    "orientation": "portrait",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "edgeToEdgeEnabled": true
+    }
+  }
+}

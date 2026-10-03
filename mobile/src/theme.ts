@@ -1,0 +1,170 @@
+// theme.ts — the single bridge between the active theme and React Native styles.
+//
+// This is the RN analogue of `web/src/palette.ts` plus the asset-url helper in
+// `web/src/renderer.ts`. It holds NO colour values and NO file names: every
+// style colour comes from a theme palette TOKEN, and every asset is located by
+// the theme's own `name` + `assets` map. Swapping `ACTIVE_THEME` (one line in
+// engine-core) therefore rescans every component that styles through this
+// module, with no component edit.
+//
+// Palette values are CSS colour strings. React Native accepts the hex / rgb /
+// rgba / hsl forms the theme validator already permits, so no parsing or colour
+// library is needed. `color-mix()`-style derived surfaces have no RN equivalent
+// and are replaced with flat palette tokens (plus opacity where a smaller
+// emphasis is wanted) — a visual simplification, not a behaviour change.
+
+import { ACTIVE_THEME } from '@auto-auto-clicker/engine-core';
+import type { Theme } from '@auto-auto-clicker/engine-core';
+
+/** The color-token shape of a theme palette (Theme['palette']). */
+type ThemePalette = Theme['palette'];
+
+/** The 19 semantic colour tokens, in a stable order, for iteration. */
+export const PALETTE_KEYS = [
+  'bg',
+  'surface',
+  'panel',
+  'surfaceRaised',
+  'control',
+  'line',
+  'lineStrong',
+  'text',
+  'textDim',
+  'textMuted',
+  'textDisabled',
+  'accent',
+  'accentHi',
+  'accentLo',
+  'accentEdge',
+  'accentInk',
+  'dangerMuted',
+  'hpHi',
+  'hpLo',
+] as const satisfies readonly (keyof ThemePalette)[];
+
+export type PaletteKey = (typeof PALETTE_KEYS)[number];
+
+/**
+ * The full set of RN style objects the components render through, derived
+ * entirely from `theme.palette`. No member carries a hard-coded colour.
+ */
+export interface ThemeStyles {
+  /** Root housing surface (page background). */
+  screen: { backgroundColor: string };
+  /** Recessed surface above the root. */
+  surface: { backgroundColor: string };
+  /** Panel plate. */
+  panel: { backgroundColor: string; borderColor: string };
+  /** Raised surface (cards, bag rows). */
+  raised: { backgroundColor: string; borderColor: string };
+  /** Control (button) base fill. */
+  control: { backgroundColor: string; borderColor: string };
+  /** Hairline separator / border. */
+  hairline: { borderColor: string };
+  /** Stronger edge for interactive surfaces. */
+  edge: { borderColor: string };
+  /** Primary body text. */
+  text: { color: string };
+  /** De-emphasised text. */
+  textDim: { color: string };
+  /** Muted label text. */
+  textMuted: { color: string };
+  /** Disabled text. */
+  textDisabled: { color: string };
+  /** The single accent, as a fill. */
+  accent: { backgroundColor: string };
+  /** Accent, brighter (highlight fill). */
+  accentHi: { backgroundColor: string };
+  /** Accent, darker (gradient base fill). */
+  accentLo: { backgroundColor: string };
+  /** Accent edge/outline. */
+  accentEdge: { borderColor: string };
+  /** Ink used on top of the accent. */
+  accentInk: { color: string };
+  /** Muted danger/badge text. */
+  dangerMuted: { color: string };
+  /** Health-bar gradient top. */
+  hpHi: { backgroundColor: string };
+  /** Health-bar gradient bottom. */
+  hpLo: { backgroundColor: string };
+  /** The recessed health-bar track behind the fill. */
+  hpTrack: { backgroundColor: string };
+  /** A full-screen modal backdrop, drawn in the theme's page background. */
+  overlayBackdrop: { backgroundColor: string };
+}
+
+/**
+ * Derive every component style object from one theme's palette. Pure: given the
+ * same theme object it returns byte-identical styles, and changing any token
+ * changes exactly the styles that read it.
+ */
+export function paletteToStyles(theme: Theme): ThemeStyles {
+  const palette: ThemePalette = theme.palette;
+  return {
+    screen: { backgroundColor: palette.bg },
+    surface: { backgroundColor: palette.surface },
+    panel: { backgroundColor: palette.panel, borderColor: palette.line },
+    raised: { backgroundColor: palette.surfaceRaised, borderColor: palette.line },
+    control: { backgroundColor: palette.control, borderColor: palette.lineStrong },
+    hairline: { borderColor: palette.line },
+    edge: { borderColor: palette.lineStrong },
+    text: { color: palette.text },
+    textDim: { color: palette.textDim },
+    textMuted: { color: palette.textMuted },
+    textDisabled: { color: palette.textDisabled },
+    accent: { backgroundColor: palette.accent },
+    accentHi: { backgroundColor: palette.accentHi },
+    accentLo: { backgroundColor: palette.accentLo },
+    accentEdge: { borderColor: palette.accentEdge },
+    accentInk: { color: palette.accentInk },
+    dangerMuted: { color: palette.dangerMuted },
+    hpHi: { backgroundColor: palette.hpHi },
+    hpLo: { backgroundColor: palette.hpLo },
+    hpTrack: { backgroundColor: palette.control },
+    overlayBackdrop: { backgroundColor: palette.bg },
+  };
+}
+
+/** The styles for the active theme. Components import this, never a token. */
+export const styles: ThemeStyles = paletteToStyles(ACTIVE_THEME);
+
+/**
+ * A theme asset resolved to something React Native can render.
+ *
+ * RN has no `/themes/<name>/` static route, so a slot cannot be loaded from a
+ * URL. Every field here is DERIVED from the theme (`name` + `assets`); no file
+ * name is hard-coded outside the theme's own `assets` map. Because this change
+ * ships no bundled art, `uri` is null and callers render a placeholder `View`
+ * carrying the resolved slot identity — this is deliberately a placeholder
+ * strategy, not an art-parity claim (see the change's Non-Goals).
+ */
+export interface ResolvedAsset {
+  /** Canonical asset slot name (e.g. `player-idle`). */
+  slot: string;
+  /** The theme that declared the slot. */
+  themeName: string;
+  /** The file name the theme declares for the slot. */
+  fileName: string;
+  /** Bundled image module or URI, or null when only a placeholder exists. */
+  uri: string | null;
+}
+
+/**
+ * Resolve an asset slot through the theme's `name` + `assets` map.
+ *
+ * A slot the theme does not declare is a theme authoring bug and fails loudly
+ * (mirroring the renderer's missing-roster-entry behaviour) rather than
+ * rendering a silent blank.
+ */
+export function resolveAsset(theme: Theme, slot: string): ResolvedAsset {
+  const fileName = theme.assets[slot];
+  if (fileName === undefined) {
+    throw new Error(`[aac] theme "${theme.name}" declares no asset slot "${slot}"`);
+  }
+  return { slot, themeName: theme.name, fileName, uri: null };
+}
+
+/** Resolve a slot through the ACTIVE_THEME (the common case). */
+export function resolveActiveAsset(slot: string): ResolvedAsset {
+  return resolveAsset(ACTIVE_THEME, slot);
+}
