@@ -869,10 +869,18 @@ adb install -r mobile/dist/auto-auto-clicker.apk
    a **pre-release**.
 5. **Testers sideload the APK** from the Release assets.
 
-> **CI is unverified until the first tag push actually runs it.** The local build script
-> (`npm run mobile:apk`) is the verified path — it produced a real APK on this host. The
-> GitHub Actions workflow is written to run that same script in CI but has **not** been
-> executed by a tag push yet; treat it as unproven until it runs green once.
+> **CI is verified green.** The workflow has run end-to-end on a tag push
+> (`v0.1.2-preview`) and published a GitHub Release with the APK asset attached. The
+> local build script (`npm run mobile:apk`) is the offline-verified path and runs the
+> same build in CI.
+>
+> Two runner gotchas were fixed and are worth remembering if the workflow is edited:
+> (1) do **not** use `android-actions/setup-android` — it runs `sdkmanager tools`, and
+> modern `sdkmanager` (19.0) no longer ships a `tools` package, so it fails with
+> `Failed to find package 'tools'`; the workflow instead downloads Google's
+> `cmdline-tools` zip directly. (2) `yes | sdkmanager --licenses` exits non-zero under
+> `set -o pipefail` when `yes` is SIGPIPE-killed after the last license is accepted —
+> the step tolerates only that status.
 
 #### Required secrets per path
 
