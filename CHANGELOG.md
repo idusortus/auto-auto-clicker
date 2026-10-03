@@ -12,6 +12,23 @@ are kept in sync with `npm run version:sync` and verified by
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-03
+
+### Added
+
+- **Version tracking** — `mobile/package.json` `version` as the single source of
+  truth, with `npm run version:sync` / `version:bump` / `version:check`
+  (`scripts/version.mjs`, dependency-free). The check fails on derived-file drift
+  and on a tag/version mismatch, and fails closed in CI when no `v*` tag resolves.
+- The release workflow now validates the pushed tag against the declared version
+  **before** building, so a mismatched tag cannot publish a release.
+- `CHANGELOG.md` (Keep a Changelog).
+
+### Changed
+
+- App version declared once and derived into `mobile/app.json` `expo.version` and
+  the root `package.json` `version`.
+
 ## [0.1.2-preview] - 2026-10-03
 
 ### Added
@@ -40,5 +57,6 @@ are kept in sync with `npm run version:sync` and verified by
 - Jest resolves the workspace-local `react-native` so tests run the same version
   the APK ships.
 
-[Unreleased]: https://github.com/idusortus/auto-auto-clicker/compare/v0.1.2-preview...HEAD
+[Unreleased]: https://github.com/idusortus/auto-auto-clicker/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/idusortus/auto-auto-clicker/compare/v0.1.2-preview...v0.2.0
 [0.1.2-preview]: https://github.com/idusortus/auto-auto-clicker/releases/tag/v0.1.2-preview
