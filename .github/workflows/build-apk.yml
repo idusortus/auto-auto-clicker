@@ -69,7 +69,11 @@ jobs:
       - name: Install pinned Android SDK components
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses
+          # `yes | sdkmanager --licenses` exits non-zero when `yes` is killed by
+          # SIGPIPE once sdkmanager stops reading, and `set -o pipefail` would
+          # then fail the step even though every license was accepted. Feed a
+          # bounded stream instead and tolerate only that broken-pipe status.
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
           sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "platform-tools"
           sdkmanager --list_installed
 
