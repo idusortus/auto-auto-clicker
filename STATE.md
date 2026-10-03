@@ -3,8 +3,42 @@
 > Cross-session memory for all agents. Update on exit; read on entry.
 
 ## Status
+**The game runs on a second host (Expo / React Native) and ships as a sideloadable Android APK
+via tag-triggered GitHub Releases (`v0.2.0` is the latest), versioned by a single source of
+truth. Every gate is green.**
+
+### Latest (2026-10-03) — mobile host, APK distribution, version tracking
+- **Expo / React Native host in `mobile/`** (`@auto-auto-clicker/mobile`) consumes `engine-core`
+  **unchanged** — proving the host contract (renderer + `SaveRepository` + clock). Has an
+  `AsyncStorage` `SaveRepository`, a fixed-100 ms interval host clock with bounded offline replay,
+  `AppState` flush/resume, theme→RN style mapping, and the core loop + key overlays. RN tests:
+  `npm run test -w mobile` → **78 passed**. See `openspec/specs/expo-host/`.
+- **Android APK distribution.** `npm run mobile:apk` builds a debug-key-signed release APK
+  (`mobile/scripts/build-apk.sh` → `mobile/dist/auto-auto-clicker.apk`). A tag push (`v*`) runs
+  `.github/workflows/build-apk.yml`, which provisions its **own** Android SDK (no secret),
+  validates the tag, builds, and publishes a GitHub Release with the APK. Proven end-to-end:
+  `v0.1.2-preview` then **`v0.2.0`** (latest, non-pre-release, `versionName=0.2.0`,
+  `versionCode=33`). See `openspec/specs/android-apk-distribution/`.
+- **Version tracking.** Single source of truth = `mobile/package.json` `version` (currently
+  **`0.2.0`**); `mobile/app.json` `expo.version` and root `package.json` `version` are **derived**.
+  `npm run version:sync|bump|check` (`scripts/version.mjs`, dependency-free). `check` fails on
+  derived-file drift and on a tag/version mismatch, and **fails closed** in CI when no `v*` tag
+  resolves. `CHANGELOG.md` follows Keep a Changelog. See `openspec/specs/version-tracking/`.
+  - **`android.versionCode` is the commit count** (`git rev-list --count HEAD`), never derived
+    from semver — `v0.2.0` shipped `versionCode=33` (up from `29`).
+- **Expo SDK 57 (stable) realignment.** `mobile/` runs the SDK-57 paired set
+  (`react-native 0.86.3`, `react 19.2.3`, `expo ~57.0.26`); the RN-0.87 jest shim was removed.
+  SDK 58 was deliberately avoided (preview / RN 0.88 RC).
+- **Android identity:** `com.autoautoclicker.app` (permanent — changing it forces testers to
+  uninstall). Debug-key signed for testing: a different keystore cannot overwrite an install.
+  Generated `mobile/android/`, `mobile/ios/`, `mobile/dist/`, keystores are **gitignored** (CNG).
+- **Local Android toolchain** lives under `$HOME` (`~/jdk-17` Temurin 17, `~/android-sdk` with
+  platform-36 / build-tools 36.0.0) — installed **without sudo**. Reproduce it per
+  `docs/android-setup-todo.md`.
+
+### Engine / web (unchanged since 2026-09-29)
 **The 12-enemy roster with PER-ENEMY HP/gold curves landed (replacing the factor/canonical-curve
-approach), `ACTIVE_THEME` is now the `fantasy` RPG theme, and T6 animation + enemy taunts + F1
+approach), `ACTIVE_THEME` is the `fantasy` RPG theme, and T6 animation + enemy taunts + F1
 tap-to-equip all shipped — every gate is green.**
 
 - **`ACTIVE_THEME` is `fantasy`** (the original "Standard Fantasy RPG" theme). `THEMES = [fantasy, lucky]`
@@ -65,6 +99,33 @@ Gates (current, verified this session):
 
 The one-line switch is `export const ACTIVE_THEME: Theme = <name>;` in
 `engine-core/src/theme/index.ts` (committed value: `fantasy`).
+
+### Mobile gates (current, verified)
+- `npm run test -w mobile` → **78 passed (8 suites), exit 0**.
+- `npm run mobile:typecheck` → clean. `npm run mobile:apk` → builds
+  `mobile/dist/auto-auto-clicker.apk` locally (needs the `$HOME` toolchain).
+- `npm run version:check` → exit 0 (declared version `0.2.0`).
+- `openspec validate --strict` → clean; main specs: `expo-host`, `android-apk-distribution`,
+  `version-tracking` (all changes archived under `openspec/changes/archive/`).
+
+### Follow-ups (not yet done — start here next session)
+1. **Install `v0.2.0` on a device** — the on-device run is the one thing still unverified; APK
+   validity is confirmed only structurally (`aapt2 dump badging`), never executed on hardware.
+2. **`STATE.md`/`AGENTS.md` are current as of 2026-10-03**; `engine-core`/`web` sections below are
+   unchanged since 2026-09-29 and remain accurate.
+3. **Deferred, each its own OpenSpec change:**
+   - **Persistent release keystore** — currently debug-signed, so a future key change cannot
+     overwrite an existing install. Required before any "real" distribution.
+   - **Play Store path** — production `.aab` + submission track (out of scope so far).
+   - **iOS build/release path** — `mobile/ios/` is regenerable but no build/release flow exists.
+   - **PR-time `version:check`** — deliberately out of scope (the repo has only the tag-triggered
+     workflow), so version drift is caught locally or at tag push.
+   - **`eas.json` preview path** — documented alternative; needs an Expo account + `projectId`.
+4. **CI deprecation cleanup (cosmetic now, will bite later):** bump `actions/setup-java@v4→v5`
+   and the Node-20-targeting actions (`checkout@v4`, `setup-node@v4`, `softprops/action-gh-release@v2`).
+5. **Optional polish (unchanged):** compact numeral formatting, tap/feedback cosmetics, and a
+   bulk-sell action (a real engine action, not yet built — bag *ordering* already ships
+   strongest-first).
 
 *The `Prior:` sections below are historical session logs. Their gate counts and pacing/peak
 measurements are snapshots from that session, not current — the current gates are in **Status**
@@ -247,12 +308,11 @@ via a `gear-stats.ts` leaf", "Golden Events (Shinies): spawn/claim/boost engine 
 "Save schema v3", and the 2026-09-26 economy reversal.
 
 ## Next
-1. Build the Expo/RN port by supplying a renderer + a `SaveRepository` and a host clock driving
-   `advance()` — see README "Porting to Expo".
-2. Optional polish: compact numeral formatting (large late-game values print as full integers),
-   tap/feedback cosmetics, and a bulk-sell action (a real engine action, not yet built — bag
-   *ordering* already ships strongest-first).
+See **Follow-ups** in the top Status section (as of 2026-10-03). The Expo/RN port is **done**
+(`mobile/`), APK distribution is **live** (`v0.2.0`), and version tracking is **in place**. The
+open work is: verify on a real device, then the deferred items (release keystore, Play Store,
+iOS path, PR-time version check) and the CI deprecation cleanup.
 
 ---
 
-_Generated by `npx cli-five` on 2026-09-26._
+_Generated by `npx cli-five` on 2026-09-26; refreshed 2026-10-03._
