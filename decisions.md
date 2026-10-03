@@ -546,3 +546,21 @@
 **Evidence required before this plan is considered done:** `npm run sim` PACING OK with the new per-enemy curves; `npm run test` passes (including rewritten `enemy-roster.test.ts`); `npm run typecheck` clean (3 workspaces); 0 import cycles; no live path reads `hpFactor`/`goldFactor`/`bossStageInterval`; `balance.ts` does not import `content.ts`.
 
 **Revisit:** If per-enemy curves cannot be tuned to pass all gates without widening tolerance, report the measured numbers and stop — never weaken a gate. If `archetype` should drive mechanics (e.g., an archetype-based AI or resistances), promote it to a live field with a new decision.
+
+## 2026-10-02 — cli-five sourced as a local `file:` devDependency
+**Context:** The user asked to add the `cli-five` package to this repo and to install the `openspec` and `jev` add-ons. Three sources were viable: the npm registry (`^0.2.32`), a one-shot `npx` run with no dependency, or the adjacent local repo `/home/sam/dev/cli-five` (also v0.2.32, in sync with its origin). The globally-installed `cli-five` was stale (v0.2.15) and lacks the `add` command entirely.
+**Choice:** Add `"cli-five": "file:../cli-five"` to root `devDependencies` and `npm install`, so the repo tracks the local source and picks up in-progress add-on work without a republish. User-selected.
+**Trade-offs:** A `file:../cli-five` path is not portable — a fresh clone breaks unless `cli-five` is cloned as a sibling. `add openspec` also depends on a globally-installed `openspec` CLI (v1.13.1) which is not a declared dependency; neither is reproducible from `package.json` alone.
+**Revisit:** When cli-five is consumed by anyone other than this host, switch to a pinned registry version (`^0.2.32` or later).
+
+## 2026-10-02 — Jev Reviewer-spawn gate starts in `shadow`
+**Context:** `cli-five add jev` bundles an opt-in Reviewer-spawn gate that is `off` by default. Modes are `off` | `shadow` | `enforce`; the upstream README recommends calibrating in `shadow` before `enforce` because the `p_mechanical` cutoffs are initial, phrasing-sensitive values.
+**Choice:** Write `.opencode/jev.json` → `{ "spawnGate": "shadow" }`, so the gate classifies and journals what it *would* deny but never blocks a Reviewer spawn. User-selected.
+**Trade-offs:** No token savings yet (that requires `enforce`); the gate still reads the session transcript and may call Jev, subject to the plugin's fail-open guarantees.
+**Revisit:** After reviewing `shadow` outcomes in `.opencode/journals/jev-tier-router.log`, promote to `enforce` — or drop to `off` — if the would-deny rate is unusable.
+
+## 2026-10-02 — Jev default-on prompt egress is documented, not disabled
+**Context:** The `jev` plugin registers OpenCode V2 session hooks **on by default**; once a Jev credential resolves they send the classified prompt text to OpenCode Zen `systemone` (model `jev-1.13-free`) or TypeSafe. This sits against the repo's "local-only (no backend, no network)" constraint. Independent review flagged that the initial docs omitted it.
+**Choice:** Keep the hooks enabled (they are the deterministic tier-routing path the add-on exists to provide) and record the egress plus its off-switch (`CLI_FIVE_JEVR_HOOKS=0`) in `STATE.md`/`agent-diary.md`. Classify it explicitly as dev tooling, separate from the app's local-only guarantee.
+**Trade-offs:** Prompt text leaves the machine while a credential is present unless the team opts out; the docs now say so rather than leaving it implicit.
+**Revisit:** If the "local-only" constraint is meant to cover dev tooling too, set `CLI_FIVE_JEVR_HOOKS=0` (and/or remove the add-on).

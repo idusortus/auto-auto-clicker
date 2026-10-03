@@ -13,5 +13,13 @@
       ],
       "enabled": true
     }
+  },
+  "plugins": [
+    ".opencode/plugin/jev-tier-router"
+  ],
+  "$cliFive": {
+    "blocks": [
+      "jev"
+    ]
   }
 }

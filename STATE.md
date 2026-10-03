@@ -36,6 +36,20 @@ tap-to-equip all shipped — every gate is green.**
 - **F1 tap-to-equip.** Tapping a FLAGGED ("strictly better") bag row equips it, reusing the existing
   `equip` action; only flagged rows are row-tappable, the `equip-btn` remains the keyboard control,
   and one tap = exactly one dispatch.
+- **2026-10-02 — cli-five is now a local devDependency** (`"cli-five": "file:../cli-five"`, v0.2.32),
+  with the **`openspec`** and **`jev`** add-ons installed for OpenCode: `openspec/` +
+  `.opencode/commands/opsx-*.md` + `.opencode/skills/openspec-*/`, and `.opencode/plugin/jev-tier-router/`
+  registered in `opencode.json` `plugins[]` (adding a `tier_classifier` tool). The Jev reviewer-spawn
+  gate starts in **shadow** mode (`.opencode/jev.json` → `{ "spawnGate": "shadow" }`); its runtime log
+  (`.opencode/journals/`) is git-ignored. `cli-five doctor` is green.
+- **2026-10-02 — Jev network egress is ON by default (dev tooling, not the app).** The
+  `.opencode/plugin/jev-tier-router/` session hooks classify every admitted prompt, and once a Jev
+  credential resolves they send the classified prompt text to the configured provider — OpenCode Zen
+  (`https://opencode.ai/zen/v1/systemone`, model `jev-1.13-free`, free tier) or TypeSafe as the
+  secondary. Disable with `CLI_FIVE_JEVR_HOOKS=0`. The repo's own constraint stays local-only (no
+  backend): the reviewer-spawn **gate** is separately `shadow`
+  (`.opencode/jev.json` → `{ "spawnGate": "shadow" }`), so it journals what it *would* deny and
+  never blocks.
 
 Gates (current, verified this session):
 - `npm run typecheck` → clean for all three workspaces.

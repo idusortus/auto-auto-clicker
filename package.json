@@ -19,6 +19,7 @@
     "typecheck": "npm run typecheck -w engine-core && npm run typecheck -w web && npm run typecheck -w sim"
   },
   "devDependencies": {
+    "cli-five": "file:../cli-five",
     "typescript": "^5"
   }
 }
