@@ -12,6 +12,37 @@ are kept in sync with `npm run version:sync` and verified by
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-04
+
+### Added
+
+- **Theme art on the Expo host.** The RN arena now renders the active theme's
+  declared pixel art instead of placeholder boxes: `npm run mobile:assets` copies
+  each theme's declared PNGs into `mobile/assets/themes/<name>/` and emits a
+  committed literal-require registry (`src/themeAssets.gen.ts`) that measures each
+  PNG's IHDR dimensions, and `ThemeImage` draws a slot at its declared size.
+  `resolveAsset` fails loudly on a slot the theme declares but the registry lacks.
+- **Event-driven animation on the Expo host.** A port of the web host's
+  `GameEvent[]`→cue framework: a pure `animation/cues.ts` (per-actor priority,
+  ties-to-last, `stageEntered` advances the running stage), `useAnimationCues`
+  (one live frame per actor, a single drain timer, duration-0 disables a cue, a
+  bounded queue), and `useReducedMotion`. Reanimated flourishes: HP-bar tween,
+  boost-pill pulse, Shiny drift plus escape/claim messages, spawn popup, queued
+  achievement splash, milestone flourish, enemy-taunt toast, and overlay entrance
+  animations.
+- **Safe-area insets on the Expo host.** The app is wrapped in `SafeAreaProvider`
+  and the screen composes `useSafeAreaInsets()` into its frame and the bottom
+  toast stack, so the HUD clears the Android status bar / cutout (edge-to-edge is
+  enabled) and the iOS notch, and bottom content clears the gesture area.
+
+### Changed
+
+- Mobile dependency set gains SDK-57-pinned `react-native-safe-area-context`,
+  `react-native-reanimated`, and `react-native-worklets`. Add mobile deps with
+  `npm install <pkg>@<ver> --workspace mobile --legacy-peer-deps` — `npx expo
+  install` re-hoists `react-native` and breaks the workspace-local RN nesting
+  that `mobile/jest.config.js` requires.
+
 ## [0.2.0] - 2026-10-03
 
 ### Added
