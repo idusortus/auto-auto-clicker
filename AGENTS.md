@@ -51,7 +51,7 @@ vite, vitest, tsx, playwright, jest-expo + @testing-library/react-native, npm wo
 - **Android APK distribution is live.** `npm run mobile:apk` builds a debug-key-signed release
   APK locally; a `v*` tag runs `.github/workflows/build-apk.yml` (self-provisioned Android SDK,
   no secret) which validates the tag, builds, and publishes a GitHub Release. Latest release:
-  **`v0.2.0`**. Release process: see README "Cutting a release".
+  **`v0.3.0`**. Release process: see README "Cutting a release".
 - **Version tracking:** single source `mobile/package.json`; `version:sync|bump|check`; a
   `CHANGELOG.md` (Keep a Changelog). `version:check` fails closed in CI without a resolvable
   `v*` tag.

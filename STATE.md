@@ -3,39 +3,48 @@
 > Cross-session memory for all agents. Update on exit; read on entry.
 
 ## Status
-**The game runs on a second host (Expo / React Native) and ships as a sideloadable Android APK
-via tag-triggered GitHub Releases (`v0.2.0` is the latest), versioned by a single source of
-truth. Every gate is green.**
+**The game runs on a second host (Expo / React Native), now with theme pixel art, event-driven
+animation, and safe-area-aware layout, and ships as a sideloadable Android APK via tag-triggered
+GitHub Releases (`v0.3.0` is the latest), versioned by a single source of truth. Every gate is
+green.**
 
-### Latest (2026-10-03) — mobile host, APK distribution, version tracking
-- **Expo / React Native host in `mobile/`** (`@auto-auto-clicker/mobile`) consumes `engine-core`
-  **unchanged** — proving the host contract (renderer + `SaveRepository` + clock). Has an
-  `AsyncStorage` `SaveRepository`, a fixed-100 ms interval host clock with bounded offline replay,
-  `AppState` flush/resume, theme→RN style mapping, and the core loop + key overlays. See
-  `openspec/specs/expo-host/`.
-- **`expo-art-animation` (applied 2026-10-03) — theme art + animation + safe-area on mobile.**
-  The RN host now renders the active theme's declared PNGs (`ThemeImage`) instead of placeholder
+### Latest (2026-10-04) — mobile theme art + animation + safe-area; release v0.3.0
+- **`expo-art-animation` (applied + archived 2026-10-04) — theme art + animation + safe-area.**
+  The RN host renders the active theme's declared PNGs (`ThemeImage`) instead of placeholder
   boxes, consumes the `GameEvent[]` seam through a ported event→cue animation framework (pure
   `cues.ts` + `useAnimationCues` + `useReducedMotion`, plus Reanimated flourishes: HP tween,
   boost pulse, Shiny drift/messages, spawn popup, achievement splash, milestone flourish, taunt
   toast, overlay entrances), and respects device safe-area insets (`SafeAreaProvider` +
   `useSafeAreaInsets`, fixing the status-bar-clipped header). Art is copied mobile-local and
   resolved through a generated literal-`require` registry (`npm run mobile:assets`). RN tests:
-  **131 passed (15 suites)**. Three deps added (SDK-57-pinned): `react-native-safe-area-context`,
+  **133 passed (15 suites)**. Three deps added (SDK-57-pinned): `react-native-safe-area-context`,
   `react-native-reanimated`, `react-native-worklets`. Engine/web/sim untouched; save schema v4.
+  - **Post-implementation review fixed 3 issues:** the cue drain now re-arms unconditionally after
+    firing (was: only on a frame-count change, so an early wake could strand a sprite frame —
+    regression test proven to fail against the old code); de-duplicated `formatMultiplier` /
+    `EQUIP_SLOTS` in `surfaces.ts`; deps pinned exactly. See `openspec/specs/expo-host/`.
+- **Release `v0.3.0` (2026-10-04).** Minor bump from `0.2.0` for the art/animation/insets feature
+  work (`CHANGELOG.md` `[0.3.0]`). Single source `mobile/package.json` = `0.3.0`; derived
+  `expo.version` + root `version` synced. Tag pushed → `build-apk.yml` publishes the GitHub
+  Release with the APK.
+- **Releases are tag-driven and tags are immutable.** Bump with `npm run version:bump -- <x.y.z>`,
+  then tag `v<x.y.z>` and push the tag. `version:check` fails closed in CI if the tag disagrees.
+- **Adding mobile deps:** never `npx expo install` (it re-hoists `react-native`, breaking the
+  committed `mobile/node_modules/react-native` nesting that `jest.config.js` requires) — use
+  `npm install <pkg>@<ver> --workspace mobile --legacy-peer-deps`.
 - **Android APK distribution.** `npm run mobile:apk` builds a debug-key-signed release APK
   (`mobile/scripts/build-apk.sh` → `mobile/dist/auto-auto-clicker.apk`). A tag push (`v*`) runs
   `.github/workflows/build-apk.yml`, which provisions its **own** Android SDK (no secret),
   validates the tag, builds, and publishes a GitHub Release with the APK. Proven end-to-end:
-  `v0.1.2-preview` then **`v0.2.0`** (latest, non-pre-release, `versionName=0.2.0`,
-  `versionCode=33`). See `openspec/specs/android-apk-distribution/`.
+  `v0.1.2-preview`, `v0.2.0`, then **`v0.3.0`** (latest, non-pre-release, `versionName=0.3.0`).
+  See `openspec/specs/android-apk-distribution/`.
 - **Version tracking.** Single source of truth = `mobile/package.json` `version` (currently
-  **`0.2.0`**); `mobile/app.json` `expo.version` and root `package.json` `version` are **derived**.
+  **`0.3.0`**); `mobile/app.json` `expo.version` and root `package.json` `version` are **derived**.
   `npm run version:sync|bump|check` (`scripts/version.mjs`, dependency-free). `check` fails on
   derived-file drift and on a tag/version mismatch, and **fails closed** in CI when no `v*` tag
   resolves. `CHANGELOG.md` follows Keep a Changelog. See `openspec/specs/version-tracking/`.
   - **`android.versionCode` is the commit count** (`git rev-list --count HEAD`), never derived
-    from semver — `v0.2.0` shipped `versionCode=33` (up from `29`).
+    from semver — `v0.2.0` shipped `versionCode=33`; `v0.3.0` ships the current count.
 - **Expo SDK 57 (stable) realignment.** `mobile/` runs the SDK-57 paired set
   (`react-native 0.86.3`, `react 19.2.3`, `expo ~57.0.26`); the RN-0.87 jest shim was removed.
   SDK 58 was deliberately avoided (preview / RN 0.88 RC).
@@ -111,7 +120,7 @@ The one-line switch is `export const ACTIVE_THEME: Theme = <name>;` in
 `engine-core/src/theme/index.ts` (committed value: `fantasy`).
 
 ### Mobile gates (current, verified)
-- `npm run test -w mobile` → **131 passed (15 suites), exit 0**.
+- `npm run test -w mobile` → **133 passed (15 suites), exit 0**.
 - `npm run mobile:typecheck` → clean. `npm run mobile:apk` → builds
   `mobile/dist/auto-auto-clicker.apk` locally (needs the `$HOME` toolchain).
 - `npm run mobile:assets` → regenerates `mobile/assets/themes/**` + `mobile/src/themeAssets.gen.ts`
