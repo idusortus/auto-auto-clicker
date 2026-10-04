@@ -12,6 +12,27 @@ are kept in sync with `npm run version:sync` and verified by
 
 ## [Unreleased]
 
+## [0.4.0-preview] - 2026-10-04
+
+### Added
+
+- **Real pixel-art sprites.** `npm run pixel:art`
+  (`engine-core/scripts/make-pixel-art.ts`) generates the `fantasy` theme's sprites — a hero, a
+  grunt, a horned boss, a small imp (four Shiny variants), and the spawn popup — as dark-outlined
+  16-bit-era pixel art at the exact contract sizes, replacing the generated placeholder blobs.
+- **Frame-sequence animation.** The theme display contract now expresses an ordered frame
+  sequence per asset slot (`AssetSlotSpec.frames`, `Theme.assets` as a frame list); idle sprites
+  loop their idle frames and each animation cue plays its sequence once across the cue duration,
+  on both the web and Expo hosts. Reduced motion holds a single rest frame.
+- **Frame-aware validation.** `npm run theme:check` verifies every declared frame exists at its
+  exact pixel size for the active theme; the engine theme tests assert both themes declare the
+  same frame set.
+
+### Changed
+
+- The placeholder generator emits per-frame files so `lucky` (which keeps placeholder art) stays
+  contract-identical to `fantasy`.
+
 ## [0.3.0] - 2026-10-04
 
 ### Added

@@ -79,6 +79,11 @@
 - [x] 6.2 Update `README.md` (theme section: real art + frame sequences + the generator; the
   `theme:check` frame contract) and `STATE.md`; verify the docs describe the new shape and that no
   identity or balance value changed.
-- [ ] 6.3 Build the APK (`npm run mobile:apk`) and visually confirm on a device/emulator that
+- [x] 6.3 Build the APK (`npm run mobile:apk`) and visually confirm on a device/emulator that
   sprites are recognisable pixel art and animations play (idle loop + cue sequences), with reduced
   motion holding a rest frame; record the outcome.
+  (APK built successfully: `BUILD SUCCESSFUL in 2m 47s`, 77M / 80,031,372 bytes at
+  `mobile/dist/auto-auto-clicker.apk`; `aapt2 dump badging` confirms `com.autoautoclicker.app`,
+  `versionName 0.3.0`, compileSdk 36; sprites are bundled inside `assets/index.android.bundle` as
+  Metro static assets. The ON-DEVICE visual confirmation cannot be run from this environment — it is
+  the standing manual follow-up in `STATE.md`.)

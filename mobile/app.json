@@ -2,7 +2,7 @@
   "expo": {
     "name": "Auto Auto Clicker",
     "slug": "auto-auto-clicker",
-    "version": "0.3.0",
+    "version": "0.4.0-preview",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "newArchEnabled": true,
