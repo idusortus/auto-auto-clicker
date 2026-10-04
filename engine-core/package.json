@@ -20,7 +20,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "theme:check": "tsx scripts/check-theme.ts",
-    "theme:assets": "tsx scripts/make-placeholder-assets.ts"
+    "theme:assets": "tsx scripts/make-placeholder-assets.ts",
+    "pixel:art": "tsx scripts/make-pixel-art.ts"
   },
   "devDependencies": {
     "@types/node": "^22.20.4",

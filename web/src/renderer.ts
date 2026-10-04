@@ -84,13 +84,19 @@ const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
 let reducedMotion = motionQuery.matches;
 
 /**
- * Resolve a theme asset slot to the public URL the browser loads. The
+ * Resolve a theme asset slot's frame to the public URL the browser loads. The
  * `/themes/<theme-name>/` directory is derived from the theme's own `name`, and
- * the file name comes from its `assets` map — so `/web` duplicates neither the
- * directory convention nor any asset file name.
+ * the frame file name comes from its `assets` map — so `/web` duplicates neither
+ * the directory convention nor any asset file name. `frameIndex` is clamped into
+ * the slot's declared frame list, so a stale index can never 404.
  */
-function assetUrl(slot: string): string {
-  return `/themes/${theme.name}/${theme.assets[slot]}`;
+function assetUrl(slot: string, frameIndex = 0): string {
+  const frames = theme.assets[slot];
+  if (frames === undefined || frames.length === 0) {
+    throw new Error(`[aac] theme "${theme.name}" declares no frames for asset slot "${slot}"`);
+  }
+  const index = Math.max(0, Math.min(frames.length - 1, frameIndex));
+  return `/themes/${theme.name}/${frames[index]}`;
 }
 
 export interface RendererHandlers {
@@ -166,6 +172,16 @@ const ENEMY_TAUNT_MESSAGE_MS = 2600;
 const MS_PER_SECOND = 1000;
 /** Upper bound on simultaneously live transient frames (one per actor + slack). */
 const MAX_ACTIVE_EFFECTS = 8;
+/**
+ * Idle-loop cadence: each idle frame is shown for `IDLE_LOOP_MS`, looping. The
+ * loop position is derived from a shared monotonic clock (no per-actor timer), so
+ * one animation frame advances every idle sprite together. `IDLE_MAX_FRAMES`
+ * bounds the cycle so the modulo stays stable if a theme ships more frames.
+ */
+const IDLE_LOOP_MS = 420;
+const IDLE_MAX_FRAMES = 8;
+/** Monotonic-ish origin captured at module load, so the idle loop starts at frame 0. */
+const MOTION_EPOCH_MS = Date.now();
 
 /** The actor a transient frame belongs to. At most one frame per target is live. */
 type AnimationTarget = 'player' | 'enemy' | 'shiny' | 'global';
@@ -173,8 +189,12 @@ type AnimationTarget = 'player' | 'enemy' | 'shiny' | 'global';
 interface ActiveEffect {
   target: AnimationTarget;
   slot: string;
+  /** Monotonic enqueue time (`performance.now()`)-based; drives the frame index. */
+  startedAtMs: number;
   /** Monotonic deadline (`performance.now()`-based) — never a wall-clock time. */
   expiresAtMs: number;
+  /** The cue's declared display duration (ms), for sequence frame timing. */
+  durationMs: number;
 }
 
 /**
@@ -607,14 +627,11 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     // (theme.enemy.boss) still flags a boss stage on its own.
     refs.enemyName.textContent = enemyDisplay(enemyForStage(state.combat.stage).id).name;
     refs.bossBadge.hidden = !boss;
-    // Idle art wins by default. A live cue frame (attack / hit / death) wins
+    // Idle art wins by default. A live cue sequence (attack / hit / death) wins
     // while it is live; the drain's re-render returns each sprite to idle
-    // automatically when the frame expires.
-    setSprite(refs.playerSprite, currentEffectSlot('player', 'player-idle'));
-    setSprite(
-      refs.enemySprite,
-      currentEffectSlot('enemy', boss ? 'boss-grunt-idle' : 'enemy-grunt-idle'),
-    );
+    // automatically when the cue expires. Idle sprites loop their idle sequence.
+    paintSequence(refs.playerSprite, 'player', 'player-idle');
+    paintSequence(refs.enemySprite, 'enemy', boss ? 'boss-grunt-idle' : 'enemy-grunt-idle');
 
     const maxHp = getEnemyMaxHp(state);
     refs.enemyHp.textContent = theme.enemy.hp(
@@ -796,6 +813,55 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     return effect === null ? idleSlot : effect.slot;
   }
 
+  /**
+   * The frame index a slot's sequence should show after `elapsedMs`, given how
+   * long EACH frame is displayed (`frameMs > 0`).
+   *
+   * - A live cue passes `durationMs / frameCount`, so its frames play ONCE across
+   *   the cue's declared duration (`floor(elapsed / frameMs)`, clamped to the last
+   *   frame, so it holds the final frame for any remainder and always ends).
+   * - Idle passes the fixed `IDLE_LOOP_MS` and wraps with `% count`, so it loops.
+   * - Reduced motion always shows frame 0 (the rest frame) — no loop, no advance.
+   */
+  function sequenceFrameIndex(slot: string, elapsedMs: number, frameMs: number, loop: boolean): number {
+    const frames = theme.assets[slot];
+    const count = frames?.length ?? 1;
+    if (count <= 1 || reducedMotion) return 0;
+    if (frameMs <= 0) return 0;
+    const index = Math.floor(Math.max(0, elapsedMs) / frameMs);
+    return loop ? index % count : Math.min(count - 1, index);
+  }
+
+  /** The idle-loop elapsed time for an actor (a shared clock, advanced by tests). */
+  function idleElapsedMs(): number {
+    const sinceEpoch = Date.now() - MOTION_EPOCH_MS;
+    return sinceEpoch % (IDLE_LOOP_MS * IDLE_MAX_FRAMES);
+  }
+
+  /**
+   * Paint an actor's sprite: the live cue's advancing frame, or its idle loop.
+   * This is the ONE place sprite `<img>` sources are written.
+   */
+  function paintSequence(image: HTMLImageElement, target: AnimationTarget, idleSlot: string): void {
+    if (reducedMotion) {
+      setSprite(image, idleSlot, 0);
+      return;
+    }
+    const effect = activeEffectFor(target);
+    if (effect !== null) {
+      const elapsed = performance.now() - effect.startedAtMs;
+      const count = theme.assets[effect.slot]?.length ?? 1;
+      const frameMs = effect.durationMs / Math.max(1, count);
+      setSprite(image, effect.slot, sequenceFrameIndex(effect.slot, elapsed, frameMs, false));
+      return;
+    }
+    setSprite(
+      image,
+      idleSlot,
+      sequenceFrameIndex(idleSlot, idleElapsedMs(), IDLE_LOOP_MS, true),
+    );
+  }
+
   /** Drop every live frame, stop the drain, and re-project so sprites return to idle. */
   function clearEffects(): void {
     if (drainTimer !== null) {
@@ -852,10 +918,13 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     if (cue.durationMs <= 0) return false;
     const existing = activeEffects.findIndex((effect) => effect.target === target);
     if (existing !== -1) activeEffects.splice(existing, 1);
+    const startedAtMs = performance.now();
     activeEffects.push({
       target,
       slot: cue.slot,
-      expiresAtMs: performance.now() + cue.durationMs,
+      startedAtMs,
+      expiresAtMs: startedAtMs + cue.durationMs,
+      durationMs: cue.durationMs,
     });
     while (activeEffects.length > MAX_ACTIVE_EFFECTS) activeEffects.shift();
     scheduleDrain();
@@ -1099,7 +1168,7 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
       // written on every render (setSprite only writes on a real change), so a
       // cue enqueued after the id changed still reaches the image.
       lastShinySpriteSlot = shinySpriteSlot(active.kind);
-      setSprite(refs.shinySprite, currentEffectSlot('shiny', lastShinySpriteSlot));
+      paintSequence(refs.shinySprite, 'shiny', lastShinySpriteSlot);
       // Same Shiny still on screen: the claim (if any) did not take.
       pendingClaim = false;
       refs.shiny.style.pointerEvents = '';
@@ -1127,7 +1196,7 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     // the drain's re-render hides it and restores the idle frame on expiry.
     const claimEffect = reducedMotion ? null : activeEffectFor('shiny');
     if (claimEffect !== null) {
-      setSprite(refs.shinySprite, currentEffectSlot('shiny', lastShinySpriteSlot));
+      paintSequence(refs.shinySprite, 'shiny', lastShinySpriteSlot);
       refs.shiny.classList.remove('shiny--drift');
       refs.shiny.style.pointerEvents = 'none';
       refs.shiny.hidden = false;
@@ -1136,7 +1205,7 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
 
     // No live frame: hide the element and return its sprite to the last kind's
     // idle frame, ready for the next spawn.
-    setSprite(refs.shinySprite, lastShinySpriteSlot);
+    setSprite(refs.shinySprite, lastShinySpriteSlot, 0);
     refs.shiny.classList.remove('shiny--drift');
     refs.shiny.style.pointerEvents = '';
     refs.shiny.hidden = true;
@@ -1152,7 +1221,7 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
   function renderSpawnPopup(): void {
     const effect = reducedMotion ? null : activeEffectFor('global');
     const key = effect === null ? null : `${effect.slot}:${effect.expiresAtMs}`;
-    if (effect !== null) setSprite(refs.spawnPopupSprite, effect.slot);
+    if (effect !== null) setSprite(refs.spawnPopupSprite, effect.slot, 0);
     refs.spawnPopup.hidden = effect === null;
     if (key === null) {
       refs.spawnPopup.classList.remove('spawn-popup--in');
@@ -1220,6 +1289,29 @@ export function mountRenderer(root: HTMLElement, handlers: RendererHandlers): Re
     }, ENEMY_TAUNT_MESSAGE_MS);
   }
 
+  /**
+   * The IDLE-LOOP ticker. A single interval repaints the visible sprites' current
+   * frame while motion is allowed, so idle sequences loop AND live cue sequences
+   * advance through their frames (a cue is often only ~150 ms — too short to rely
+   * on the drain's single wake). It is a no-op under reduced motion or before the
+   * first render, and it never touches engine state. Only sprite `<img>` sources
+   * change, and `setSprite` writes only on a real change, so this stays cheap.
+   */
+  const SEQUENCE_TICK_MS = 80;
+  function tickSequences(): void {
+    if (latestState === null) return;
+    if (!reducedMotion) {
+      const boss = isBoss(latestState.combat.stage);
+      paintSequence(refs.playerSprite, 'player', 'player-idle');
+      paintSequence(refs.enemySprite, 'enemy', boss ? 'boss-grunt-idle' : 'enemy-grunt-idle');
+      if (!refs.shiny.hidden) paintSequence(refs.shinySprite, 'shiny', lastShinySpriteSlot);
+      if (!refs.spawnPopup.hidden && activeEffectFor('global') !== null) {
+        paintSequence(refs.spawnPopupSprite, 'global', 'spawn-popup');
+      }
+    }
+  }
+  window.setInterval(tickSequences, SEQUENCE_TICK_MS);
+
   return { render, showOfflineSummary };
 }
 
@@ -1242,9 +1334,12 @@ function shinySpriteSlot(kind: ShinyKind): string {
   return 'shiny-cache';
 }
 
-/** Point an `<img>` at a theme asset slot, only when the source actually changes. */
-function setSprite(image: HTMLImageElement, slot: string): void {
-  const src = assetUrl(slot);
+/**
+ * Point an `<img>` at a slot's current FRAME, only when the source changes.
+ * `frameIndex` is clamped by `assetUrl`, so a caller can pass a running index.
+ */
+function setSprite(image: HTMLImageElement, slot: string, frameIndex = 0): void {
+  const src = assetUrl(slot, frameIndex);
   if (image.getAttribute('src') !== src) image.setAttribute('src', src);
 }
 

@@ -95,6 +95,7 @@ export function Arena({
   const hpPercent = maxHp > 0 ? Math.max(0, Math.min(1, hp / maxHp)) : 0;
   const enemyIdleSlot = boss ? 'boss-grunt-idle' : 'enemy-grunt-idle';
   const enemySlot = cues.slotFor('enemy', enemyIdleSlot);
+  const enemyFrame = cues.frameIndexFor('enemy', enemyIdleSlot);
 
   return (
     <View style={layout.stage}>
@@ -114,7 +115,7 @@ export function Arena({
             {theme.enemy.boss}
           </Text>
         ) : null}
-        <ThemeImage slot={enemySlot} />
+        <ThemeImage slot={enemySlot} frameIndex={enemyFrame} />
         <Text testID="enemy-name" style={[layout.enemyName, styles.text]}>
           {display.name}
         </Text>
@@ -265,6 +266,7 @@ function ShinyClaim({
   const active = getActiveEvent(state);
   if (active === null) return null;
   const shinySlot = cues.slotFor('shiny', shinySpriteSlot(active.kind));
+  const shinyFrame = cues.frameIndexFor('shiny', shinySpriteSlot(active.kind));
   return (
     <Animated.View style={[drift, pulse]}>
       <Pressable
@@ -274,7 +276,7 @@ function ShinyClaim({
         onPress={onClaim}
         style={[layout.shiny, styles.raised, styles.accentEdge]}
       >
-        <ThemeImage slot={shinySlot} />
+        <ThemeImage slot={shinySlot} frameIndex={shinyFrame} />
         <Text style={[layout.shinyName, styles.text]}>{shinyName(active.kind)}</Text>
       </Pressable>
     </Animated.View>

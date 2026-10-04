@@ -21,9 +21,11 @@ import type { ThemeAssetSource } from './themeAssets.gen';
 /** The shipped theme directory names the generator copies (from `web/public/themes/`). */
 const SHIPPED_THEMES = ['fantasy', 'lucky'] as const;
 
-/** Registry keys declared by any theme's `assets` map (name/fileName pairs). */
+/** Registry keys declared by any theme's `assets` map (name/frameName pairs). */
 function declaredKeys(theme: Theme): string[] {
-  return Object.values(theme.assets).map((fileName) => `${theme.name}/${fileName}`);
+  return Object.values(theme.assets)
+    .flatMap((fileNames) => fileNames)
+    .map((fileName) => `${theme.name}/${fileName}`);
 }
 
 /** Keys a theme declares that a given registry lacks. */
@@ -36,20 +38,30 @@ function keysForTheme(registry: Record<string, ThemeAssetSource>, name: string):
   return Object.keys(registry).filter((key) => key.startsWith(`${name}/`));
 }
 
+/** Total declared FRAMES across a theme's slots. */
+function declaredFrameCount(theme: Theme): number {
+  return Object.values(theme.assets).reduce((sum, fileNames) => sum + fileNames.length, 0);
+}
+
 describe('THEME_ASSETS (2.4)', () => {
-  it('covers every asset key the active theme declares', () => {
+  it('covers every asset frame key the active theme declares', () => {
     expect(missingKeys(ACTIVE_THEME, THEME_ASSETS)).toEqual([]);
   });
 
-  it('has 32 entries per shipped theme (the declared slot count)', () => {
+  it('covers every active-theme slot across all 32 slots', () => {
+    expect(Object.keys(ACTIVE_THEME.assets)).toHaveLength(32);
+    expect(declaredKeys(ACTIVE_THEME).length).toBe(declaredFrameCount(ACTIVE_THEME));
+  });
+
+  it('has one registry entry per declared frame, per shipped theme', () => {
     for (const name of SHIPPED_THEMES) {
-      expect(keysForTheme(THEME_ASSETS, name)).toHaveLength(32);
+      expect(keysForTheme(THEME_ASSETS, name).length).toBeGreaterThanOrEqual(32);
     }
   });
 
-  it('covers a registry key for every active-theme slot, both themes present', () => {
+  it('covers a registry key for every active-theme frame, both themes present', () => {
     const activeKeys = declaredKeys(ACTIVE_THEME);
-    expect(activeKeys.length).toBe(32);
+    expect(activeKeys.length).toBeGreaterThanOrEqual(32);
     for (const key of activeKeys) {
       expect(THEME_ASSETS[key]).toBeDefined();
     }

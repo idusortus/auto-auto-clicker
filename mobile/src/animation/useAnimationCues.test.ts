@@ -8,7 +8,7 @@ import { act, renderHook } from '@testing-library/react-native';
 import { ACTIVE_THEME } from '@auto-auto-clicker/engine-core';
 import type { GameEvent } from '@auto-auto-clicker/engine-core';
 
-import { useAnimationCues } from './useAnimationCues';
+import { IDLE_LOOP_MS, useAnimationCues } from './useAnimationCues';
 import type { CueScheduler } from './useAnimationCues';
 import type { ReducedMotionSource } from './useReducedMotion';
 
@@ -16,6 +16,8 @@ import type { ReducedMotionSource } from './useReducedMotion';
 class ManualCueScheduler implements CueScheduler {
   private handler: (() => void) | null = null;
   private lastDelay: number | null = null;
+  private intervalHandler: (() => void) | null = null;
+  private lastInterval: number | null = null;
 
   setTimeout(handler: () => void, delayMs: number): unknown {
     this.handler = handler;
@@ -25,6 +27,25 @@ class ManualCueScheduler implements CueScheduler {
 
   clearTimeout(): void {
     this.handler = null;
+  }
+
+  setInterval(handler: () => void, intervalMs: number): unknown {
+    this.intervalHandler = handler;
+    this.lastInterval = intervalMs;
+    return Symbol('interval');
+  }
+
+  clearInterval(): void {
+    this.intervalHandler = null;
+  }
+
+  /** Fire the idle-loop interval once (simulates one heartbeat). */
+  tick(): void {
+    this.intervalHandler?.();
+  }
+
+  get intervalScheduled(): boolean {
+    return this.intervalHandler !== null;
   }
 
   fire(): void {
@@ -212,5 +233,78 @@ describe('useAnimationCues (3.3)', () => {
     } finally {
       cues.playerAttack.durationMs = original;
     }
+  });
+
+  it('advances the idle sequence frame over time and loops', async () => {
+    const scheduler = new ManualCueScheduler();
+    const motion = motionSource(false);
+    let nowMs = 10_000;
+    const frames = ACTIVE_THEME.assets['player-idle']!;
+    expect(frames.length).toBeGreaterThan(1);
+
+    const { result } = await renderHook(
+      ({ events }: { events: readonly GameEvent[] }) =>
+        useAnimationCues(events, 1, {
+          scheduler,
+          reducedMotionSource: motion.source,
+          now: () => nowMs,
+        }),
+      { initialProps: { events: [] as readonly GameEvent[] } },
+    );
+    await settle();
+
+    // Frame 0 at the origin, then one frame later, then wraps back to 0.
+    expect(result.current.frameIndexFor('player', 'player-idle')).toBe(0);
+    nowMs += IDLE_LOOP_MS;
+    expect(result.current.frameIndexFor('player', 'player-idle')).toBe(1);
+    nowMs += IDLE_LOOP_MS * (frames.length - 1);
+    expect(result.current.frameIndexFor('player', 'player-idle')).toBe(0);
+  });
+
+  it('plays a cue sequence once across its duration, then holds the last frame', async () => {
+    const scheduler = new ManualCueScheduler();
+    const motion = motionSource(false);
+    let nowMs = 5000;
+
+    const { result, rerender } = await renderHook(
+      ({ events }: { events: readonly GameEvent[] }) =>
+        useAnimationCues(events, 1, {
+          scheduler,
+          reducedMotionSource: motion.source,
+          now: () => nowMs,
+        }),
+      { initialProps: { events: [] as readonly GameEvent[] } },
+    );
+    await settle();
+    await rerender({ events: [clickEvent] });
+
+    const slot = ACTIVE_THEME.animation.cues.enemyHit.slot;
+    const count = ACTIVE_THEME.assets[slot]!.length;
+    const durationMs = ACTIVE_THEME.animation.cues.enemyHit.durationMs;
+
+    // The enemy cue wins; its sequence advances and clamps at the last frame.
+    expect(result.current.slotFor('enemy', 'enemy-grunt-idle')).toBe(slot);
+    expect(result.current.frameIndexFor('enemy', 'enemy-grunt-idle')).toBe(0);
+    nowMs += durationMs; // past the whole cue
+    expect(result.current.frameIndexFor('enemy', 'enemy-grunt-idle')).toBe(count - 1);
+  });
+
+  it('returns frame 0 for every actor under reduced motion (rest frame)', async () => {
+    const scheduler = new ManualCueScheduler();
+    const motion = motionSource(true);
+
+    const { result, rerender } = await renderHook(
+      ({ events }: { events: readonly GameEvent[] }) =>
+        useAnimationCues(events, 1, { scheduler, reducedMotionSource: motion.source }),
+      { initialProps: { events: [] as readonly GameEvent[] } },
+    );
+    await settle();
+    await rerender({ events: [clickEvent] });
+
+    expect(result.current.reducedMotion).toBe(true);
+    expect(result.current.frameIndexFor('player', 'player-idle')).toBe(0);
+    expect(result.current.frameIndexFor('enemy', 'enemy-grunt-idle')).toBe(0);
+    // No idle-loop interval under reduced motion.
+    expect(scheduler.intervalScheduled).toBe(false);
   });
 });

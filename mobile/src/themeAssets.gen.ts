@@ -17,323 +17,493 @@ export interface ThemeAssetSource {
 }
 
 export const THEME_ASSETS: Record<string, ThemeAssetSource> = {
-  'fantasy/boss-grunt-attack.png': {
-    source: require('../assets/themes/fantasy/boss-grunt-attack.png'),
+  'fantasy/boss-grunt-attack-0.png': {
+    source: require('../assets/themes/fantasy/boss-grunt-attack-0.png'),
     width: 96,
     height: 96,
   },
-  'fantasy/boss-grunt-death.png': {
-    source: require('../assets/themes/fantasy/boss-grunt-death.png'),
+  'fantasy/boss-grunt-attack-1.png': {
+    source: require('../assets/themes/fantasy/boss-grunt-attack-1.png'),
     width: 96,
     height: 96,
   },
-  'fantasy/boss-grunt-hurt.png': {
-    source: require('../assets/themes/fantasy/boss-grunt-hurt.png'),
+  'fantasy/boss-grunt-death-0.png': {
+    source: require('../assets/themes/fantasy/boss-grunt-death-0.png'),
     width: 96,
     height: 96,
   },
-  'fantasy/boss-grunt-idle.png': {
-    source: require('../assets/themes/fantasy/boss-grunt-idle.png'),
+  'fantasy/boss-grunt-death-1.png': {
+    source: require('../assets/themes/fantasy/boss-grunt-death-1.png'),
     width: 96,
     height: 96,
   },
-  'fantasy/enemy-grunt-attack.png': {
-    source: require('../assets/themes/fantasy/enemy-grunt-attack.png'),
+  'fantasy/boss-grunt-death-2.png': {
+    source: require('../assets/themes/fantasy/boss-grunt-death-2.png'),
+    width: 96,
+    height: 96,
+  },
+  'fantasy/boss-grunt-hurt-0.png': {
+    source: require('../assets/themes/fantasy/boss-grunt-hurt-0.png'),
+    width: 96,
+    height: 96,
+  },
+  'fantasy/boss-grunt-hurt-1.png': {
+    source: require('../assets/themes/fantasy/boss-grunt-hurt-1.png'),
+    width: 96,
+    height: 96,
+  },
+  'fantasy/boss-grunt-idle-0.png': {
+    source: require('../assets/themes/fantasy/boss-grunt-idle-0.png'),
+    width: 96,
+    height: 96,
+  },
+  'fantasy/boss-grunt-idle-1.png': {
+    source: require('../assets/themes/fantasy/boss-grunt-idle-1.png'),
+    width: 96,
+    height: 96,
+  },
+  'fantasy/enemy-grunt-attack-0.png': {
+    source: require('../assets/themes/fantasy/enemy-grunt-attack-0.png'),
     width: 64,
     height: 64,
   },
-  'fantasy/enemy-grunt-death.png': {
-    source: require('../assets/themes/fantasy/enemy-grunt-death.png'),
+  'fantasy/enemy-grunt-attack-1.png': {
+    source: require('../assets/themes/fantasy/enemy-grunt-attack-1.png'),
     width: 64,
     height: 64,
   },
-  'fantasy/enemy-grunt-hurt.png': {
-    source: require('../assets/themes/fantasy/enemy-grunt-hurt.png'),
+  'fantasy/enemy-grunt-death-0.png': {
+    source: require('../assets/themes/fantasy/enemy-grunt-death-0.png'),
     width: 64,
     height: 64,
   },
-  'fantasy/enemy-grunt-idle.png': {
-    source: require('../assets/themes/fantasy/enemy-grunt-idle.png'),
+  'fantasy/enemy-grunt-death-1.png': {
+    source: require('../assets/themes/fantasy/enemy-grunt-death-1.png'),
     width: 64,
     height: 64,
   },
-  'fantasy/gear-necklace-t1.png': {
-    source: require('../assets/themes/fantasy/gear-necklace-t1.png'),
-    width: 48,
-    height: 48,
-  },
-  'fantasy/gear-necklace-t2.png': {
-    source: require('../assets/themes/fantasy/gear-necklace-t2.png'),
-    width: 48,
-    height: 48,
-  },
-  'fantasy/gear-necklace-t3.png': {
-    source: require('../assets/themes/fantasy/gear-necklace-t3.png'),
-    width: 48,
-    height: 48,
-  },
-  'fantasy/gear-necklace-t4.png': {
-    source: require('../assets/themes/fantasy/gear-necklace-t4.png'),
-    width: 48,
-    height: 48,
-  },
-  'fantasy/gear-ring1-t1.png': {
-    source: require('../assets/themes/fantasy/gear-ring1-t1.png'),
-    width: 48,
-    height: 48,
-  },
-  'fantasy/gear-ring1-t2.png': {
-    source: require('../assets/themes/fantasy/gear-ring1-t2.png'),
-    width: 48,
-    height: 48,
-  },
-  'fantasy/gear-ring1-t3.png': {
-    source: require('../assets/themes/fantasy/gear-ring1-t3.png'),
-    width: 48,
-    height: 48,
-  },
-  'fantasy/gear-ring1-t4.png': {
-    source: require('../assets/themes/fantasy/gear-ring1-t4.png'),
-    width: 48,
-    height: 48,
-  },
-  'fantasy/gear-ring2-t1.png': {
-    source: require('../assets/themes/fantasy/gear-ring2-t1.png'),
-    width: 48,
-    height: 48,
-  },
-  'fantasy/gear-ring2-t2.png': {
-    source: require('../assets/themes/fantasy/gear-ring2-t2.png'),
-    width: 48,
-    height: 48,
-  },
-  'fantasy/gear-ring2-t3.png': {
-    source: require('../assets/themes/fantasy/gear-ring2-t3.png'),
-    width: 48,
-    height: 48,
-  },
-  'fantasy/gear-ring2-t4.png': {
-    source: require('../assets/themes/fantasy/gear-ring2-t4.png'),
-    width: 48,
-    height: 48,
-  },
-  'fantasy/gear-weapon-t1.png': {
-    source: require('../assets/themes/fantasy/gear-weapon-t1.png'),
-    width: 48,
-    height: 48,
-  },
-  'fantasy/gear-weapon-t2.png': {
-    source: require('../assets/themes/fantasy/gear-weapon-t2.png'),
-    width: 48,
-    height: 48,
-  },
-  'fantasy/gear-weapon-t3.png': {
-    source: require('../assets/themes/fantasy/gear-weapon-t3.png'),
-    width: 48,
-    height: 48,
-  },
-  'fantasy/gear-weapon-t4.png': {
-    source: require('../assets/themes/fantasy/gear-weapon-t4.png'),
-    width: 48,
-    height: 48,
-  },
-  'fantasy/player-attack.png': {
-    source: require('../assets/themes/fantasy/player-attack.png'),
+  'fantasy/enemy-grunt-death-2.png': {
+    source: require('../assets/themes/fantasy/enemy-grunt-death-2.png'),
     width: 64,
     height: 64,
   },
-  'fantasy/player-hurt.png': {
-    source: require('../assets/themes/fantasy/player-hurt.png'),
+  'fantasy/enemy-grunt-hurt-0.png': {
+    source: require('../assets/themes/fantasy/enemy-grunt-hurt-0.png'),
     width: 64,
     height: 64,
   },
-  'fantasy/player-idle.png': {
-    source: require('../assets/themes/fantasy/player-idle.png'),
+  'fantasy/enemy-grunt-hurt-1.png': {
+    source: require('../assets/themes/fantasy/enemy-grunt-hurt-1.png'),
     width: 64,
     height: 64,
   },
-  'fantasy/shiny-cache.png': {
-    source: require('../assets/themes/fantasy/shiny-cache.png'),
+  'fantasy/enemy-grunt-idle-0.png': {
+    source: require('../assets/themes/fantasy/enemy-grunt-idle-0.png'),
+    width: 64,
+    height: 64,
+  },
+  'fantasy/enemy-grunt-idle-1.png': {
+    source: require('../assets/themes/fantasy/enemy-grunt-idle-1.png'),
+    width: 64,
+    height: 64,
+  },
+  'fantasy/gear-necklace-t1-0.png': {
+    source: require('../assets/themes/fantasy/gear-necklace-t1-0.png'),
     width: 48,
     height: 48,
   },
-  'fantasy/shiny-drop.png': {
-    source: require('../assets/themes/fantasy/shiny-drop.png'),
+  'fantasy/gear-necklace-t2-0.png': {
+    source: require('../assets/themes/fantasy/gear-necklace-t2-0.png'),
     width: 48,
     height: 48,
   },
-  'fantasy/shiny-frenzy.png': {
-    source: require('../assets/themes/fantasy/shiny-frenzy.png'),
+  'fantasy/gear-necklace-t3-0.png': {
+    source: require('../assets/themes/fantasy/gear-necklace-t3-0.png'),
     width: 48,
     height: 48,
   },
-  'fantasy/shiny-idle.png': {
-    source: require('../assets/themes/fantasy/shiny-idle.png'),
+  'fantasy/gear-necklace-t4-0.png': {
+    source: require('../assets/themes/fantasy/gear-necklace-t4-0.png'),
     width: 48,
     height: 48,
   },
-  'fantasy/spawn-popup.png': {
-    source: require('../assets/themes/fantasy/spawn-popup.png'),
+  'fantasy/gear-ring1-t1-0.png': {
+    source: require('../assets/themes/fantasy/gear-ring1-t1-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'fantasy/gear-ring1-t2-0.png': {
+    source: require('../assets/themes/fantasy/gear-ring1-t2-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'fantasy/gear-ring1-t3-0.png': {
+    source: require('../assets/themes/fantasy/gear-ring1-t3-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'fantasy/gear-ring1-t4-0.png': {
+    source: require('../assets/themes/fantasy/gear-ring1-t4-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'fantasy/gear-ring2-t1-0.png': {
+    source: require('../assets/themes/fantasy/gear-ring2-t1-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'fantasy/gear-ring2-t2-0.png': {
+    source: require('../assets/themes/fantasy/gear-ring2-t2-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'fantasy/gear-ring2-t3-0.png': {
+    source: require('../assets/themes/fantasy/gear-ring2-t3-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'fantasy/gear-ring2-t4-0.png': {
+    source: require('../assets/themes/fantasy/gear-ring2-t4-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'fantasy/gear-weapon-t1-0.png': {
+    source: require('../assets/themes/fantasy/gear-weapon-t1-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'fantasy/gear-weapon-t2-0.png': {
+    source: require('../assets/themes/fantasy/gear-weapon-t2-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'fantasy/gear-weapon-t3-0.png': {
+    source: require('../assets/themes/fantasy/gear-weapon-t3-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'fantasy/gear-weapon-t4-0.png': {
+    source: require('../assets/themes/fantasy/gear-weapon-t4-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'fantasy/player-attack-0.png': {
+    source: require('../assets/themes/fantasy/player-attack-0.png'),
+    width: 64,
+    height: 64,
+  },
+  'fantasy/player-attack-1.png': {
+    source: require('../assets/themes/fantasy/player-attack-1.png'),
+    width: 64,
+    height: 64,
+  },
+  'fantasy/player-hurt-0.png': {
+    source: require('../assets/themes/fantasy/player-hurt-0.png'),
+    width: 64,
+    height: 64,
+  },
+  'fantasy/player-hurt-1.png': {
+    source: require('../assets/themes/fantasy/player-hurt-1.png'),
+    width: 64,
+    height: 64,
+  },
+  'fantasy/player-idle-0.png': {
+    source: require('../assets/themes/fantasy/player-idle-0.png'),
+    width: 64,
+    height: 64,
+  },
+  'fantasy/player-idle-1.png': {
+    source: require('../assets/themes/fantasy/player-idle-1.png'),
+    width: 64,
+    height: 64,
+  },
+  'fantasy/shiny-cache-0.png': {
+    source: require('../assets/themes/fantasy/shiny-cache-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'fantasy/shiny-cache-1.png': {
+    source: require('../assets/themes/fantasy/shiny-cache-1.png'),
+    width: 48,
+    height: 48,
+  },
+  'fantasy/shiny-drop-0.png': {
+    source: require('../assets/themes/fantasy/shiny-drop-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'fantasy/shiny-drop-1.png': {
+    source: require('../assets/themes/fantasy/shiny-drop-1.png'),
+    width: 48,
+    height: 48,
+  },
+  'fantasy/shiny-frenzy-0.png': {
+    source: require('../assets/themes/fantasy/shiny-frenzy-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'fantasy/shiny-frenzy-1.png': {
+    source: require('../assets/themes/fantasy/shiny-frenzy-1.png'),
+    width: 48,
+    height: 48,
+  },
+  'fantasy/shiny-idle-0.png': {
+    source: require('../assets/themes/fantasy/shiny-idle-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'fantasy/shiny-idle-1.png': {
+    source: require('../assets/themes/fantasy/shiny-idle-1.png'),
+    width: 48,
+    height: 48,
+  },
+  'fantasy/spawn-popup-0.png': {
+    source: require('../assets/themes/fantasy/spawn-popup-0.png'),
     width: 96,
     height: 32,
   },
-  'lucky/boss-grunt-attack.png': {
-    source: require('../assets/themes/lucky/boss-grunt-attack.png'),
+  'lucky/boss-grunt-attack-0.png': {
+    source: require('../assets/themes/lucky/boss-grunt-attack-0.png'),
     width: 96,
     height: 96,
   },
-  'lucky/boss-grunt-death.png': {
-    source: require('../assets/themes/lucky/boss-grunt-death.png'),
+  'lucky/boss-grunt-attack-1.png': {
+    source: require('../assets/themes/lucky/boss-grunt-attack-1.png'),
     width: 96,
     height: 96,
   },
-  'lucky/boss-grunt-hurt.png': {
-    source: require('../assets/themes/lucky/boss-grunt-hurt.png'),
+  'lucky/boss-grunt-death-0.png': {
+    source: require('../assets/themes/lucky/boss-grunt-death-0.png'),
     width: 96,
     height: 96,
   },
-  'lucky/boss-grunt-idle.png': {
-    source: require('../assets/themes/lucky/boss-grunt-idle.png'),
+  'lucky/boss-grunt-death-1.png': {
+    source: require('../assets/themes/lucky/boss-grunt-death-1.png'),
     width: 96,
     height: 96,
   },
-  'lucky/enemy-grunt-attack.png': {
-    source: require('../assets/themes/lucky/enemy-grunt-attack.png'),
+  'lucky/boss-grunt-death-2.png': {
+    source: require('../assets/themes/lucky/boss-grunt-death-2.png'),
+    width: 96,
+    height: 96,
+  },
+  'lucky/boss-grunt-hurt-0.png': {
+    source: require('../assets/themes/lucky/boss-grunt-hurt-0.png'),
+    width: 96,
+    height: 96,
+  },
+  'lucky/boss-grunt-hurt-1.png': {
+    source: require('../assets/themes/lucky/boss-grunt-hurt-1.png'),
+    width: 96,
+    height: 96,
+  },
+  'lucky/boss-grunt-idle-0.png': {
+    source: require('../assets/themes/lucky/boss-grunt-idle-0.png'),
+    width: 96,
+    height: 96,
+  },
+  'lucky/boss-grunt-idle-1.png': {
+    source: require('../assets/themes/lucky/boss-grunt-idle-1.png'),
+    width: 96,
+    height: 96,
+  },
+  'lucky/enemy-grunt-attack-0.png': {
+    source: require('../assets/themes/lucky/enemy-grunt-attack-0.png'),
     width: 64,
     height: 64,
   },
-  'lucky/enemy-grunt-death.png': {
-    source: require('../assets/themes/lucky/enemy-grunt-death.png'),
+  'lucky/enemy-grunt-attack-1.png': {
+    source: require('../assets/themes/lucky/enemy-grunt-attack-1.png'),
     width: 64,
     height: 64,
   },
-  'lucky/enemy-grunt-hurt.png': {
-    source: require('../assets/themes/lucky/enemy-grunt-hurt.png'),
+  'lucky/enemy-grunt-death-0.png': {
+    source: require('../assets/themes/lucky/enemy-grunt-death-0.png'),
     width: 64,
     height: 64,
   },
-  'lucky/enemy-grunt-idle.png': {
-    source: require('../assets/themes/lucky/enemy-grunt-idle.png'),
+  'lucky/enemy-grunt-death-1.png': {
+    source: require('../assets/themes/lucky/enemy-grunt-death-1.png'),
     width: 64,
     height: 64,
   },
-  'lucky/gear-necklace-t1.png': {
-    source: require('../assets/themes/lucky/gear-necklace-t1.png'),
-    width: 48,
-    height: 48,
-  },
-  'lucky/gear-necklace-t2.png': {
-    source: require('../assets/themes/lucky/gear-necklace-t2.png'),
-    width: 48,
-    height: 48,
-  },
-  'lucky/gear-necklace-t3.png': {
-    source: require('../assets/themes/lucky/gear-necklace-t3.png'),
-    width: 48,
-    height: 48,
-  },
-  'lucky/gear-necklace-t4.png': {
-    source: require('../assets/themes/lucky/gear-necklace-t4.png'),
-    width: 48,
-    height: 48,
-  },
-  'lucky/gear-ring1-t1.png': {
-    source: require('../assets/themes/lucky/gear-ring1-t1.png'),
-    width: 48,
-    height: 48,
-  },
-  'lucky/gear-ring1-t2.png': {
-    source: require('../assets/themes/lucky/gear-ring1-t2.png'),
-    width: 48,
-    height: 48,
-  },
-  'lucky/gear-ring1-t3.png': {
-    source: require('../assets/themes/lucky/gear-ring1-t3.png'),
-    width: 48,
-    height: 48,
-  },
-  'lucky/gear-ring1-t4.png': {
-    source: require('../assets/themes/lucky/gear-ring1-t4.png'),
-    width: 48,
-    height: 48,
-  },
-  'lucky/gear-ring2-t1.png': {
-    source: require('../assets/themes/lucky/gear-ring2-t1.png'),
-    width: 48,
-    height: 48,
-  },
-  'lucky/gear-ring2-t2.png': {
-    source: require('../assets/themes/lucky/gear-ring2-t2.png'),
-    width: 48,
-    height: 48,
-  },
-  'lucky/gear-ring2-t3.png': {
-    source: require('../assets/themes/lucky/gear-ring2-t3.png'),
-    width: 48,
-    height: 48,
-  },
-  'lucky/gear-ring2-t4.png': {
-    source: require('../assets/themes/lucky/gear-ring2-t4.png'),
-    width: 48,
-    height: 48,
-  },
-  'lucky/gear-weapon-t1.png': {
-    source: require('../assets/themes/lucky/gear-weapon-t1.png'),
-    width: 48,
-    height: 48,
-  },
-  'lucky/gear-weapon-t2.png': {
-    source: require('../assets/themes/lucky/gear-weapon-t2.png'),
-    width: 48,
-    height: 48,
-  },
-  'lucky/gear-weapon-t3.png': {
-    source: require('../assets/themes/lucky/gear-weapon-t3.png'),
-    width: 48,
-    height: 48,
-  },
-  'lucky/gear-weapon-t4.png': {
-    source: require('../assets/themes/lucky/gear-weapon-t4.png'),
-    width: 48,
-    height: 48,
-  },
-  'lucky/player-attack.png': {
-    source: require('../assets/themes/lucky/player-attack.png'),
+  'lucky/enemy-grunt-death-2.png': {
+    source: require('../assets/themes/lucky/enemy-grunt-death-2.png'),
     width: 64,
     height: 64,
   },
-  'lucky/player-hurt.png': {
-    source: require('../assets/themes/lucky/player-hurt.png'),
+  'lucky/enemy-grunt-hurt-0.png': {
+    source: require('../assets/themes/lucky/enemy-grunt-hurt-0.png'),
     width: 64,
     height: 64,
   },
-  'lucky/player-idle.png': {
-    source: require('../assets/themes/lucky/player-idle.png'),
+  'lucky/enemy-grunt-hurt-1.png': {
+    source: require('../assets/themes/lucky/enemy-grunt-hurt-1.png'),
     width: 64,
     height: 64,
   },
-  'lucky/shiny-cache.png': {
-    source: require('../assets/themes/lucky/shiny-cache.png'),
+  'lucky/enemy-grunt-idle-0.png': {
+    source: require('../assets/themes/lucky/enemy-grunt-idle-0.png'),
+    width: 64,
+    height: 64,
+  },
+  'lucky/enemy-grunt-idle-1.png': {
+    source: require('../assets/themes/lucky/enemy-grunt-idle-1.png'),
+    width: 64,
+    height: 64,
+  },
+  'lucky/gear-necklace-t1-0.png': {
+    source: require('../assets/themes/lucky/gear-necklace-t1-0.png'),
     width: 48,
     height: 48,
   },
-  'lucky/shiny-drop.png': {
-    source: require('../assets/themes/lucky/shiny-drop.png'),
+  'lucky/gear-necklace-t2-0.png': {
+    source: require('../assets/themes/lucky/gear-necklace-t2-0.png'),
     width: 48,
     height: 48,
   },
-  'lucky/shiny-frenzy.png': {
-    source: require('../assets/themes/lucky/shiny-frenzy.png'),
+  'lucky/gear-necklace-t3-0.png': {
+    source: require('../assets/themes/lucky/gear-necklace-t3-0.png'),
     width: 48,
     height: 48,
   },
-  'lucky/shiny-idle.png': {
-    source: require('../assets/themes/lucky/shiny-idle.png'),
+  'lucky/gear-necklace-t4-0.png': {
+    source: require('../assets/themes/lucky/gear-necklace-t4-0.png'),
     width: 48,
     height: 48,
   },
-  'lucky/spawn-popup.png': {
-    source: require('../assets/themes/lucky/spawn-popup.png'),
+  'lucky/gear-ring1-t1-0.png': {
+    source: require('../assets/themes/lucky/gear-ring1-t1-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'lucky/gear-ring1-t2-0.png': {
+    source: require('../assets/themes/lucky/gear-ring1-t2-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'lucky/gear-ring1-t3-0.png': {
+    source: require('../assets/themes/lucky/gear-ring1-t3-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'lucky/gear-ring1-t4-0.png': {
+    source: require('../assets/themes/lucky/gear-ring1-t4-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'lucky/gear-ring2-t1-0.png': {
+    source: require('../assets/themes/lucky/gear-ring2-t1-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'lucky/gear-ring2-t2-0.png': {
+    source: require('../assets/themes/lucky/gear-ring2-t2-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'lucky/gear-ring2-t3-0.png': {
+    source: require('../assets/themes/lucky/gear-ring2-t3-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'lucky/gear-ring2-t4-0.png': {
+    source: require('../assets/themes/lucky/gear-ring2-t4-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'lucky/gear-weapon-t1-0.png': {
+    source: require('../assets/themes/lucky/gear-weapon-t1-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'lucky/gear-weapon-t2-0.png': {
+    source: require('../assets/themes/lucky/gear-weapon-t2-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'lucky/gear-weapon-t3-0.png': {
+    source: require('../assets/themes/lucky/gear-weapon-t3-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'lucky/gear-weapon-t4-0.png': {
+    source: require('../assets/themes/lucky/gear-weapon-t4-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'lucky/player-attack-0.png': {
+    source: require('../assets/themes/lucky/player-attack-0.png'),
+    width: 64,
+    height: 64,
+  },
+  'lucky/player-attack-1.png': {
+    source: require('../assets/themes/lucky/player-attack-1.png'),
+    width: 64,
+    height: 64,
+  },
+  'lucky/player-hurt-0.png': {
+    source: require('../assets/themes/lucky/player-hurt-0.png'),
+    width: 64,
+    height: 64,
+  },
+  'lucky/player-hurt-1.png': {
+    source: require('../assets/themes/lucky/player-hurt-1.png'),
+    width: 64,
+    height: 64,
+  },
+  'lucky/player-idle-0.png': {
+    source: require('../assets/themes/lucky/player-idle-0.png'),
+    width: 64,
+    height: 64,
+  },
+  'lucky/player-idle-1.png': {
+    source: require('../assets/themes/lucky/player-idle-1.png'),
+    width: 64,
+    height: 64,
+  },
+  'lucky/shiny-cache-0.png': {
+    source: require('../assets/themes/lucky/shiny-cache-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'lucky/shiny-cache-1.png': {
+    source: require('../assets/themes/lucky/shiny-cache-1.png'),
+    width: 48,
+    height: 48,
+  },
+  'lucky/shiny-drop-0.png': {
+    source: require('../assets/themes/lucky/shiny-drop-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'lucky/shiny-drop-1.png': {
+    source: require('../assets/themes/lucky/shiny-drop-1.png'),
+    width: 48,
+    height: 48,
+  },
+  'lucky/shiny-frenzy-0.png': {
+    source: require('../assets/themes/lucky/shiny-frenzy-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'lucky/shiny-frenzy-1.png': {
+    source: require('../assets/themes/lucky/shiny-frenzy-1.png'),
+    width: 48,
+    height: 48,
+  },
+  'lucky/shiny-idle-0.png': {
+    source: require('../assets/themes/lucky/shiny-idle-0.png'),
+    width: 48,
+    height: 48,
+  },
+  'lucky/shiny-idle-1.png': {
+    source: require('../assets/themes/lucky/shiny-idle-1.png'),
+    width: 48,
+    height: 48,
+  },
+  'lucky/spawn-popup-0.png': {
+    source: require('../assets/themes/lucky/spawn-popup-0.png'),
     width: 96,
     height: 32,
   },

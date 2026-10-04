@@ -128,7 +128,8 @@ auto-auto-clicker/
 │   │   └── rng.ts               # seeded mulberry32 (state lives in GameState.meta.rngState)
 │   ├── scripts/
 │   │   ├── check-theme.ts        # `npm run theme:check` — validate the active theme + its on-disk art
-│   │   ├── make-placeholder-assets.ts # `npm run theme:assets -- <name>` — regenerate the 32 placeholders
+│   │   ├── make-placeholder-assets.ts # `npm run theme:assets -- <name>` — regenerate placeholder frames
+│   │   ├── make-pixel-art.ts     # `npm run pixel:art` — generate the `fantasy` theme's real pixel sprites
 │   │   └── png.ts                # dependency-free PNG dimension reader (signature + IHDR)
 │   ├── save/
 │   │   ├── index.ts             # ./save subpath export
@@ -140,7 +141,7 @@ auto-auto-clicker/
 │   ├── index.html
 │   ├── public/
 │   │   ├── style.css            # layout + `:root` colour fallback (overridden by the theme at boot)
-│   │   └── themes/{fantasy,lucky}/ # 32 placeholder PNGs each + README (swap for real art)
+│   │   └── themes/{fantasy,lucky}/ # per-slot frame PNGs (fantasy = real pixel art; lucky = placeholders)
 │   ├── src/
 │   │   ├── main.ts              # owns the clock, fixed 100 ms loop, autosave, action dispatch
 │   │   ├── renderer.ts          # pure state → DOM projection; theme sprites + event-driven animation; GameEvent[] seam
@@ -275,17 +276,23 @@ export const ACTIVE_THEME: Theme = fantasy;
   The `fantasy` theme's palette values are the original colour values (T4 proved the
   application byte-identically); T5 then moved a few previously hard-coded surfaces onto
   tokens so a *light* palette also works — see the surface-coverage note below.
-- **Assets are a declared contract, loaded and checked.** The theme's `assets` section maps
-  each required asset slot to a file name; the canonical slot names, expected pixel
-  dimensions, and file-name convention live in `contract.ts` `ASSET_SLOTS` (4 gear slots ×
-  4 tiers + 16 character/spawn slots = 32). `validateTheme` checks the section is
-  well-formed; the **filesystem** check is split for purity — the CLI reads each PNG's
-  signature + IHDR dimensions (`scripts/png.ts`) and the *pure* `validateAssetMeasurements`
-  compares them to `ASSET_SLOTS`, so `engine-core/src` stays free of `fs`. `npm run
-  theme:check` reports every missing/mis-sized file at once. The renderer loads the art as
-  `/themes/<theme-name>/<file>` (path derived from the theme, never hard-coded), drawn with
-  `image-rendering: pixelated`; the committed art for each theme is **placeholder** blocks
-  to be replaced (see `web/public/themes/<theme>/README.md`).
+- **Assets are a declared contract, loaded and checked — now with frame SEQUENCES.** The
+  theme's `assets` section maps each required asset slot to an **ordered list of frame file
+  names** (one entry = a static image; several = an animation sequence). The canonical slot
+  names, expected pixel dimensions, frame files, and the `-<n>` frame-suffix convention live in
+  `contract.ts` `ASSET_SLOTS` (4 gear slots × 4 tiers + 16 character/spawn slots = 32 slots,
+  each declaring its frames). `validateTheme` checks the section is well-formed (every slot
+  present, every frame name convention-respecting and in declared order); the **filesystem**
+  check is split for purity — the CLI reads each PNG's signature + IHDR dimensions
+  (`scripts/png.ts`) and the *pure* `validateAssetMeasurements` compares **every frame** to
+  `ASSET_SLOTS`, so `engine-core/src` stays free of `fs`. `npm run theme:check` reports every
+  missing/mis-sized frame at once. The renderer loads a slot's frames as
+  `/themes/<theme-name>/<frame-file>` (path derived from the theme, never hard-coded), drawn
+  with `image-rendering: pixelated`. **`fantasy` ships real generated pixel art** (a hero,
+  grunt, horned boss, imp, and popup — dark-outlined 16-bit-era sprites with per-action frame
+  sequences: idle bob loops, attack wind-up→strike, hurt flash/recoil, multi-frame death
+  collapse), produced by `npm run pixel:art` (`engine-core/scripts/make-pixel-art.ts`).
+  `lucky` still uses the placeholder generator (`npm run theme:assets -- lucky`).
 - **The palette covers the whole surface, not just the panels.** A second, *light* palette
   exposed a handful of stylesheet colours that had been hard-coded rather than derived from
   a token (the arena vignette, the boss arena tint, the escape-toast plate, the frenzy pill,
@@ -293,17 +300,21 @@ export const ACTIVE_THEME: Theme = fantasy;
   alpha tints), so a light theme renders legibly and `fantasy` keeps its own values.
   Residual limitation (see `decisions.md`): `color-scheme` is still a fixed `dark` in the
   stylesheet, so a light theme leaves the UA scrollbar/form chrome dark.
-- **Animation is themeable and shipped (T6).** `Theme.animation` declares **8 semantic cue keys**
-  (`playerAttack`, `enemyHit`, `enemyDeath`, `bossHit`, `bossDeath`, `stageEntered`, `shinySpawn`,
-  `shinyClaim`), each mapping to one declared asset slot plus a **display-only** duration (0 disables
-  the cue). The renderer's `handleEvents` turns one frame's ordered `GameEvent[]` into bounded
-  transient sprite frames: at most one frame per actor target (same-target cues replace each other),
-  a `MAX_ACTIVE_EFFECTS = 8` cap, per-actor **cue priority** (deaths outrank a spawn popup), and one
-  re-armed drain timer. Durations never reach the engine or the sim. Under `prefers-reduced-motion` a
-  sprite's `src` never changes to an animation frame — but enemy **taunt text** still shows, because a
-  line of text is information, not motion. Honest caveat: the cue keys are *registered* in
+- **Animation is themeable and shipped (T6), now frame-sequenced.** `Theme.animation` declares
+  **8 semantic cue keys** (`playerAttack`, `enemyHit`, `enemyDeath`, `bossHit`, `bossDeath`,
+  `stageEntered`, `shinySpawn`, `shinyClaim`), each mapping to one declared asset slot plus a
+  **display-only** duration (0 disables the cue). Each slot carries an ordered **frame sequence**:
+  idle sprites LOOP their idle frames continuously, and a cue plays its sequence ONCE across the
+  cue's duration (frame *i* shows for `durationMs / frameCount`), then returns the actor to idle.
+  The renderer's `handleEvents` turns one frame's ordered `GameEvent[]` into bounded transient
+  actor sequences: at most one per actor target (same-target cues replace each other), a
+  `MAX_ACTIVE_EFFECTS = 8` cap, per-actor **cue priority** (deaths outrank a spawn popup), and one
+  re-armed drain timer. Durations never reach the engine or the sim. Under `prefers-reduced-motion`
+  every sequence HOLDS frame 0 — no loop, no advance — but enemy **taunt text** still shows, because
+  a line of text is information, not motion. Honest caveat: the cue keys are *registered* in
   `theme/contract.ts` but only a four-line allow-list registration exists, so `npm run theme:check`
-  does **not** validate animation cues — the unit suite does. (`theme:check` *does* validate the enemy
+  does **not** validate animation cues — the unit suite does. (`theme:check` *does* validate every
+  declared frame exists at its exact size, and the enemy
   roster's **shape** — every id present, ≥4 non-empty phrases per taunt kind — via `validateTheme`.)
 - **Two themes ship, and the second one proves the seam.** `fantasy` (the committed default —
   the "Standard Fantasy RPG" original) and `lucky` (a
@@ -348,12 +359,14 @@ A theme is one `Theme` object plus one folder of art. The whole recipe:
 2. **Register it.** In `engine-core/src/theme/index.ts`, import it and add it to the
    `THEMES` array. The unit suite then validates it automatically.
 3. **Add its art folder.** The directory name MUST equal `theme.name`
-   (`web/public/themes/<name>/`). Generate the 32 contract-sized placeholders in one command
+   (`web/public/themes/<name>/`). Generate the contract-sized placeholder FRAMES in one command
    (dependency-free `node:zlib` encoder, per-theme hue so themes look different):
    ```sh
    npm run theme:assets -- <name>
    ```
-   Replace them with real RGBA PNGs at the exact declared dimensions when you have them
+   For the `fantasy` theme, `npm run pixel:art` instead regenerates its real pixel sprites
+   (`engine-core/scripts/make-pixel-art.ts`) at the exact declared frame names and sizes.
+   Replace either set with real RGBA PNGs at the exact declared dimensions when you have them
    (the folder `README.md` says how).
 4. **Flip the one line** in `engine-core/src/theme/index.ts`:
    ```ts
@@ -361,7 +374,7 @@ A theme is one `Theme` object plus one folder of art. The whole recipe:
    ```
 5. **Validate it** from the repo root:
    ```sh
-   npm run theme:check   # text limits + id set + colour shapes + 32 files at exact size
+   npm run theme:check   # text limits + id set + colour shapes + every frame at exact size
    npm run test          # validates ALL of THEMES, not just the active theme
    npm run typecheck && npm run build
    npm run smoke         # theme-agnostic: drives whichever theme is ACTIVE_THEME
@@ -839,15 +852,16 @@ npm run mobile:test        # `jest` (jest-expo) — the RN host + component suit
 symlink, so Metro loads it with no build step — exactly how `/web` consumes it.
 
 **Art & animation.** RN has no `/themes/<name>/` static route and Metro needs **static**
-`require()`s, so `npm run mobile:assets` copies the active themes' declared PNGs (the same
-placeholder art `/web` ships, generated from the engine's `ASSET_SLOTS`) into
-`mobile/assets/themes/<name>/`, measures each file's PNG `IHDR` width/height, and emits
-`mobile/src/themeAssets.gen.ts` — a committed registry of literal `require()`s keyed
-`<theme-name>/<file>.png`. `resolveAsset` looks an entry up by `theme.name` + `theme.assets[slot]`,
-so no component names a file. Re-run `mobile:assets` after adding a theme or replacing art. The
-animation framework consumes the host's `GameEvent[]` seam and the theme's declared
-`animation.cues` (the same cues `/web` uses), so swapping `ACTIVE_THEME` rescans art **and**
-animation.
+`require()`s, so `npm run mobile:assets` copies the themes' declared frame PNGs (the real pixel
+art `/web` ships, generated from the engine's `ASSET_SLOTS`) into `mobile/assets/themes/<name>/`,
+measures each file's PNG `IHDR` width/height, and emits `mobile/src/themeAssets.gen.ts` — a
+committed registry of literal `require()`s keyed `<theme-name>/<file>.png` (still FILE-keyed; it
+does not import `ASSET_SLOTS`). `resolveAsset` resolves a slot to its ordered **frames** by looking
+each declared file up in the registry (throwing loudly on a missing frame), so no component names a
+file. Re-run `mobile:assets` after adding a theme or replacing art. The animation framework
+consumes the host's `GameEvent[]` seam and the theme's declared `animation.cues` (the same cues
+`/web` uses), and plays each slot's frame **sequence** — idle loops, cues play once, reduced motion
+holds frame 0 — so swapping `ACTIVE_THEME` rescans art **and** animation.
 
 **Adding a dependency to `mobile/`:** do **not** use `npx expo install` — it re-resolves the
 workspace tree and hoists `react-native`, deleting the committed `mobile/node_modules/react-native`

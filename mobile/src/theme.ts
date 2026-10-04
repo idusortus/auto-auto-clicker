@@ -139,18 +139,14 @@ export const styles: ThemeStyles = paletteToStyles(ACTIVE_THEME);
  * URL: Metro needs a static `require()`, which the generated registry
  * (`themeAssets.gen.ts`) supplies. Every field here is DERIVED from the theme
  * (`name` + `assets`); no file name is hard-coded outside the theme's own
- * `assets` map. `source`, `width`, and `height` come from the registry entry
- * keyed `` `${theme.name}/${fileName}` `` — the width/height are measured from
- * the PNG itself, so sprites render at their declared size.
+ * `assets` map. The registry stays FILE-keyed; a slot resolves to its ORDERED
+ * frame list, and each frame carries the source + size measured from its PNG, so
+ * sprites render at their declared size and sequences play in order.
  */
-export interface ResolvedAsset {
-  /** Canonical asset slot name (e.g. `player-idle`). */
-  slot: string;
-  /** The theme that declared the slot. */
-  themeName: string;
-  /** The file name the theme declares for the slot. */
+export interface ResolvedFrame {
+  /** The frame file name the theme declares. */
   fileName: string;
-  /** The bundled image module Metro resolves for the theme's declared file. */
+  /** The bundled image module Metro resolves for this frame. */
   source: ImageSourcePropType;
   /** Declared pixel width, measured from the PNG's IHDR header. */
   width: number;
@@ -158,35 +154,54 @@ export interface ResolvedAsset {
   height: number;
 }
 
+export interface ResolvedAsset {
+  /** Canonical asset slot name (e.g. `player-idle`). */
+  slot: string;
+  /** The theme that declared the slot. */
+  themeName: string;
+  /** The theme's declared frame files, in play order. */
+  fileNames: readonly string[];
+  /** The resolved frames, in play order (one entry per declared file). */
+  frames: readonly ResolvedFrame[];
+}
+
 /**
- * Resolve an asset slot through the theme's `name` + `assets` map.
+ * Resolve an asset slot through the theme's `name` + `assets` map into its
+ * ordered frames.
  *
  * Two distinct failures both fail loudly rather than rendering a silent blank:
- * a slot the theme does not declare (a theme authoring bug), and a slot the
+ * a slot the theme does not declare (a theme authoring bug), and a frame the
  * theme declares but the bundled registry lacks (a stale/missing generated
  * registry — run `npm run mobile:assets`).
  */
 export function resolveAsset(theme: Theme, slot: string): ResolvedAsset {
-  const fileName = theme.assets[slot];
-  if (fileName === undefined) {
+  const fileNames = theme.assets[slot];
+  if (fileNames === undefined) {
     throw new Error(`[aac] theme "${theme.name}" declares no asset slot "${slot}"`);
   }
-  const key = `${theme.name}/${fileName}`;
-  const entry = THEME_ASSETS[key];
-  if (entry === undefined) {
-    throw new Error(
-      `[aac] theme "${theme.name}" slot "${slot}" maps to "${key}", which the bundled ` +
-        `asset registry does not contain — run \`npm run mobile:assets\` to regenerate it`,
-    );
+  const frames: ResolvedFrame[] = fileNames.map((fileName) => {
+    const key = `${theme.name}/${fileName}`;
+    const entry = THEME_ASSETS[key];
+    if (entry === undefined) {
+      throw new Error(
+        `[aac] theme "${theme.name}" slot "${slot}" maps to "${key}", which the bundled ` +
+          `asset registry does not contain — run \`npm run mobile:assets\` to regenerate it`,
+      );
+    }
+    return { fileName, source: entry.source, width: entry.width, height: entry.height };
+  });
+  return { slot, themeName: theme.name, fileNames, frames };
+}
+
+/** Resolve a slot's specific FRAME through the ACTIVE_THEME (the common case). */
+export function resolveActiveFrame(slot: string, frameIndex: number): ResolvedFrame {
+  const asset = resolveAsset(ACTIVE_THEME, slot);
+  const index = Math.max(0, Math.min(asset.frames.length - 1, frameIndex));
+  const frame = asset.frames[index];
+  if (frame === undefined) {
+    throw new Error(`[aac] theme "${ACTIVE_THEME.name}" slot "${slot}" has no frames`);
   }
-  return {
-    slot,
-    themeName: theme.name,
-    fileName,
-    source: entry.source,
-    width: entry.width,
-    height: entry.height,
-  };
+  return frame;
 }
 
 /** Resolve a slot through the ACTIVE_THEME (the common case). */

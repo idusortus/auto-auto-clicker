@@ -828,6 +828,46 @@ test('prefers-reduced-motion suppresses animation frames', async ({ page, consol
   expect(consoleErrors).toEqual([]);
 });
 
+test('the idle sprite sequence loops through its frames', async ({ page, consoleErrors }) => {
+  await page.goto('/');
+
+  // The PLAYER sprite has no auto-driven cue, so it is the clean idle-loop probe
+  // (the enemy is repeatedly hit by auto-DPS, masking its idle loop with hurt cues).
+  const player = page.getByTestId('player-sprite');
+  const frames = ACTIVE_THEME.assets['player-idle'] as readonly string[];
+  expect(frames.length).toBeGreaterThan(1);
+
+  // Sample the src over >2 idle periods; it must move through the declared frames.
+  const seen = new Set<string>();
+  for (let i = 0; i < 12; i += 1) {
+    const src = await player.getAttribute('src');
+    const frame = frames.find((file) => src?.endsWith(`/${file}`));
+    if (frame) seen.add(frame);
+    await page.waitForTimeout(150);
+  }
+  expect(frames.every((file) => seen.has(file))).toBe(true);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test('prefers-reduced-motion holds the rest frame across the idle loop', async ({
+  page,
+  consoleErrors,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+
+  const player = page.getByTestId('player-sprite');
+  const frames = ACTIVE_THEME.assets['player-idle'] as readonly string[];
+
+  // The rest frame (frame 0) is pinned; advancing time must not loop it.
+  await expect(player).toHaveAttribute('src', new RegExp(`/${frames[0]}$`));
+  await page.waitForTimeout(1200);
+  await expect(player).toHaveAttribute('src', new RegExp(`/${frames[0]}$`));
+
+  expect(consoleErrors).toEqual([]);
+});
+
 test('claiming a Shiny paints the claim frame', async ({ page, consoleErrors }) => {
   // Frozen time, so the claim frame's display duration is deterministic and its
   // drain only runs when the clock is advanced.
@@ -948,12 +988,16 @@ function parseLeadingInt(text: string | null): number {
 }
 
 /**
- * The expected `src` for a theme asset slot, derived from the ACTIVE_THEME —
- * the directory is the theme's own name and the file name is its `assets` map,
- * so the assertion follows a theme swap instead of pinning `fantasy`.
+ * The expected `src` for a theme asset slot's FRAME, derived from the
+ * ACTIVE_THEME — the directory is the theme's own name and the file names are
+ * its `assets` map. Because idle sequences LOOP and cue sequences ADVANCE, the
+ * assertion matches ANY of the slot's declared frames (never a hard-coded file),
+ * so it follows a theme swap and does not race the animation.
  */
 function themeAssetUrl(slot: string): RegExp {
-  return new RegExp(`/themes/${ACTIVE_THEME.name}/${ACTIVE_THEME.assets[slot]}$`);
+  const frames = ACTIVE_THEME.assets[slot] ?? [];
+  const escaped = frames.map((file) => file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  return new RegExp(`/themes/${ACTIVE_THEME.name}/(${escaped})$`);
 }
 
 /**

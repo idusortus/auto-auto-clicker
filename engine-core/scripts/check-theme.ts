@@ -49,41 +49,66 @@ function themeAssetDir(themeName: string): string {
 }
 
 /**
- * Read every declared slot's file from disk and measure its PNG size. A missing
- * file, an unreadable file, and a file with no dimensions are all represented
- * (never thrown) so the pure validator can report them together.
+ * Read every declared FRAME from disk and measure its PNG size. A missing file,
+ * an unreadable file, and a file with no dimensions are all represented (never
+ * thrown) so the pure validator can report them together.
  */
 function measureAssets(theme: typeof ACTIVE_THEME, dir: string): AssetMeasurement[] {
-  return ASSET_SLOTS.map((slot) => {
-    const file = theme.assets[slot.name] ?? slot.file;
-    const path = join(dir, file);
-    if (!existsSync(path)) {
-      return { slot: slot.name, path, exists: false, width: null, height: null, error: null };
-    }
-    try {
-      const size = readPngDimensions(readFileSync(path));
-      if (size === null) {
-        return {
+  const measurements: AssetMeasurement[] = [];
+  for (const slot of ASSET_SLOTS) {
+    const declared = theme.assets[slot.name];
+    for (let frameIndex = 0; frameIndex < slot.frames.length; frameIndex += 1) {
+      const file = declared?.[frameIndex] ?? slot.frames[frameIndex] ?? slot.file;
+      const path = join(dir, file);
+      if (!existsSync(path)) {
+        measurements.push({
           slot: slot.name,
+          frameIndex,
+          path,
+          exists: false,
+          width: null,
+          height: null,
+          error: null,
+        });
+        continue;
+      }
+      try {
+        const size = readPngDimensions(readFileSync(path));
+        if (size === null) {
+          measurements.push({
+            slot: slot.name,
+            frameIndex,
+            path,
+            exists: true,
+            width: null,
+            height: null,
+            error: 'not a PNG (bad signature or missing IHDR)',
+          });
+          continue;
+        }
+        measurements.push({
+          slot: slot.name,
+          frameIndex,
+          path,
+          exists: true,
+          width: size.width,
+          height: size.height,
+          error: null,
+        });
+      } catch (error) {
+        measurements.push({
+          slot: slot.name,
+          frameIndex,
           path,
           exists: true,
           width: null,
           height: null,
-          error: 'not a PNG (bad signature or missing IHDR)',
-        };
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
-      return { slot: slot.name, path, exists: true, width: size.width, height: size.height, error: null };
-    } catch (error) {
-      return {
-        slot: slot.name,
-        path,
-        exists: true,
-        width: null,
-        height: null,
-        error: error instanceof Error ? error.message : String(error),
-      };
     }
-  });
+  }
+  return measurements;
 }
 
 const themeName = String(ACTIVE_THEME.name ?? '(unnamed)');
@@ -92,6 +117,8 @@ const result = validateTheme(ACTIVE_THEME);
 const assetDir = themeAssetDir(themeName);
 const measurements = measureAssets(ACTIVE_THEME, assetDir);
 const assets = validateAssetMeasurements(ACTIVE_THEME, measurements);
+/** Total declared frames across every slot (the unit the checker verifies). */
+const totalFrames = ASSET_SLOTS.reduce((sum, slot) => sum + slot.frames.length, 0);
 
 console.log(`Theme contract check — ACTIVE_THEME "${themeName}"`);
 console.log(
@@ -104,9 +131,9 @@ console.log(
 console.log(
   `  palette:      ${PALETTE_FIELDS.length} colour tokens (applied to CSS custom properties by the host)`,
 );
-console.log(`  assets:       ${ASSET_SLOTS.length} declared slots · dir ${assetDir}`);
+console.log(`  assets:       ${ASSET_SLOTS.length} declared slots · ${totalFrames} frames · dir ${assetDir}`);
 console.log(
-  `                ${assets.correct}/${ASSET_SLOTS.length} files present at the exact size ` +
+  `                ${assets.correct}/${totalFrames} frames present at the exact size ` +
     `(${assets.missing} missing, ${assets.mismatched} mis-sized/unreadable)`,
 );
 console.log('');

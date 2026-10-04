@@ -128,6 +128,25 @@ describe('theme contract — structural parity across themes', () => {
       expect(Object.keys(theme.assets).sort(), theme.name).toEqual(reference);
     }
   });
+
+  it('every theme declares the same frame COUNT per slot (the declared frames)', () => {
+    const counts = new Map(ASSET_SLOTS.map((slot) => [slot.name, slot.frames.length]));
+    for (const theme of THEMES) {
+      for (const slot of ASSET_SLOTS) {
+        expect(theme.assets[slot.name], `${theme.name}.${slot.name}`).toHaveLength(
+          counts.get(slot.name) ?? 0,
+        );
+      }
+    }
+  });
+
+  it('every theme declares the exact declared frame file names, in order', () => {
+    for (const theme of THEMES) {
+      for (const slot of ASSET_SLOTS) {
+        expect(theme.assets[slot.name], `${theme.name}.${slot.name}`).toEqual(slot.frames);
+      }
+    }
+  });
 });
 
 // Animation is theme-owned DISPLAY data: semantic event family → declared asset
@@ -171,6 +190,20 @@ describe('theme contract — animation cues', () => {
         expect(entry, `${theme.name} is missing cue "${cue}"`).toBeDefined();
         expect(Number.isFinite(entry.durationMs), `${theme.name}.${cue}`).toBe(true);
         expect(entry.durationMs, `${theme.name}.${cue}`).toBeGreaterThanOrEqual(0);
+      }
+    });
+
+    it(`points every "${theme.name}" cue at a slot with a non-empty frame sequence`, () => {
+      const frameCounts = new Map(ASSET_SLOTS.map((slot) => [slot.name, slot.frames.length]));
+      for (const cue of CUE_KEYS) {
+        const entry = theme.animation.cues[cue];
+        expect(
+          frameCounts.get(entry.slot) ?? 0,
+          `${theme.name}.${cue} → "${entry.slot}" must declare at least one frame`,
+        ).toBeGreaterThanOrEqual(1);
+        expect(theme.assets[entry.slot]?.length ?? 0, `${theme.name}.${cue} → ${entry.slot}`).toBe(
+          frameCounts.get(entry.slot) ?? 0,
+        );
       }
     });
   }
@@ -503,14 +536,20 @@ describe('theme contract — achievement catalog completeness', () => {
   });
 });
 
-describe('theme contract — assets section is well-formed (files checked in T4)', () => {
-  it('declares a unique, convention-respecting slot set', () => {
+describe('theme contract — assets section is well-formed (files checked by theme:check)', () => {
+  it('declares a unique, convention-respecting slot + frame set', () => {
     const names = ASSET_SLOTS.map((slot) => slot.name);
     expect(new Set(names).size).toBe(names.length);
     for (const slot of ASSET_SLOTS) {
-      expect(slot.file).toBe(`${slot.name}.png`);
+      expect(slot.frames.length).toBeGreaterThanOrEqual(1);
+      expect(slot.file).toBe(slot.frames[0]);
       expect(slot.width).toBeGreaterThan(0);
       expect(slot.height).toBeGreaterThan(0);
+      // Frame files follow `<slot>-<n>.png`, unique within the slot.
+      expect(new Set(slot.frames).size).toBe(slot.frames.length);
+      slot.frames.forEach((file, index) => {
+        expect(file).toBe(`${slot.name}-${index}.png`);
+      });
     }
     expect(ASSET_SLOTS.length).toBe(32);
   });
@@ -527,19 +566,26 @@ describe('theme contract — assets section is well-formed (files checked in T4)
     const { problems } = validateTheme(theme as Theme);
     const problem = findProblem(problems, 'assets.player-idle', 'missing');
     expect(problem).toBeDefined();
-    expect(problem?.message).toContain('player-idle.png');
+    expect(problem?.message).toContain('player-idle-0.png');
   });
 
-  it('reports a non-conforming file name', () => {
+  it('reports a non-conforming frame file name', () => {
     const theme = broken();
-    theme.assets['player-idle'] = 'Player Idle.jpg';
+    theme.assets['player-idle'] = ['Player Idle.jpg', 'player-idle-1.png'];
+    const { problems } = validateTheme(theme as Theme);
+    expect(findProblem(problems, 'assets.player-idle.0', 'bad-filename')).toBeDefined();
+  });
+
+  it('reports a frame list whose length differs from the declared count', () => {
+    const theme = broken();
+    theme.assets['player-idle'] = ['player-idle-0.png'];
     const { problems } = validateTheme(theme as Theme);
     expect(findProblem(problems, 'assets.player-idle', 'bad-filename')).toBeDefined();
   });
 
   it('reports an unknown asset slot key', () => {
     const theme = broken();
-    theme.assets['player-jump'] = 'player-jump.png';
+    theme.assets['player-jump'] = ['player-jump-0.png'];
     const { problems } = validateTheme(theme as Theme);
     expect(findProblem(problems, 'assets.player-jump', 'bad-key')).toBeDefined();
   });
@@ -587,58 +633,72 @@ describe('theme contract — palette (colour tokens)', () => {
 
 describe('theme contract — asset measurement validation (pure)', () => {
   function goodMeasurements(): AssetMeasurement[] {
-    return ASSET_SLOTS.map((slot) => ({
-      slot: slot.name,
-      path: `fantasy/${slot.file}`,
-      exists: true,
-      width: slot.width,
-      height: slot.height,
-      error: null,
-    }));
+    const out: AssetMeasurement[] = [];
+    for (const slot of ASSET_SLOTS) {
+      for (let frameIndex = 0; frameIndex < slot.frames.length; frameIndex += 1) {
+        out.push({
+          slot: slot.name,
+          frameIndex,
+          path: `fantasy/${slot.frames[frameIndex]}`,
+          exists: true,
+          width: slot.width,
+          height: slot.height,
+          error: null,
+        });
+      }
+    }
+    return out;
   }
 
-  it('accepts a complete set of correctly-sized files', () => {
+  /** Total declared frames across every slot. */
+  const totalFrames = ASSET_SLOTS.reduce((sum, slot) => sum + slot.frames.length, 0);
+
+  it('accepts a complete set of correctly-sized frames', () => {
     const result = validateAssetMeasurements(fantasy, goodMeasurements());
     expect(result.ok).toBe(true);
-    expect(result.correct).toBe(ASSET_SLOTS.length);
+    expect(result.correct).toBe(totalFrames);
     expect(result.problems).toEqual([]);
   });
 
-  it('reports a file whose actual size differs, with actual vs expected', () => {
+  it('reports a frame whose actual size differs, with actual vs expected', () => {
     const measurements = goodMeasurements().map((m) =>
-      m.slot === 'player-idle' ? { ...m, width: 48, height: 48 } : m,
+      m.slot === 'player-idle' && m.frameIndex === 0 ? { ...m, width: 48, height: 48 } : m,
     );
     const { ok, problems } = validateAssetMeasurements(fantasy, measurements);
     expect(ok).toBe(false);
-    const problem = problems.find((p) => p.slot === 'player-idle');
+    const problem = problems.find((p) => p.slot === 'player-idle' && p.frameIndex === 0);
     expect(problem?.kind).toBe('wrong-dimensions');
-    expect(problem?.message).toContain('player-idle.png is 48x48, expected 64x64');
+    expect(problem?.message).toContain('player-idle-0.png is 48x48, expected 64x64');
   });
 
-  it('reports a missing file', () => {
+  it('reports a missing frame by slot and frame index', () => {
     const measurements = goodMeasurements().map((m) =>
-      m.slot === 'shiny-idle' ? { ...m, exists: false, width: null, height: null } : m,
+      m.slot === 'shiny-idle' && m.frameIndex === 1
+        ? { ...m, exists: false, width: null, height: null }
+        : m,
     );
     const { problems } = validateAssetMeasurements(fantasy, measurements);
-    const problem = problems.find((p) => p.slot === 'shiny-idle');
+    const problem = problems.find((p) => p.slot === 'shiny-idle' && p.frameIndex === 1);
     expect(problem?.kind).toBe('missing-file');
-    expect(problem?.message).toContain('shiny-idle.png');
+    expect(problem?.message).toContain('shiny-idle-1.png');
   });
 
-  it('reports an unreadable file separately from a missing one', () => {
+  it('reports an unreadable frame separately from a missing one', () => {
     const measurements = goodMeasurements().map((m) =>
-      m.slot === 'boss-grunt-idle'
+      m.slot === 'boss-grunt-idle' && m.frameIndex === 0
         ? { ...m, width: null, height: null, error: 'not a PNG' }
         : m,
     );
     const { problems } = validateAssetMeasurements(fantasy, measurements);
-    expect(problems.find((p) => p.slot === 'boss-grunt-idle')?.kind).toBe('unreadable-image');
+    expect(
+      problems.find((p) => p.slot === 'boss-grunt-idle' && p.frameIndex === 0)?.kind,
+    ).toBe('unreadable-image');
   });
 
   it('reports an unknown slot measurement', () => {
     const measurements: AssetMeasurement[] = [
       ...goodMeasurements(),
-      { slot: 'player-jump', path: 'fantasy/player-jump.png', exists: true, width: 64, height: 64, error: null },
+      { slot: 'player-jump', frameIndex: 0, path: 'fantasy/player-jump.png', exists: true, width: 64, height: 64, error: null },
     ];
     const { problems } = validateAssetMeasurements(fantasy, measurements);
     expect(problems.find((p) => p.slot === 'player-jump')?.kind).toBe('unknown-slot');
@@ -646,16 +706,18 @@ describe('theme contract — asset measurement validation (pure)', () => {
 
   it('aggregates every problem in one pass (never throws, never stops early)', () => {
     const measurements = goodMeasurements().map((m) => {
-      if (m.slot === 'player-idle') return { ...m, width: 1, height: 1 };
-      if (m.slot === 'shiny-idle') return { ...m, exists: false, width: null, height: null };
-      if (m.slot === 'boss-grunt-idle') return { ...m, width: null, height: null, error: 'bad' };
+      if (m.slot === 'player-idle' && m.frameIndex === 0) return { ...m, width: 1, height: 1 };
+      if (m.slot === 'shiny-idle' && m.frameIndex === 1)
+        return { ...m, exists: false, width: null, height: null };
+      if (m.slot === 'boss-grunt-idle' && m.frameIndex === 0)
+        return { ...m, width: null, height: null, error: 'bad' };
       return m;
     });
     const result = validateAssetMeasurements(fantasy, measurements);
     expect(result.ok).toBe(false);
     expect(result.missing).toBe(1);
     expect(result.mismatched).toBe(2);
-    expect(result.correct).toBe(ASSET_SLOTS.length - 3);
+    expect(result.correct).toBe(totalFrames - 3);
     expect(result.problems).toHaveLength(3);
   });
 });

@@ -176,12 +176,17 @@ function main(): void {
   mkdirSync(dir, { recursive: true });
 
   ASSET_SLOTS.forEach((slot, index) => {
-    const pixels = slotPixels(slot.width, slot.height, index, ASSET_SLOTS.length, baseHue);
-    writeFileSync(join(dir, slot.file), encodePng(slot.width, slot.height, pixels));
+    // Each slot now declares an ordered frame list; write one placeholder per
+    // frame (a per-frame hue nudge so a sequence is visibly distinct).
+    slot.frames.forEach((file, frame) => {
+      const pixels = slotPixels(slot.width, slot.height, index + frame, ASSET_SLOTS.length, baseHue);
+      writeFileSync(join(dir, file), encodePng(slot.width, slot.height, pixels));
+    });
   });
 
+  const totalFrames = ASSET_SLOTS.reduce((sum, slot) => sum + slot.frames.length, 0);
   console.log(
-    `wrote ${ASSET_SLOTS.length} placeholder PNGs to ${dir} (base hue ${baseHue}°)`,
+    `wrote ${totalFrames} placeholder frames (${ASSET_SLOTS.length} slots) to ${dir} (base hue ${baseHue}°)`,
   );
 }
 

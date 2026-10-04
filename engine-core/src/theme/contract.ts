@@ -321,7 +321,17 @@ export interface AssetSlotSpec {
   name: string;
   width: number;
   height: number;
-  /** Required file name the theme must supply for this slot. */
+  /**
+   * The required file names for this slot, IN PLAY ORDER. One entry is a static
+   * image; several entries are an animation sequence (idle loops; action cues
+   * play once). The frame COUNT is `frames.length` — the single source of truth,
+   * so there is no separate `frameCount` field to drift.
+   */
+  frames: string[];
+  /**
+   * Convenience alias for `frames[0]` — the slot's rest/idle frame file name.
+   * Kept so single-frame consumers and messages read naturally.
+   */
   file: string;
   description: string;
 }
@@ -332,45 +342,76 @@ export const ASSET_FILENAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*\.png$/;
 const gearSlots = GEAR_SLOTS;
 const GEAR_TIERS = [1, 2, 3, 4] as const;
 
+/** Frame-count conventions per action family (art-tuning; see the design). */
+const IDLE_FRAMES = 2;
+const ATTACK_FRAMES = 2;
+const HURT_FRAMES = 2;
+const DEATH_FRAMES = 3;
+const SINGLE_FRAME = 1;
+
+/** Build the frame file names for a slot from its base name and frame count. */
+function frameFiles(base: string, count: number): string[] {
+  return Array.from({ length: count }, (_value, index) => `${base}-${index}.png`);
+}
+
+/**
+ * Declare one asset slot. `base` is the slot name (identity); `count` is how many
+ * frames it plays. `file` remains `frames[0]` for single-frame consumers.
+ */
+function slot(
+  name: string,
+  width: number,
+  height: number,
+  count: number,
+  description: string,
+): AssetSlotSpec {
+  const frames = frameFiles(name, count);
+  return { name, width, height, frames, file: frames[0] ?? `${name}.png`, description };
+}
+
 function gearAssetSlots(): AssetSlotSpec[] {
   const specs: AssetSlotSpec[] = [];
-  for (const slot of gearSlots) {
+  for (const slotName of gearSlots) {
     for (const tier of GEAR_TIERS) {
-      const name = `gear-${slot}-t${tier}`;
-      specs.push({
-        name,
-        width: 48,
-        height: 48,
-        file: `${name}.png`,
-        description: `${slot} icon, item-level tier ${tier} (tier→item-level banding decided in T4)`,
-      });
+      const name = `gear-${slotName}-t${tier}`;
+      specs.push(
+        slot(
+          name,
+          48,
+          48,
+          SINGLE_FRAME,
+          `${slotName} icon, item-level tier ${tier} (tier→item-level banding decided in T4)`,
+        ),
+      );
     }
   }
   return specs;
 }
 
 /**
- * The required asset slots: names, expected pixel dimensions, and file names.
- * 4 gear slots × 4 tiers = 16, plus 16 character/spawn slots = 32 total. This
- * is the ONE declaration T4 reads to load, check existence, and verify size.
+ * The required asset slots: names, expected pixel dimensions, and frame file
+ * names. 4 gear slots × 4 tiers = 16, plus 16 character/spawn slots = 32 total.
+ * Character slots carry a frame SEQUENCE (idle loops, actions play once); gear
+ * and the spawn popup are single-frame. This is the ONE declaration the asset
+ * loader/checker reads to load, check existence, and verify every frame's size.
  */
 export const ASSET_SLOTS: readonly AssetSlotSpec[] = [
-  { name: 'player-idle', width: 64, height: 64, file: 'player-idle.png', description: 'player character, idle' },
-  { name: 'player-attack', width: 64, height: 64, file: 'player-attack.png', description: 'player character, attack frame' },
-  { name: 'player-hurt', width: 64, height: 64, file: 'player-hurt.png', description: 'player character, hurt frame' },
-  { name: 'enemy-grunt-idle', width: 64, height: 64, file: 'enemy-grunt-idle.png', description: 'normal enemy, idle' },
-  { name: 'enemy-grunt-attack', width: 64, height: 64, file: 'enemy-grunt-attack.png', description: 'normal enemy, attack frame' },
-  { name: 'enemy-grunt-hurt', width: 64, height: 64, file: 'enemy-grunt-hurt.png', description: 'normal enemy, hurt frame' },
-  { name: 'enemy-grunt-death', width: 64, height: 64, file: 'enemy-grunt-death.png', description: 'normal enemy, death frame' },
-  { name: 'boss-grunt-idle', width: 96, height: 96, file: 'boss-grunt-idle.png', description: 'boss enemy, idle (larger frame)' },
-  { name: 'boss-grunt-attack', width: 96, height: 96, file: 'boss-grunt-attack.png', description: 'boss enemy, attack frame' },
-  { name: 'boss-grunt-hurt', width: 96, height: 96, file: 'boss-grunt-hurt.png', description: 'boss enemy, hurt frame' },
-  { name: 'boss-grunt-death', width: 96, height: 96, file: 'boss-grunt-death.png', description: 'boss enemy, death frame' },
-  { name: 'shiny-idle', width: 48, height: 48, file: 'shiny-idle.png', description: 'Stray Goblin, idle' },
-  { name: 'shiny-frenzy', width: 48, height: 48, file: 'shiny-frenzy.png', description: 'Stray Goblin, frenzy variant' },
-  { name: 'shiny-drop', width: 48, height: 48, file: 'shiny-drop.png', description: 'Stray Goblin, drop variant' },
-  { name: 'shiny-cache', width: 48, height: 48, file: 'shiny-cache.png', description: 'Stray Goblin, cache variant' },
-  { name: 'spawn-popup', width: 96, height: 32, file: 'spawn-popup.png', description: 'transient spawn/enemy-intro popup' },
+  slot('player-idle', 64, 64, IDLE_FRAMES, 'player character, idle loop'),
+  slot('player-attack', 64, 64, ATTACK_FRAMES, 'player character, attack sequence'),
+  slot('player-hurt', 64, 64, HURT_FRAMES, 'player character, hurt sequence'),
+  slot('enemy-grunt-idle', 64, 64, IDLE_FRAMES, 'normal enemy, idle loop'),
+  slot('enemy-grunt-attack', 64, 64, ATTACK_FRAMES, 'normal enemy, attack sequence'),
+  slot('enemy-grunt-hurt', 64, 64, HURT_FRAMES, 'normal enemy, hurt sequence'),
+  slot('enemy-grunt-death', 64, 64, DEATH_FRAMES, 'normal enemy, death sequence'),
+  slot('boss-grunt-idle', 96, 96, IDLE_FRAMES, 'boss enemy, idle loop (larger frame)'),
+  slot('boss-grunt-attack', 96, 96, ATTACK_FRAMES, 'boss enemy, attack sequence'),
+  slot('boss-grunt-hurt', 96, 96, HURT_FRAMES, 'boss enemy, hurt sequence'),
+  slot('boss-grunt-death', 96, 96, DEATH_FRAMES, 'boss enemy, death sequence'),
+  slot('shiny-idle', 48, 48, IDLE_FRAMES, 'Stray Goblin, idle loop'),
+  slot('shiny-frenzy', 48, 48, IDLE_FRAMES, 'Stray Goblin, frenzy variant'),
+  slot('shiny-drop', 48, 48, IDLE_FRAMES, 'Stray Goblin, drop variant'),
+  slot('shiny-cache', 48, 48, IDLE_FRAMES, 'Stray Goblin, cache variant'),
+  slot('spawn-popup', 96, 32, SINGLE_FRAME, 'transient spawn/enemy-intro popup'),
   ...gearAssetSlots(),
 ];
 
@@ -991,7 +1032,7 @@ function collect(theme: Theme): Collected {
     problems.push({
       path: 'assets',
       kind: 'missing',
-      message: 'missing "assets" section (declare a file for every asset slot)',
+      message: 'missing "assets" section (declare the frame files for every asset slot)',
     });
   } else if (!isPlainObject(assets)) {
     problems.push({
@@ -1010,26 +1051,63 @@ function collect(theme: Theme): Collected {
       }
     }
     for (const slot of ASSET_SLOTS) {
-      const file = assets[slot.name];
+      const entry = assets[slot.name];
       const path = `assets.${slot.name}`;
-      if (file === undefined) {
+      if (entry === undefined) {
         problems.push({
           path,
           kind: 'missing',
-          message: `missing asset slot "${slot.name}" (expected file "${slot.file}")`,
+          message: `missing asset slot "${slot.name}" (expected frames [${slot.frames.join(', ')}])`,
         });
-      } else if (typeof file !== 'string') {
+        continue;
+      }
+      if (!Array.isArray(entry)) {
         problems.push({
           path,
           kind: 'wrong-type',
-          message: `expected a file-name string at "${path}", found ${describeValue(file)}`,
+          message: `expected a frame-name array at "${path}", found ${describeValue(entry)}`,
         });
-      } else if (file !== slot.file || !ASSET_FILENAME_PATTERN.test(file)) {
+        continue;
+      }
+      // The frame LIST must match the declared slot exactly (same order, same
+      // names): the count is `frames.length`, so both content and length matter.
+      if (entry.length !== slot.frames.length) {
         problems.push({
           path,
           kind: 'bad-filename',
-          message: `expected file "${slot.file}" at "${path}" (lower-kebab-case .png), found ${JSON.stringify(file)}`,
+          message: `expected ${slot.frames.length} frame(s) at "${path}" (${slot.frames.join(', ')}), found ${entry.length}`,
         });
+      }
+      const limit = Math.max(entry.length, slot.frames.length);
+      for (let index = 0; index < limit; index += 1) {
+        const expected = slot.frames[index];
+        const file = entry[index];
+        const framePath = `${path}.${index}`;
+        if (expected === undefined) {
+          problems.push({
+            path: framePath,
+            kind: 'bad-filename',
+            message: `unexpected extra frame at "${framePath}" (slot declares ${slot.frames.length})`,
+          });
+        } else if (file === undefined) {
+          problems.push({
+            path: framePath,
+            kind: 'missing',
+            message: `missing frame "${expected}" at "${framePath}"`,
+          });
+        } else if (typeof file !== 'string') {
+          problems.push({
+            path: framePath,
+            kind: 'wrong-type',
+            message: `expected a file-name string at "${framePath}", found ${describeValue(file)}`,
+          });
+        } else if (file !== expected || !ASSET_FILENAME_PATTERN.test(file)) {
+          problems.push({
+            path: framePath,
+            kind: 'bad-filename',
+            message: `expected file "${expected}" at "${framePath}" (lower-kebab-case .png), found ${JSON.stringify(file)}`,
+          });
+        }
       }
     }
   }
@@ -1126,13 +1204,16 @@ export function validateTheme(theme: Theme): ThemeValidationResult {
 // ---------------------------------------------------------------------------
 
 /**
- * One slot's measured facts, produced by the CLI. `width`/`height` are null when
- * the file is absent or could not be decoded; `error` carries the human reason
- * for an unreadable file.
+ * One FRAME's measured facts, produced by the CLI. `width`/`height` are null
+ * when the file is absent or could not be decoded; `error` carries the human
+ * reason for an unreadable file. `frameIndex` identifies which frame of the slot
+ * this measurement is for (0-based, matching `ASSET_SLOTS[].frames`).
  */
 export interface AssetMeasurement {
   /** Canonical slot name (one of `ASSET_SLOTS`). */
   slot: string;
+  /** 0-based frame index within the slot's declared frame list. */
+  frameIndex: number;
   /** Path the CLI read (used verbatim in problem messages). */
   path: string;
   /** Whether the file exists on disk. */
@@ -1153,6 +1234,8 @@ export type AssetProblemKind =
 
 export interface AssetProblem {
   slot: string;
+  /** 0-based frame index within the slot, when the problem is frame-specific. */
+  frameIndex: number;
   path: string;
   kind: AssetProblemKind;
   message: string;
@@ -1161,11 +1244,11 @@ export interface AssetProblem {
 export interface AssetCheckResult {
   ok: boolean;
   problems: AssetProblem[];
-  /** Declared slots whose file exists and matched the declared dimensions. */
+  /** Declared FRAMES whose file exists and matched the declared dimensions. */
   correct: number;
-  /** Declared slots whose file was absent. */
+  /** Declared FRAMES whose file was absent. */
   missing: number;
-  /** Declared slots present but with a different size (or unreadable). */
+  /** Declared FRAMES present but with a different size (or unreadable). */
   mismatched: number;
 }
 
@@ -1179,57 +1262,67 @@ export function validateAssetMeasurements(
   measurements: readonly AssetMeasurement[],
 ): AssetCheckResult {
   const problems: AssetProblem[] = [];
-  const bySlot = new Map<string, AssetMeasurement>();
+  // Keyed by `<slot>#<frameIndex>` — a slot now has several frames to check.
+  const byFrame = new Map<string, AssetMeasurement>();
   for (const measurement of measurements) {
     if (!ASSET_SLOT_NAMES.has(measurement.slot)) {
       problems.push({
         slot: measurement.slot,
+        frameIndex: measurement.frameIndex,
         path: measurement.path,
         kind: 'unknown-slot',
         message: `measured unknown asset slot "${measurement.slot}" (not one of the ${ASSET_SLOTS.length} declared slots)`,
       });
       continue;
     }
-    bySlot.set(measurement.slot, measurement);
+    byFrame.set(`${measurement.slot}#${measurement.frameIndex}`, measurement);
   }
 
   let correct = 0;
   let missing = 0;
   let mismatched = 0;
   for (const slot of ASSET_SLOTS) {
-    const file = theme.assets[slot.name] ?? slot.file;
-    const measurement = bySlot.get(slot.name);
-    if (measurement === undefined || !measurement.exists) {
-      missing += 1;
-      problems.push({
-        slot: slot.name,
-        path: measurement?.path ?? file,
-        kind: 'missing-file',
-        message: `missing ${file} (expected ${slot.width}x${slot.height})`,
-      });
-      continue;
+    // The theme owns the file names; fall back to the declared convention only
+    // when the theme omits the slot (the assets-section pass reports that).
+    const declared = theme.assets[slot.name];
+    for (let frameIndex = 0; frameIndex < slot.frames.length; frameIndex += 1) {
+      const file = declared?.[frameIndex] ?? slot.frames[frameIndex] ?? slot.file;
+      const measurement = byFrame.get(`${slot.name}#${frameIndex}`);
+      if (measurement === undefined || !measurement.exists) {
+        missing += 1;
+        problems.push({
+          slot: slot.name,
+          frameIndex,
+          path: measurement?.path ?? file,
+          kind: 'missing-file',
+          message: `missing ${file} (expected ${slot.width}x${slot.height})`,
+        });
+        continue;
+      }
+      if (measurement.error !== null || measurement.width === null || measurement.height === null) {
+        mismatched += 1;
+        problems.push({
+          slot: slot.name,
+          frameIndex,
+          path: measurement.path,
+          kind: 'unreadable-image',
+          message: `could not read PNG dimensions from "${measurement.path}"${measurement.error ? `: ${measurement.error}` : ''}`,
+        });
+        continue;
+      }
+      if (measurement.width !== slot.width || measurement.height !== slot.height) {
+        mismatched += 1;
+        problems.push({
+          slot: slot.name,
+          frameIndex,
+          path: measurement.path,
+          kind: 'wrong-dimensions',
+          message: `${file} is ${measurement.width}x${measurement.height}, expected ${slot.width}x${slot.height}`,
+        });
+        continue;
+      }
+      correct += 1;
     }
-    if (measurement.error !== null || measurement.width === null || measurement.height === null) {
-      mismatched += 1;
-      problems.push({
-        slot: slot.name,
-        path: measurement.path,
-        kind: 'unreadable-image',
-        message: `could not read PNG dimensions from "${measurement.path}"${measurement.error ? `: ${measurement.error}` : ''}`,
-      });
-      continue;
-    }
-    if (measurement.width !== slot.width || measurement.height !== slot.height) {
-      mismatched += 1;
-      problems.push({
-        slot: slot.name,
-        path: measurement.path,
-        kind: 'wrong-dimensions',
-        message: `${file} is ${measurement.width}x${measurement.height}, expected ${slot.width}x${slot.height}`,
-      });
-      continue;
-    }
-    correct += 1;
   }
 
   return { ok: problems.length === 0, problems, correct, missing, mismatched };

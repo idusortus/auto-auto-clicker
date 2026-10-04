@@ -25,7 +25,8 @@
     "version:sync": "node scripts/version.mjs sync",
     "version:bump": "node scripts/version.mjs bump",
     "version:check": "node scripts/version.mjs check",
-    "typecheck": "npm run typecheck -w engine-core && npm run typecheck -w web && npm run typecheck -w sim"
+    "typecheck": "npm run typecheck -w engine-core && npm run typecheck -w web && npm run typecheck -w sim",
+    "pixel:art": "npm run pixel:art -w engine-core"
   },
   "devDependencies": {
     "cli-five": "file:../cli-five",

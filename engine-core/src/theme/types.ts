@@ -326,16 +326,20 @@ export interface Theme {
   /**
    * Declared art this theme supplies, keyed by ASSET SLOT NAME (the canonical
    * names + pixel dimensions + naming convention live in `theme/contract.ts`
-   * `ASSET_SLOTS`, the single source of truth T4 consumes). Each value is a
-   * file name following the contract convention, e.g. `player-idle.png`.
+   * `ASSET_SLOTS`, the single source of truth T4 consumes). Each value is an
+   * ORDERED list of frame file names following the contract convention — one
+   * entry is a static image, several entries are a animation sequence played in
+   * order (idle loops, action cues play once). Single-frame slots (e.g. gear
+   * icons) declare a one-element list. File names use a `-<n>` frame suffix,
+   * e.g. `enemy-grunt-idle-0.png`, `enemy-grunt-idle-1.png`.
    *
-   * T3 declares this contract ONLY: nothing loads, measures, or renders these
-   * files yet. T4 (the asset seam) adds on-disk existence + dimension checking
-   * and the loader. `validateTheme` checks this section is well-formed
-   * (all slots present, string file names, convention-respecting) but does NOT
-   * require the files to exist.
+   * This section is DISPLAY-only: it names the theme's own files. It carries no
+   * identity (slot names are owned by the contract in code) and no gameplay
+   * semantics. `validateTheme` checks the section is well-formed (all slots
+   * present, every entry a non-empty list of convention-respecting file names)
+   * but does NOT require the files to exist; the on-disk frame check is the CLI.
    */
-  assets: Record<string, string>;
+  assets: Record<string, readonly string[]>;
 
   /**
    * Declared animation cues, keyed by semantic EVENT FAMILY (never an identity

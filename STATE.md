@@ -3,13 +3,32 @@
 > Cross-session memory for all agents. Update on exit; read on entry.
 
 ## Status
-**The game runs on a second host (Expo / React Native), now with theme pixel art, event-driven
-animation, and safe-area-aware layout, and ships as a sideloadable Android APK via tag-triggered
-GitHub Releases (`v0.3.0` is the latest), versioned by a single source of truth. Every gate is
-green.**
+**The game runs on a second host (Expo / React Native) with REAL pixel-art sprites and true
+multi-frame animation (idle loops + one-shot action sequences), and ships as a sideloadable Android
+APK via tag-triggered GitHub Releases (`v0.3.0` is the latest), versioned by a single source of
+truth. Every gate is green.**
 
-### Latest (2026-10-04) — mobile theme art + animation + safe-area; release v0.3.0
-- **`expo-art-animation` (applied + archived 2026-10-04) — theme art + animation + safe-area.**
+### Latest (2026-10-04) — real pixel-art sprites + frame-sequence animation (`pixel-art-sprites`)
+- **The theme art is no longer placeholder blobs.** `engine-core/scripts/make-pixel-art.ts`
+  (`npm run pixel:art`) draws the `fantasy` theme's sprites as data — a hero, a grunt, a horned
+  boss, a small imp (4 Shiny variants), and the spawn popup — with dark outlines, 2-step shading,
+  and 61–221 distinct colours per sprite (vs 5 for the old blobs), written at the exact contract
+  dimensions. `lucky` keeps the placeholder generator (`npm run theme:assets -- lucky`).
+- **The display contract now expresses FRAME SEQUENCES.** `ASSET_SLOTS` declares `frames: string[]`
+  per slot (name identity unchanged, so the 32-slot invariant holds); `Theme.assets` is now
+  `Record<string, readonly string[]>` (an ordered frame list, DISPLAY-only); `validateAssetMeasurements`
+  + `theme:check` verify EVERY frame exists at its exact size. Engine sim/balance/RNG/save schema
+  (v4) are untouched.
+- **Both hosts play sequences.** `/web` loops idle frames and plays a cue's frames once across its
+  duration (one interval ticker); mobile's `useAnimationCues` gained `frameIndexFor` (idle loop +
+  one-shot cue, `IDLE_LOOP_MS`) and `ThemeImage` takes a `frameIndex`. Reduced motion holds frame 0
+  (no loop, no advance) in both hosts; informational text is unaffected.
+- **Gates:** engine tests **241**, mobile **139** (15 suites), sim `PACING OK`, smoke **30** (incl.
+  new idle-loop + reduced-motion rest-frame cases), build OK, `theme:check` **49/49 frames at exact
+  size**.
+- **Earlier same-day work (`expo-art-animation`, archived):** theme art + event→cue animation +
+  safe-area insets on the RN host; Reanimated flourishes; three SDK-57-pinned deps. See below.
+- **`expo-art-animation` (applied + archived 2026-10-04)** — theme art + animation + safe-area.
   The RN host renders the active theme's declared PNGs (`ThemeImage`) instead of placeholder
   boxes, consumes the `GameEvent[]` seam through a ported event→cue animation framework (pure
   `cues.ts` + `useAnimationCues` + `useReducedMotion`, plus Reanimated flourishes: HP tween,
@@ -120,7 +139,7 @@ The one-line switch is `export const ACTIVE_THEME: Theme = <name>;` in
 `engine-core/src/theme/index.ts` (committed value: `fantasy`).
 
 ### Mobile gates (current, verified)
-- `npm run test -w mobile` → **133 passed (15 suites), exit 0**.
+- `npm run test -w mobile` → **139 passed (15 suites), exit 0**.
 - `npm run mobile:typecheck` → clean. `npm run mobile:apk` → builds
   `mobile/dist/auto-auto-clicker.apk` locally (needs the `$HOME` toolchain).
 - `npm run mobile:assets` → regenerates `mobile/assets/themes/**` + `mobile/src/themeAssets.gen.ts`

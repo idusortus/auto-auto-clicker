@@ -31,23 +31,36 @@ import type { ReducedMotionSource } from './useReducedMotion';
 /** Queue cap: presentation memory stays O(1) no matter how cues are driven. */
 export const MAX_ACTIVE_EFFECTS = 8;
 
+/** Idle-loop cadence: each idle frame is shown for this many ms, looping. */
+export const IDLE_LOOP_MS = 420;
+/** How often the idle-loop ticker re-renders (finer than one frame, so it is smooth). */
+const IDLE_TICK_MS = 120;
+
 /** The timer seam the cue drain is scheduled through (mirrors `HostScheduler`). */
 export interface CueScheduler {
   setTimeout(handler: () => void, delayMs: number): unknown;
   clearTimeout(handle: unknown): void;
+  setInterval(handler: () => void, intervalMs: number): unknown;
+  clearInterval(handle: unknown): void;
 }
 
 const defaultScheduler: CueScheduler = {
   setTimeout: (handler, delayMs) => setTimeout(handler, delayMs),
   clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  setInterval: (handler, intervalMs) => setInterval(handler, intervalMs),
+  clearInterval: (handle) => clearInterval(handle as ReturnType<typeof setInterval>),
 };
 
 /** One live transient frame for an actor target. */
 interface ActiveEffect {
   target: AnimationTarget;
   slot: string;
+  /** Wall-clock enqueue time (`Date.now()`-based); drives the sequence frame. */
+  startedAtMs: number;
   /** Wall-clock deadline (`Date.now()`-based); a display-only duration. */
   expiresAtMs: number;
+  /** The cue's declared display duration, for frame-sequence timing. */
+  durationMs: number;
 }
 
 export interface UseAnimationCuesOptions {
@@ -67,6 +80,12 @@ export interface AnimationCues {
    * otherwise `idleSlot`. Under reduced motion this always returns `idleSlot`.
    */
   slotFor(target: AnimationTarget, idleSlot: string): string;
+  /**
+   * The FRAME INDEX to show for an actor: the live cue's advancing sequence
+   * position, or the idle loop's position when no cue is live. Always 0 under
+   * reduced motion (the rest frame). Use with `slotFor` to render the frame.
+   */
+  frameIndexFor(target: AnimationTarget, idleSlot: string): number;
 }
 
 /**
@@ -90,6 +109,8 @@ export function useAnimationCues(
   // mutating them must not risk the drain callback reading a stale value.
   const effectsRef = useRef<ActiveEffect[]>([]);
   const drainRef = useRef<unknown>(null);
+  // The idle-loop origin, so the loop position starts at frame 0 on mount.
+  const idleEpochRef = useRef<number>(now());
   // A token bumped whenever the frame set changes, so the drain effect re-arms.
   const [version, setVersion] = useState(0);
 
@@ -132,7 +153,9 @@ export function useAnimationCues(
       effectsRef.current.push({
         target,
         slot: cue.slot,
+        startedAtMs: now(),
         expiresAtMs: now() + cue.durationMs,
+        durationMs: cue.durationMs,
       });
       enqueued = true;
     }
@@ -178,6 +201,16 @@ export function useAnimationCues(
   // Tear down the drain on unmount.
   useEffect(() => clearDrain, [clearDrain]);
 
+  // Idle-loop ticker: while motion is allowed, re-render periodically so the idle
+  // sequence advances (the cue drain only fires when a cue EXPIRES; the idle loop
+  // needs its own heartbeat). A single interval, torn down on unmount / reduced
+  // motion, and a no-op when every visible sequence has ≤ 1 frame.
+  useEffect(() => {
+    if (reducedMotion) return undefined;
+    const handle = scheduler.setInterval(() => setVersion((v) => v + 1), IDLE_TICK_MS);
+    return () => scheduler.clearInterval(handle);
+  }, [reducedMotion, scheduler]);
+
   const slotFor = useCallback(
     (target: AnimationTarget, idleSlot: string): string => {
       if (reducedMotion) return idleSlot;
@@ -187,5 +220,36 @@ export function useAnimationCues(
     [reducedMotion],
   );
 
-  return useMemo(() => ({ reducedMotion, slotFor }), [reducedMotion, slotFor]);
+  /**
+   * The frame index for an actor: the live cue's advancing sequence position, or
+   * the idle loop's position when no cue is live. Reduced motion always returns 0
+   * (the rest frame). Cue frames play ONCE across the cue's `durationMs`; the idle
+   * loop wraps every `IDLE_LOOP_MS` per frame.
+   */
+  const frameIndexFor = useCallback(
+    (target: AnimationTarget, idleSlot: string): number => {
+      if (reducedMotion) return 0;
+      const effect = effectsRef.current.find((candidate) => candidate.target === target);
+      const slot = effect === undefined ? idleSlot : effect.slot;
+      const count = ACTIVE_THEME.assets[slot]?.length ?? 1;
+      if (count <= 1) return 0;
+      if (effect === undefined) {
+        const elapsed = now() - idleEpochRef.current;
+        return Math.floor(Math.max(0, elapsed) / IDLE_LOOP_MS) % count;
+      }
+      const elapsed = now() - effect.startedAtMs;
+      const frameMs = effect.durationMs / count;
+      if (frameMs <= 0) return 0;
+      return Math.min(count - 1, Math.floor(Math.max(0, elapsed) / frameMs));
+    },
+    // `version` re-creates this each time the live set changes, so a caller that
+    // memoizes on it re-renders when a cue starts/ends.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [reducedMotion, version, now],
+  );
+
+  return useMemo(
+    () => ({ reducedMotion, slotFor, frameIndexFor }),
+    [reducedMotion, slotFor, frameIndexFor],
+  );
 }
