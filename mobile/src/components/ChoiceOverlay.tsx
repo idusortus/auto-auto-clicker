@@ -5,10 +5,13 @@
 // and the ad / purchase placeholders stay disabled, mirroring the web renderer.
 
 import { Modal, Pressable, Text, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 
 import { ACTIVE_THEME, getProjectedKillMs } from '@auto-auto-clicker/engine-core';
 import type { GameState } from '@auto-auto-clicker/engine-core';
 
+import { useEntrance } from '../animation/motion';
+import { useReducedMotion } from '../animation/useReducedMotion';
 import { styles } from '../theme';
 import type { GameHandlers } from './types';
 import { formatInt } from './format';
@@ -21,6 +24,8 @@ export interface ChoiceOverlayProps {
 
 export function ChoiceOverlay({ state, handlers }: ChoiceOverlayProps): React.JSX.Element {
   const theme = ACTIVE_THEME;
+  const reducedMotion = useReducedMotion();
+  const entrance = useEntrance(reducedMotion);
   const pending = state.choices.pending;
   const visible = pending !== null;
 
@@ -45,9 +50,9 @@ export function ChoiceOverlay({ state, handlers }: ChoiceOverlayProps): React.JS
   return (
     <Modal testID="choice-overlay" visible={visible} transparent animationType="fade">
       <View style={[layout.overlayBackdrop, styles.overlayBackdrop]}>
-        <View
+        <Animated.View
           testID="choice-card"
-          style={[layout.overlayCard, styles.panel, styles.accentEdge]}
+          style={[layout.overlayCard, styles.panel, styles.accentEdge, entrance]}
           accessibilityViewIsModal
         >
           <Text testID="choice-title" style={[layout.overlayTitle, styles.text]}>
@@ -87,7 +92,7 @@ export function ChoiceOverlay({ state, handlers }: ChoiceOverlayProps): React.JS
             </Pressable>
           </View>
           <Text style={[layout.overlayNote, styles.textMuted]}>{theme.ui.choice.note}</Text>
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );

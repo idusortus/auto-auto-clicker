@@ -5,9 +5,12 @@
 // theme's duration / earned copy; nothing is hard-coded.
 
 import { Modal, Pressable, Text, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 
 import { ACTIVE_THEME } from '@auto-auto-clicker/engine-core';
 
+import { useEntrance } from '../animation/motion';
+import { useReducedMotion } from '../animation/useReducedMotion';
 import { styles } from '../theme';
 import type { OfflineViewProps } from './types';
 import { formatDuration, formatInt } from './format';
@@ -18,6 +21,8 @@ export function OfflineOverlay({
   onDismiss,
 }: OfflineViewProps): React.JSX.Element {
   const theme = ACTIVE_THEME;
+  const reducedMotion = useReducedMotion();
+  const entrance = useEntrance(reducedMotion);
   const duration = formatDuration(summary.simulatedMs);
   const earned = formatInt(summary.goldEarned);
   const capped = summary.capped ? theme.ui.offline.capped : '';
@@ -26,9 +31,9 @@ export function OfflineOverlay({
   return (
     <Modal testID="offline-overlay" visible transparent animationType="fade">
       <View style={[layout.overlayBackdrop, styles.overlayBackdrop]}>
-        <View
+        <Animated.View
           testID="offline-card"
-          style={[layout.overlayCard, styles.panel, styles.accentEdge]}
+          style={[layout.overlayCard, styles.panel, styles.accentEdge, entrance]}
           accessibilityViewIsModal
         >
           <Text style={[layout.overlayTitle, styles.text]}>{theme.ui.offline.title}</Text>
@@ -45,7 +50,7 @@ export function OfflineOverlay({
               {theme.ui.offline.dismiss}
             </Text>
           </Pressable>
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );

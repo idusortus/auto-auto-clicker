@@ -10,6 +10,7 @@
 
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import { AppState } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { applyAction, createGame, saveGame } from '@auto-auto-clicker/engine-core';
 import type { GameState, SaveGame } from '@auto-auto-clicker/engine-core';
@@ -57,7 +58,16 @@ async function bootScreen(
   repository: MemorySaveRepository,
 ): Promise<Awaited<ReturnType<typeof render>>> {
   const view = await render(
-    <GameScreen hostOptions={{ repository, now: () => nowMs, seed: () => 7, scheduler }} />,
+    <SafeAreaProvider
+      initialMetrics={{
+        frame: { x: 0, y: 0, width: 400, height: 800 },
+        insets: { top: 0, bottom: 0, left: 0, right: 0 },
+      }}
+    >
+      <GameScreen
+        hostOptions={{ repository, now: () => nowMs, seed: () => 7, scheduler }}
+      />
+    </SafeAreaProvider>,
   );
   await waitFor(() => expect(view.getByTestId('game-screen')).toBeTruthy());
   return view;

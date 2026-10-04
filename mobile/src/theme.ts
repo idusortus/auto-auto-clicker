@@ -13,8 +13,12 @@
 // and are replaced with flat palette tokens (plus opacity where a smaller
 // emphasis is wanted) — a visual simplification, not a behaviour change.
 
+import type { ImageSourcePropType } from 'react-native';
+
 import { ACTIVE_THEME } from '@auto-auto-clicker/engine-core';
 import type { Theme } from '@auto-auto-clicker/engine-core';
+
+import { THEME_ASSETS } from './themeAssets.gen';
 
 /** The color-token shape of a theme palette (Theme['palette']). */
 type ThemePalette = Theme['palette'];
@@ -129,14 +133,15 @@ export function paletteToStyles(theme: Theme): ThemeStyles {
 export const styles: ThemeStyles = paletteToStyles(ACTIVE_THEME);
 
 /**
- * A theme asset resolved to something React Native can render.
+ * A theme asset resolved to bundled art React Native can render.
  *
  * RN has no `/themes/<name>/` static route, so a slot cannot be loaded from a
- * URL. Every field here is DERIVED from the theme (`name` + `assets`); no file
- * name is hard-coded outside the theme's own `assets` map. Because this change
- * ships no bundled art, `uri` is null and callers render a placeholder `View`
- * carrying the resolved slot identity — this is deliberately a placeholder
- * strategy, not an art-parity claim (see the change's Non-Goals).
+ * URL: Metro needs a static `require()`, which the generated registry
+ * (`themeAssets.gen.ts`) supplies. Every field here is DERIVED from the theme
+ * (`name` + `assets`); no file name is hard-coded outside the theme's own
+ * `assets` map. `source`, `width`, and `height` come from the registry entry
+ * keyed `` `${theme.name}/${fileName}` `` — the width/height are measured from
+ * the PNG itself, so sprites render at their declared size.
  */
 export interface ResolvedAsset {
   /** Canonical asset slot name (e.g. `player-idle`). */
@@ -145,23 +150,43 @@ export interface ResolvedAsset {
   themeName: string;
   /** The file name the theme declares for the slot. */
   fileName: string;
-  /** Bundled image module or URI, or null when only a placeholder exists. */
-  uri: string | null;
+  /** The bundled image module Metro resolves for the theme's declared file. */
+  source: ImageSourcePropType;
+  /** Declared pixel width, measured from the PNG's IHDR header. */
+  width: number;
+  /** Declared pixel height, measured from the PNG's IHDR header. */
+  height: number;
 }
 
 /**
  * Resolve an asset slot through the theme's `name` + `assets` map.
  *
- * A slot the theme does not declare is a theme authoring bug and fails loudly
- * (mirroring the renderer's missing-roster-entry behaviour) rather than
- * rendering a silent blank.
+ * Two distinct failures both fail loudly rather than rendering a silent blank:
+ * a slot the theme does not declare (a theme authoring bug), and a slot the
+ * theme declares but the bundled registry lacks (a stale/missing generated
+ * registry — run `npm run mobile:assets`).
  */
 export function resolveAsset(theme: Theme, slot: string): ResolvedAsset {
   const fileName = theme.assets[slot];
   if (fileName === undefined) {
     throw new Error(`[aac] theme "${theme.name}" declares no asset slot "${slot}"`);
   }
-  return { slot, themeName: theme.name, fileName, uri: null };
+  const key = `${theme.name}/${fileName}`;
+  const entry = THEME_ASSETS[key];
+  if (entry === undefined) {
+    throw new Error(
+      `[aac] theme "${theme.name}" slot "${slot}" maps to "${key}", which the bundled ` +
+        `asset registry does not contain — run \`npm run mobile:assets\` to regenerate it`,
+    );
+  }
+  return {
+    slot,
+    themeName: theme.name,
+    fileName,
+    source: entry.source,
+    width: entry.width,
+    height: entry.height,
+  };
 }
 
 /** Resolve a slot through the ACTIVE_THEME (the common case). */

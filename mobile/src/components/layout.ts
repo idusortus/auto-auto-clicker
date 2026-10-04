@@ -6,11 +6,51 @@
 
 import { StyleSheet } from 'react-native';
 
+// The base vertical padding for the screen frame. The safe-area insets are added
+// ON TOP of these at the call site (see `GameScreen`), so a zero inset degrades to
+// exactly the design padding and no more. Exported so the inset composition and
+// its test read the same number.
+export const SCREEN_PADDING_VERTICAL = 16;
+
+/**
+ * The two device inset edges the frame consumes. Structural (not the library's
+ * `EdgeInsets`) so a test can pass a plain object.
+ */
+export interface FrameInsets {
+  top: number;
+  bottom: number;
+}
+
+/**
+ * Compose the safe-area insets with the screen frame's base vertical padding.
+ * Zero insets yield exactly `SCREEN_PADDING_VERTICAL`; a non-zero top/bottom
+ * inset pushes the frame's content clear of the status bar / gesture area. Kept
+ * as a pure function so the composition is unit-testable without a renderer.
+ */
+export function screenFramePadding(insets: FrameInsets): {
+  paddingTop: number;
+  paddingBottom: number;
+} {
+  return {
+    paddingTop: SCREEN_PADDING_VERTICAL + insets.top,
+    paddingBottom: SCREEN_PADDING_VERTICAL + insets.bottom,
+  };
+}
+
+/**
+ * The bottom offset for a bottom-anchored surface (the transient toast stack).
+ * It is only the inset itself: zero insets add NO extra padding, and a non-zero
+ * inset lifts the surface above the home indicator / gesture area.
+ */
+export function bottomInsetPadding(insets: FrameInsets): number {
+  return insets.bottom;
+}
+
 export const layout = StyleSheet.create({
   screen: {
     flex: 1,
     paddingHorizontal: 12,
-    paddingVertical: 16,
+    paddingVertical: SCREEN_PADDING_VERTICAL,
   },
   scroll: {
     gap: 12,
@@ -130,6 +170,40 @@ export const layout = StyleSheet.create({
   shinyName: {
     fontSize: 13,
     fontWeight: '700',
+  },
+
+  spawnPopup: {
+    position: 'absolute',
+    right: 8,
+    top: 8,
+    zIndex: 5,
+  },
+
+  toastStack: {
+    bottom: 0,
+    gap: 6,
+    left: 0,
+    paddingHorizontal: 16,
+    position: 'absolute',
+    right: 0,
+    zIndex: 70,
+  },
+  toast: {
+    alignItems: 'center',
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  toastText: {
+    fontSize: 13,
+    textAlign: 'center',
+  },
+  toastFlourishText: {
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+    textAlign: 'center',
   },
 
   panel: {
@@ -267,5 +341,32 @@ export const layout = StyleSheet.create({
   },
   overlayActions: {
     gap: 8,
+  },
+
+  splash: {
+    alignItems: 'center',
+    left: 0,
+    paddingHorizontal: 24,
+    position: 'absolute',
+    right: 0,
+    top: '32%',
+    zIndex: 80,
+  },
+  splashKicker: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 1,
+    textAlign: 'center',
+    textTransform: 'uppercase',
+  },
+  splashTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  splashDesc: {
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
   },
 });

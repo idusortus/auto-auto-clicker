@@ -2,6 +2,42 @@
 
 > One entry per locked-in choice. Reverse chronological. Concise — not an ADR template.
 
+## 2026-10-03 — Reviewer note on `expo-art-animation` (second pass): port the reference's defensive contracts, not just its visible behavior
+
+**Context:** Independent re-review of the uncommitted `expo-art-animation` mobile work (verdict PASS WITH NOTES). The prior pass's blockers were reconciled (delta spec no longer demands a player sprite; display timings aligned to `/web`). A fresh defect surfaced in the event→cue drain port.
+
+**Choice (review finding, not an implementation decision):**
+1. **`useAnimationCues.ts` must re-arm the drain unconditionally after a fire**, mirroring `/web` `renderer.ts:816-842`. The RN port (`useAnimationCues.ts:160-175`) only re-arms when something actually expired (`setVersion` conditional on `survivors.length !== effectsRef.current.length`). An early timer wake therefore leaves a stuck cue frame until the next event batch. Fix: schedule the next drain inside the callback regardless of whether anything expired (or bump `version` unconditionally), and add a test that fires the drain before any deadline.
+2. **`surfaces.ts:315`/`:320` must import `formatMultiplier` from `./format` and `EQUIP_SLOTS` from `./types`**, deleting the local duplicates.
+3. **`mobile/package.json` should pin `react-native-reanimated`/`react-native-worklets` exactly**, per AGENTS.md ("exact SDK-57-pinned versions"); the lock currently resolves 4.5.1/0.10.1 correctly, so this is drift-proofing only.
+
+**Trade-offs:** None of the three is a shipping blocker; (1) is a latent correctness bug only on an early timer wake, (2) is dead duplication with zero behavior impact, (3) is convention. Flagged rather than fixed because review must not modify code.
+
+**Revisit:** If a third host is ever added, port the reference's `scheduleDrain` contract verbatim (unconditional re-arm) rather than re-deriving it from the render effect. Re-check the dependency pinning whenever the SDK-57 lock is regenerated.
+
+**Evidence:** `mobile:typecheck` 0; `mobile:test` 132/132 (15 suites); root `test` 236/236; `sim` PACING OK; `git diff --stat engine-core web sim` empty; `openspec validate expo-art-animation --strict` valid; `mobile:assets` re-run sha256-identical (64 PNGs + registry); no colour literals or hard-coded copy in components.
+
+---
+
+## 2026-10-03 — `expo-art-animation`: RN host renders theme art, ports the event→cue animation model, and respects safe-area insets
+
+**Context:** The Expo host booted the real game but rendered only `AssetPlaceholder` frames and consumed none of the `GameEvent[]` seam; `/web` shipped bundled sprites + a full event→cue animation framework, and Android `edgeToEdgeEnabled: true` clipped the HUD under the status bar. This change closes that follow-up for `mobile/` only.
+
+**Choice:**
+1. **Asset pipeline is generated, not hard-coded.** `mobile/scripts/sync-theme-assets.mjs` copies `web/public/themes/<name>/*.png` → `mobile/assets/themes/<name>/` for every shipped theme directory and emits `mobile/src/themeAssets.gen.ts` with one literal `require()` per PNG keyed `` `<name>/<file>.png` ``, the width/height measured from each PNG's own IHDR header. Registry + PNGs are committed; `npm run mobile:assets` regenerates; a Jest test asserts coverage of `ACTIVE_THEME.assets` so a stale registry fails loudly. `resolveAsset` keys by `` `${theme.name}/${fileName}` `` and throws on a missing slot (the `ASSET_SLOTS` engine export is deliberately NOT added).
+2. **`cues.ts` is a pure semantic port of `/web`'s `handleEvents`** (left-to-right scan; `stageEntered` advances the running stage mid-batch; click `damageDealt` also animates the player; `enemyKilled` uses `event.stage`; per-target winner = highest `CUE_PRIORITY`, ties to the LAST via `>=`), and `useAnimationCues` is the stateful half (one drain, bounded queue, duration `<= 0` disables, clears on reduced motion + live flip). Reanimated drives only the continuous flourishes; the frame swap stays timer/state.
+3. **Player sprite deliberately not added to the RN layout.** `/web` renders `stage__player`, but the RN Arena never had a player site; inventing one was out of scope. `collectCueWinners` still computes the `player` target for a future site. **Consequence:** the delta spec's *Declared art is rendered* and *Player attack cue* scenarios (which name the player) do NOT hold for this host.
+4. **Safe area via `react-native-safe-area-context`**; `screenFramePadding(insets)` adds insets ON TOP of `SCREEN_PADDING_VERTICAL = 16` (exactly the base at zero insets); `bottomInsetPadding(insets) = insets.bottom`.
+5. **Three mobile deps** (`react-native-safe-area-context`, `react-native-reanimated`, `react-native-worklets`); a hand-written Reanimated Jest mock replaces the official one (the official mock transitively loads `react-native-worklets`' native proxy and throws under Jest).
+
+**Trade-offs:** (a) Two authored spec scenarios are unsatisfied (player art / player cue) — flagged NEEDS CHANGES; the spec must be edited to drop or defer them, or the player site added. (b) Display-timing constants drift from `/web` (`SPLASH_DURATION_MS` 3200 vs 2600, `MILESTONE_MESSAGE_MS`/Shiny message 2600 vs 2400/2200); the Shiny message reuses `ENEMY_TAUNT_MESSAGE_MS`, a naming smell worth its own constant. (c) `design.md`'s `../../assets` require example is stale (shipped generator correctly uses `../assets`; noted in tasks 2.1). (d) Duplicated PNGs live in git until real art justifies a shared `themes/` directory.
+
+**Revisit:** If a player sprite site is ever added to the RN Arena, the `player` target already exists in `cues.ts`/`slotFor` — wire it and add the spec scenarios back. Align the RN display timings with `/web` or document the divergence. Never move identity into a theme.
+
+**Evidence:** `npm run mobile:typecheck` clean; `npm run mobile:test` 131/131 (15 suites); `npm run test` 236/236; `npm run sim` PACING OK; `git diff --stat engine-core web sim` empty; `npm run mobile:assets` re-run byte-identical (64 PNGs + registry); no colour literals or hard-coded copy in components.
+
+---
+
 ## Format
 
     ## YYYY-MM-DD — <decision title>
@@ -646,3 +682,15 @@
 **Choice:** (1) **`mobile/package.json` `version` is the single source of truth**; `mobile/app.json` `expo.version` and root `package.json` `version` are derived. (2) Dependency-free `scripts/version.mjs` with `sync` / `bump <x.y.z>` / `check`, wired as `npm run version:sync|bump|check`. (3) `check` fails on derived-file drift AND on a tag/version mismatch; on an untagged **local** HEAD it skips only the tag check, but in **CI** a missing/non-`v*` tag is a **failure** (fail-closed) — because `git describe --exact-match` exits 128 on an untagged HEAD, a naive "non-zero ⇒ skip" would silently skip the guard in CI. (4) The release workflow runs `check` right after checkout, before `npm ci`/build, so a mismatched tag fails fast. (5) `CHANGELOG.md` in Keep a Changelog format. (6) Seed version reconciled to **`0.1.2-preview`** to match the one real tag; `android.versionCode` stays the commit-count integer (`1` here, `29` on the released tag) and is never derived from semver. User-selected source-of-truth.
 **Trade-offs:** The next release tag must be strictly newer than `0.1.2-preview`. The historical `v0.1.2-preview` tree predates reconciliation, so `git checkout` of that exact tag would fail `version:check` (documented). There is **no PR-time gate** — the repo has only the tag-triggered workflow, so drift is caught locally or at tag push. `bump` is intentionally "semver-ish" (no `semver` dependency).
 **Revisit:** If branch/PR enforcement is wanted, add a PR-triggered workflow running `version:check`. If conventional-commit changelog generation is wanted, that is a separate change.
+
+## 2026-10-03 — Expo visual parity: reuse theme PNGs, add safe-area + Reanimated (OpenSpec change `expo-art-animation`)
+**Context:** The Expo host booted and played the real engine but rendered placeholder boxes instead of the active theme's declared art, consumed no events for animation, and (with `android.edgeToEdgeEnabled: true` and a flat 16px screen padding) drew its HUD under the status bar. The archived `expo-transition` change had deliberately deferred pixel art, animation parity, and asset bundling. The user asked to close those gaps on mobile.
+**Choice (user-selected):** (1) **Reuse the existing theme PNGs** (`web/public/themes/<name>/`, the currently-committed placeholders generated from `ASSET_SLOTS`) rather than authoring new art; (2) adopt the **fuller animation set** — port `/web`'s event→cue model plus spawn popup, Shiny drift/messages, enemy taunts, queued achievement splash, milestone flourish, boost-pulse, HP tween, overlay entrances; (3) add `react-native-safe-area-context` **and** `react-native-reanimated` (+ `react-native-worklets`). Assets are copied mobile-local (`mobile/assets/themes/**` + a generated literal-`require` registry) because Metro requires static requires; sprites draw at their measured PNG dimensions since RN lacks `image-rendering: pixelated`. `ASSET_SLOTS` stays unexported — the registry is generated from the PNGs on disk and validated against each theme's public `assets` map.
+**Trade-offs:** PNGs are duplicated into `mobile/` (accepted cost of Metro's static-require rule until real art justifies a shared location); Reanimated is a heavier dependency needing its worklets package and a Jest mock; reduced-motion movement parity is honored but exact CSS parity (pixelated scaling, `color-mix`, `env()`) is not claimed. `engine-core`, `/web`, `/sim`, and the save schema (v4) are untouched.
+**Revisit:** If real (non-placeholder) art is authored, move the PNGs to a shared top-level `themes/` directory and have both hosts read it; if Reanimated proves unnecessary, the discrete frame swaps only need the timer seam, not Reanimated.
+
+## 2026-10-03 — Mobile deps must be added with `--legacy-peer-deps` to preserve RN nesting
+**Context:** The `expo-art-animation` change needed three deps (`react-native-safe-area-context@~5.7.0`, `react-native-reanimated@4.5.1`, `react-native-worklets@0.10.1`). Running `npx expo install` re-resolved the tree and HOISTED `react-native` to the root (`node_modules/react-native@0.87.1`), deleting the committed `mobile/node_modules/react-native@0.86.3` nesting — which the repo's `mobile/jest.config.js` deliberately requires so Jest validates the SAME RN minor the APK ships (documented in commit `3b6a6c7`). The result: all 8 RN suites failed with "Could not locate module react-native/Libraries/AppState/AppState", a masked-fallout class of bug the repo had previously fixed.
+**Choice:** Never use `npx expo install` for `mobile/` deps. Add them with exact SDK-57 versions via `npm install <pkg>@<ver> --workspace mobile --legacy-peer-deps`; if the tree drifts, restore with `git checkout -- package-lock.json && npm install` (which reproduces the committed nesting: `mobile/node_modules/react-native@0.86.3` + `node_modules/react-native@0.87.1`).
+**Trade-offs:** `--legacy-peer-deps` skips peer-dep auto-installation, so any new peer requirement must be added explicitly; version strings come from `node_modules/expo/bundledNativeModules.json` rather than being computed.
+**Revisit:** When the repo moves `mobile/` off the split RN minor (0.86.3 vs root 0.87.1), the `moduleNameMapper` rationale and this workaround can be dropped together.

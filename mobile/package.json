@@ -7,6 +7,7 @@
     "start": "expo start",
     "test": "jest",
     "typecheck": "tsc --noEmit",
+    "assets": "node scripts/sync-theme-assets.mjs",
     "build:apk": "bash scripts/build-apk.sh"
   },
   "dependencies": {
@@ -14,7 +15,10 @@
     "@react-native-async-storage/async-storage": "2.2.0",
     "expo": "~57.0.26",
     "react": "19.2.3",
-    "react-native": "0.86.3"
+    "react-native": "0.86.3",
+    "react-native-reanimated": "4.5.1",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-worklets": "0.10.1"
   },
   "devDependencies": {
     "@testing-library/react-native": "^14.0.1",

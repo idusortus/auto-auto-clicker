@@ -154,19 +154,24 @@ auto-auto-clicker/
     └── src/sim.ts               # `npm run sim` — fixed-step sweep, hard assertions, power attribution
 
 └── mobile/                      # ▶ SECOND HOST — Expo / React Native (consumes engine-core unchanged)
-    ├── package.json             # @auto-auto-clicker/mobile; scripts start/test/typecheck
-    ├── app.json                 # Expo config (new architecture enabled)
-    ├── babel.config.js          # babel-preset-expo
+    ├── package.json             # @auto-auto-clicker/mobile; scripts start/assets/test/typecheck
+    ├── app.json                 # Expo config (new architecture + Android edge-to-edge)
+    ├── babel.config.js          # babel-preset-expo (auto-wires the Reanimated worklets plugin)
     ├── tsconfig.json            # extends ../tsconfig.base.json (strict, react-jsx)
     ├── index.ts                 # registerRootComponent(App)
-    ├── App.tsx                  # composition root → <GameScreen />
+    ├── App.tsx                  # composition root → <SafeAreaProvider><GameScreen /></SafeAreaProvider>
+    ├── scripts/
+    │   └── sync-theme-assets.mjs # `npm run mobile:assets` — copy theme PNGs + emit the registry
+    ├── assets/themes/{fantasy,lucky}/ # GENERATED copy of the theme PNGs (Metro static requires)
     └── src/
         ├── saveRepository.ts    # AsyncStorageSaveRepository (SaveRepository adapter)
         ├── storage.ts           # loadSave / persistState / hydrate / offlineElapsedMs (8 h cap)
         ├── offline.ts           # pure replayOffline() — 1000 ms steps, stops at a choice
         ├── useGameHost.ts       # clock + fixed 100 ms loop, autosave, AppState flush
         ├── theme.ts             # 19 palette tokens → RN styles + asset-slot resolution
-        └── components/          # RN view surface: HUD, Arena, gear panels, overlays, shelf
+        ├── themeAssets.gen.ts   # GENERATED literal-require registry (slot file → {source,w,h})
+        ├── animation/           # cues.ts (pure event→cue) + useAnimationCues / useReducedMotion / motion
+        └── components/          # RN view surface: HUD, Arena, gear panels, overlays, shelf, ThemeImage, surfaces
 ```
 
 ---
@@ -786,16 +791,34 @@ The host is **implemented**, not scaffolded:
   autosaves on a 5 s cadence, and **flushes on `AppState` change** — the RN replacement for the
   web host's `visibilitychange`/`pagehide` handlers.
 - **`src/theme.ts`** — the theme→RN bridge: maps the active theme's 19 palette tokens to RN
-  style objects and resolves asset slots from `theme.name` + `theme.assets`, with no hard-coded
-  colours or file names (the RN analogue of `web/src/palette.ts` plus the renderer's asset-url
-  helper).
+  style objects and resolves asset slots from `theme.name` + `theme.assets` into the generated
+  asset registry (`src/themeAssets.gen.ts`), with no hard-coded colours or file names. A slot the
+  active theme declares but the registry lacks fails loudly.
 - **`src/components/`** — the RN component surface (`View`/`Text`/`Pressable`/
-  `ScrollView`/`Modal`): HUD, tappable enemy + HP bar, equipped/bag panels, four per-slot upgrade
-  controls, the pending-choice overlay, the offline summary, and the achievements shelf, plus the
-  `GameScreen` composition root rendered by `App.tsx`. Asset slots currently render through a
-  placeholder `View` (no art parity; see Non-Goals).
+  `ScrollView`/`Modal`/`Image`): HUD, tappable enemy + HP bar, equipped/bag panels, four per-slot
+  upgrade controls, the pending-choice overlay, the offline summary, and the achievements shelf,
+  plus the `GameScreen` composition root rendered by `App.tsx`. Theme art renders through
+  `ThemeImage` at the slot's declared pixel size (player/enemy/boss/Shiny/spawn-popup), and the
+  event-driven animation framework swaps transient sprite frames (see below).
+- **`src/animation/`** — `cues.ts` is the **pure** event→cue mapping (ported from the web
+  renderer: per-actor priority, ties to the last, `stageEntered` advances the running stage,
+  a click also animates the player). `useAnimationCues` owns one live frame per actor with the
+  theme's declared duration and a single drain timer; `useReducedMotion` holds the OS preference
+  live. `motion.ts` provides the Reanimated flourish primitives.
+- **`src/components/surfaces.ts` + `Toast`/`Splash`** — the presentation flourishes: the
+  queued achievement splash and milestone flourish (diff-based, seeded so a restored save does not
+  replay), the enemy-taunt toast, and the Shiny escape/claim message.
+- **Safe-area aware.** `App.tsx` wraps the app in `SafeAreaProvider`; `GameScreen` composes
+  `useSafeAreaInsets()` into the screen frame and the bottom toast stack, so the HUD clears the
+  Android status bar/cutout (edge-to-edge is enabled) and the iOS notch, and bottom content clears
+  the gesture area. Zero insets add no extra padding.
+- **Reduced motion is honored.** With the OS reduced-motion preference on, no sprite frame swaps
+  and no movement animations play, but informational text (achievement splash, enemy taunts,
+  offline summary) still appears; the preference updates live.
 - **Tests** — `jest-expo` + `@testing-library/react-native` cover boot hydration, offline replay,
-  action dispatch, autosave/`AppState` flush, theme-driven rendering, and the stage anchor.
+  action dispatch, autosave/`AppState` flush, theme-driven rendering, the stage anchor, the
+  event→cue mapping (boss/normal, kill-beats-hit, ties), cue expiry + reduced motion, the
+  flourishes, and safe-area inset composition.
 
 **The contract it proves: two things plus a clock.** The host supplies a renderer (the RN
 components), a `SaveRepository` (`AsyncStorageSaveRepository`), and a host clock (the 100 ms
@@ -806,6 +829,7 @@ Commands (from the repo root):
 
 ```bash
 npm install                # installs the mobile workspace too
+npm run mobile:assets      # regenerate mobile/assets/themes/** + src/themeAssets.gen.ts from web/public/themes/**
 npm run mobile:start       # `expo start` — Metro dev server / dev client
 npm run mobile:typecheck   # `tsc --noEmit` for the mobile workspace
 npm run mobile:test        # `jest` (jest-expo) — the RN host + component suite
@@ -814,11 +838,23 @@ npm run mobile:test        # `jest` (jest-expo) — the RN host + component suit
 `@auto-auto-clicker/engine-core` resolves to its TypeScript source through the npm-workspace
 symlink, so Metro loads it with no build step — exactly how `/web` consumes it.
 
-**Key overlays, not full parity.** This host implements the gameplay-critical surfaces (arena,
-HUD, gear, choices, achievements, offline summary) but does **not** port the web host's full
-animation-cue pipeline or art pipeline: transitions are simplified, and asset slots render
-through a placeholder component rather than the theme's PNG animation frames. Those remain
-out of scope for this host.
+**Art & animation.** RN has no `/themes/<name>/` static route and Metro needs **static**
+`require()`s, so `npm run mobile:assets` copies the active themes' declared PNGs (the same
+placeholder art `/web` ships, generated from the engine's `ASSET_SLOTS`) into
+`mobile/assets/themes/<name>/`, measures each file's PNG `IHDR` width/height, and emits
+`mobile/src/themeAssets.gen.ts` — a committed registry of literal `require()`s keyed
+`<theme-name>/<file>.png`. `resolveAsset` looks an entry up by `theme.name` + `theme.assets[slot]`,
+so no component names a file. Re-run `mobile:assets` after adding a theme or replacing art. The
+animation framework consumes the host's `GameEvent[]` seam and the theme's declared
+`animation.cues` (the same cues `/web` uses), so swapping `ACTIVE_THEME` rescans art **and**
+animation.
+
+**Adding a dependency to `mobile/`:** do **not** use `npx expo install` — it re-resolves the
+workspace tree and hoists `react-native`, deleting the committed `mobile/node_modules/react-native`
+that `mobile/jest.config.js` deliberately pins (Jest must test the same RN minor the APK ships).
+Add exact SDK-57-pinned versions with
+`npm install <pkg>@<ver> --workspace mobile --legacy-peer-deps`; versions live in
+`node_modules/expo/bundledNativeModules.json`.
 
 ---
 

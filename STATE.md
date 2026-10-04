@@ -11,8 +11,18 @@ truth. Every gate is green.**
 - **Expo / React Native host in `mobile/`** (`@auto-auto-clicker/mobile`) consumes `engine-core`
   **unchanged** — proving the host contract (renderer + `SaveRepository` + clock). Has an
   `AsyncStorage` `SaveRepository`, a fixed-100 ms interval host clock with bounded offline replay,
-  `AppState` flush/resume, theme→RN style mapping, and the core loop + key overlays. RN tests:
-  `npm run test -w mobile` → **78 passed**. See `openspec/specs/expo-host/`.
+  `AppState` flush/resume, theme→RN style mapping, and the core loop + key overlays. See
+  `openspec/specs/expo-host/`.
+- **`expo-art-animation` (applied 2026-10-03) — theme art + animation + safe-area on mobile.**
+  The RN host now renders the active theme's declared PNGs (`ThemeImage`) instead of placeholder
+  boxes, consumes the `GameEvent[]` seam through a ported event→cue animation framework (pure
+  `cues.ts` + `useAnimationCues` + `useReducedMotion`, plus Reanimated flourishes: HP tween,
+  boost pulse, Shiny drift/messages, spawn popup, achievement splash, milestone flourish, taunt
+  toast, overlay entrances), and respects device safe-area insets (`SafeAreaProvider` +
+  `useSafeAreaInsets`, fixing the status-bar-clipped header). Art is copied mobile-local and
+  resolved through a generated literal-`require` registry (`npm run mobile:assets`). RN tests:
+  **131 passed (15 suites)**. Three deps added (SDK-57-pinned): `react-native-safe-area-context`,
+  `react-native-reanimated`, `react-native-worklets`. Engine/web/sim untouched; save schema v4.
 - **Android APK distribution.** `npm run mobile:apk` builds a debug-key-signed release APK
   (`mobile/scripts/build-apk.sh` → `mobile/dist/auto-auto-clicker.apk`). A tag push (`v*`) runs
   `.github/workflows/build-apk.yml`, which provisions its **own** Android SDK (no secret),
@@ -101,9 +111,11 @@ The one-line switch is `export const ACTIVE_THEME: Theme = <name>;` in
 `engine-core/src/theme/index.ts` (committed value: `fantasy`).
 
 ### Mobile gates (current, verified)
-- `npm run test -w mobile` → **78 passed (8 suites), exit 0**.
+- `npm run test -w mobile` → **131 passed (15 suites), exit 0**.
 - `npm run mobile:typecheck` → clean. `npm run mobile:apk` → builds
   `mobile/dist/auto-auto-clicker.apk` locally (needs the `$HOME` toolchain).
+- `npm run mobile:assets` → regenerates `mobile/assets/themes/**` + `mobile/src/themeAssets.gen.ts`
+  (byte-identical on re-run).
 - `npm run version:check` → exit 0 (declared version `0.2.0`).
 - `openspec validate --strict` → clean; main specs: `expo-host`, `android-apk-distribution`,
   `version-tracking` (all changes archived under `openspec/changes/archive/`).
@@ -111,6 +123,8 @@ The one-line switch is `export const ACTIVE_THEME: Theme = <name>;` in
 ### Follow-ups (not yet done — start here next session)
 1. **Install `v0.2.0` on a device** — the on-device run is the one thing still unverified; APK
    validity is confirmed only structurally (`aapt2 dump badging`), never executed on hardware.
+   This now also covers the `expo-art-animation` visual checks (header clears the status bar, sprite
+   art, animations, reduced motion) — the automated gates cannot see pixels.
 2. **`STATE.md`/`AGENTS.md` are current as of 2026-10-03**; `engine-core`/`web` sections below are
    unchanged since 2026-09-29 and remain accurate.
 3. **Deferred, each its own OpenSpec change:**

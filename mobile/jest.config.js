@@ -13,6 +13,11 @@ module.exports = {
     '<rootDir>/tests/**/*.test.tsx',
   ],
   setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
+  // The generated theme-asset registry (`src/themeAssets.gen.ts`) `require()`s the
+  // bundled theme PNGs. jest-expo's preset ships the asset transformer but does
+  // not list image extensions, so Jest cannot resolve those `require()`s without
+  // `png` here (Metro resolves them at bundle time; Jest needs the explicit entry).
+  moduleFileExtensions: ['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'json', 'node', 'png'],
   moduleNameMapper: {
     // `mobile` pins react@19.2.3 but npm hoists react@19.3.0 to the root for the
     // rest of the tree (react-native, jest-expo, @testing-library). Force a

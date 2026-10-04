@@ -57,6 +57,12 @@ vite, vitest, tsx, playwright, jest-expo + @testing-library/react-native, npm wo
   `v*` tag.
 - **Expo SDK 57 (stable)** — `mobile/` on the SDK-57 paired set (`react-native 0.86.3`). SDK 58
   is preview and deliberately avoided.
+- **Mobile renders theme art + animation.** The Expo host shows the active theme's declared PNGs
+  (`ThemeImage`; art copied mobile-local and resolved via the generated `mobile/src/themeAssets.gen.ts`
+  registry — `npm run mobile:assets`) and ports the `GameEvent[]`→cue animation framework (pure
+  `cues.ts`, `useAnimationCues`, `useReducedMotion`, Reanimated flourishes), with a
+  `reduceMotionChanged` gate that suppresses movement but keeps informational text. It is
+  safe-area aware (`SafeAreaProvider`). Engine/web/sim untouched; save schema stays **v4**.
 - `ACTIVE_THEME` is **`fantasy`** (the "Standard Fantasy RPG" original); `lucky` (golden retriever × husky) also ships. The theme
   switch is one line in `engine-core/src/theme/index.ts`.
 - **12 enemies** (`ENEMY_ROSTER`), selected deterministically from the stage
@@ -71,6 +77,13 @@ vite, vitest, tsx, playwright, jest-expo + @testing-library/react-native, npm wo
 Specs live in `openspec/specs/` (`expo-host`, `android-apk-distribution`, `version-tracking`);
 completed changes are archived under `openspec/changes/archive/`. Workflow: `openspec` skills
 (`openspec-propose`, `openspec-apply-change`, `openspec-archive-change`, `openspec-sync-specs`).
+
+## Adding dependencies to `mobile/`
+Do **not** use `npx expo install` — it re-resolves the workspace tree and hoists `react-native`,
+deleting the committed `mobile/node_modules/react-native` nesting that `mobile/jest.config.js`
+requires (Jest must test the same RN minor the APK ships). Add exact SDK-57-pinned versions with
+`npm install <pkg>@<ver> --workspace mobile --legacy-peer-deps` (versions live in
+`node_modules/expo/bundledNativeModules.json`).
 
 ## Follow-ups (open work — see `STATE.md` "Follow-ups" for detail)
 Verify `v0.2.0` on a real device; then the deferred items (persistent release keystore, Play
